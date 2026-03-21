@@ -4,7 +4,7 @@
 
 This document describes the ligand preparation process implemented in the Ligand Preparer service, following AutoDock Vina best practices.
 
-## Why Ligand Preparation is Necessary
+## Why Preparation Is Needed
 
 AutoDock Vina requires ligands in PDBQT format, which includes:
 - **Explicit hydrogens** at the correct protonation state
@@ -20,9 +20,9 @@ AutoDock Vina requires ligands in PDBQT format, which includes:
 - **MOL** (MDL Molfile)
 - **MOL2** (Tripos Mol2)
 
-### 2. Molecule Processing Steps
+### 2. Processing Steps
 
-#### Step 1: Read and Sanitize
+**Step 1: Read and Sanitize**
 ```python
 mol = Chem.MolFromSDF(file_path)
 Chem.SanitizeMol(mol)
@@ -31,7 +31,7 @@ Chem.SanitizeMol(mol)
 - Checks valence and aromaticity
 - Corrects common issues
 
-#### Step 2: Add Hydrogens
+**Step 2: Add Hydrogens**
 ```python
 mol = Chem.AddHs(mol)
 ```
@@ -39,7 +39,7 @@ mol = Chem.AddHs(mol)
 - pH consideration: Current implementation uses standard protonation
 - For pH-specific protonation, consider tools like Dimorphite-DL
 
-#### Step 3: Generate 3D Coordinates
+**Step 3: Generate 3D Coordinates**
 ```python
 AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
 ```
@@ -47,7 +47,7 @@ AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
 - Generates realistic conformations
 - Only if input lacks 3D coordinates
 
-#### Step 4: Optimize Geometry
+**Step 4: Optimize Geometry**
 ```python
 AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
 ```
@@ -55,7 +55,7 @@ AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
 - Falls back to UFF if MMFF unavailable
 - Produces stable, low-energy conformation
 
-#### Step 5: Assign Partial Charges
+**Step 5: Assign Partial Charges**
 ```python
 AllChem.ComputeGasteigerCharges(mol)
 ```
@@ -63,7 +63,7 @@ AllChem.ComputeGasteigerCharges(mol)
 - Standard for AutoDock Vina
 - Required for electrostatic calculations
 
-#### Step 6: Convert to PDBQT
+**Step 6: Convert to PDBQT**
 
 Three methods available (in order of preference):
 
@@ -296,16 +296,9 @@ print(f"Rotatable bonds: {result['rotatable_bonds']}")
 
 ## Installation Commands
 
-### Option 1: Using pip (Recommended for venv)
+### Option 1: Using pip
 
 ```bash
-# Create virtual environment
-python -m venv .venv
-# Activate on Windows:
-.venv\Scripts\activate
-# Or on Linux/Mac:
-source .venv/bin/activate
-
 # Install chemistry packages
 pip install rdkit meeko
 

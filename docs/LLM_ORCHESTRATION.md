@@ -1,21 +1,21 @@
 # LLM Workflow Orchestration
 
-Natural language interface for molecular docking workflows using local LLM (Ollama) and MCP services.
+Natural-language interface for molecular docking workflows using local Ollama and MCP services.
 
 ---
 
 ## Overview
 
-This system allows you to control the complete molecular docking pipeline using natural language commands. An LLM (Large Language Model) running locally parses your requests, extracts parameters, and orchestrates the execution across all MCP services.
+This system lets you control the full molecular docking pipeline with plain-language commands. A local LLM parses each request, extracts parameters, and orchestrates calls across MCP services.
 
 ### Key Features
 
-- 🗣️ **Natural Language Input** - Describe workflows in plain English
-- 🤖 **Local LLM** - Runs on your hardware (Ollama with GPU support)
-- 🔗 **MCP Integration** - Seamlessly coordinates all services
-- 📋 **Smart Defaults** - Missing parameters use sensible defaults
-- ✅ **Validation** - Checks for required parameters and prompts user
-- 🐳 **Fully Dockerized** - Single command deployment
+- **Natural Language Input** - Describe workflows in plain English.
+- **Local LLM** - Runs on your hardware (Ollama, with GPU support when available).
+- **MCP Integration** - Coordinates all services through a single workflow.
+- **Smart Defaults** - Applies defaults when optional parameters are omitted.
+- **Validation** - Checks required parameters and prompts for missing values.
+- **Docker Deployment** - Runs with a single Docker command.
 
 ---
 
@@ -65,7 +65,7 @@ This system allows you to control the complete molecular docking pipeline using 
 
 ```bash
 # Start Docker services including Ollama
-docker-compose up -d
+docker compose up -d
 
 # Wait for Ollama to start (~30 seconds)
 docker ps
@@ -223,7 +223,7 @@ If critical parameters are missing (like `center` or `box_size` for docking), th
 ```bash
 $ python nlp_orchestrator.py "Download 6lu7 and ATP, dock them"
 
-⚠️  Missing required parameters:
+Missing required parameters:
   - Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30')
   - Please provide docking box size [x, y, z] in Angstroms (e.g., '25, 30, 35')
 
@@ -360,7 +360,7 @@ docker logs mcp-ollama
 
 **Restart:**
 ```bash
-docker-compose restart ollama
+docker compose restart ollama
 ```
 
 ### Model Not Found
@@ -420,14 +420,14 @@ python nlp_orchestrator.py --check-health
 
 **Restart services:**
 ```bash
-docker-compose restart
+docker compose restart
 ```
 
 ---
 
 ## Best Practices
 
-### ✅ DO
+### Do
 
 - **Be specific** with protein and ligand IDs
 - **Provide docking parameters** (center, box_size) when possible
@@ -436,7 +436,7 @@ docker-compose restart
 - **Review workflow summary** before execution
 - **Keep Ollama updated** for best performance
 
-### ❌ DON'T
+### Do Not
 
 - **Use vague descriptions** ("dock some ligands")
 - **Omit critical parameters** without being prepared to enter them

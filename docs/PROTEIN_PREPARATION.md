@@ -4,7 +4,7 @@
 
 The Protein Preparer service prepares protein receptor structures for molecular docking with AutoDock Vina. It handles cleaning, protonation, charge assignment, and conversion to PDBQT format.
 
-## What Does It Do?
+## Workflow Overview
 
 The service performs several key steps to prepare proteins:
 

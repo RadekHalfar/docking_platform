@@ -1,9 +1,9 @@
 # Quick Start: Prepare Ligands for Docking
 
-## ❌ WRONG: You tried this
+## Example of Incorrect Input
 
 ```python
-# This FAILS because 1CRN.pdb is a PROTEIN file, not a ligand!
+# This fails because 1CRN.pdb is a protein file, not a ligand file.
 response = requests.post("http://localhost:8002/mcp", json={
     "jsonrpc": "2.0",
     "id": "1",
@@ -11,7 +11,7 @@ response = requests.post("http://localhost:8002/mcp", json={
     "params": {
         "name": "prepare_ligands",
         "arguments": {
-            "ligand_paths": ["./test_download/1CRN.pdb"],  # ❌ This is a protein!
+            "ligand_paths": ["./test_download/1CRN.pdb"],  # This is a protein file.
             "output_dir": "./data/prepared",
             "ph": 7.4
         }
@@ -27,7 +27,7 @@ response = requests.post("http://localhost:8002/mcp", json={
 
 ---
 
-## ✅ CORRECT: Do this instead
+## Correct Approach
 
 ### Step 1: Get a ligand file (SDF format)
 
@@ -243,10 +243,10 @@ python test_ligand_prep.py
 
 | Format | Used For | Example | Preparer Accepts? |
 |--------|----------|---------|-------------------|
-| `.pdb` | **Proteins** (receptors) | `1CRN.pdb`, `protein.pdb` | ❌ NO |
-| `.sdf` | **Ligands** (small molecules) | `ATP.sdf`, `aspirin.sdf` | ✅ YES |
-| `.mol` | **Ligands** (small molecules) | `drug.mol` | ✅ YES |
-| `.mol2` | **Ligands** (small molecules) | `ligand.mol2` | ✅ YES |
+| `.pdb` | **Proteins** (receptors) | `1CRN.pdb`, `protein.pdb` | No |
+| `.sdf` | **Ligands** (small molecules) | `ATP.sdf`, `aspirin.sdf` | Yes |
+| `.mol` | **Ligands** (small molecules) | `drug.mol` | Yes |
+| `.mol2` | **Ligands** (small molecules) | `ligand.mol2` | Yes |
 | `.pdbqt` | **Output** (docking-ready) | `ATP.pdbqt` | Output only |
 
 **Key Point:**

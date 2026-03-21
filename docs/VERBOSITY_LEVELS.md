@@ -1,6 +1,6 @@
 # Verbosity Levels Guide
 
-The `nlp_orchestrator.py` supports three levels of verbosity to control the amount of information displayed during workflow execution.
+`nlp_orchestrator.py` supports three verbosity levels that control output detail during workflow execution.
 
 ## Overview
 

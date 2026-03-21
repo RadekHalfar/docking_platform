@@ -1,6 +1,6 @@
 # Docker Quick Start Guide
 
-Get the MCP Docking System running in 5 minutes with Docker!
+Start the MCP Docking System with Docker.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ chmod +x docker_build.sh
 
 ### Alternative: Use docker-compose
 ```bash
-docker-compose build
+docker compose build
 ```
 
 **Expected output:**
@@ -42,7 +42,7 @@ docker-compose build
 ## Step 2: Start Services (30 seconds)
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 **Expected output:**
@@ -57,7 +57,7 @@ Creating mcp-pymol-visualizer ... done
 ## Step 3: Verify Services (5 seconds)
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 **Expected output:**
@@ -68,6 +68,7 @@ mcp-ligand-preparer    Up (healthy)
 mcp-protein-preparer   Up (healthy)
 mcp-moldina-runner     Up (healthy)
 mcp-pymol-visualizer   Up (healthy)
+mcp-ollama             Up (healthy)
 ```
 
 **Health check URLs:**
@@ -119,7 +120,7 @@ $body = @{
 Invoke-RestMethod -Uri "http://localhost:8001/jsonrpc" -Method Post -Body $body -ContentType "application/json"
 ```
 
-### Option C: Run Scripts in Docker (No Virtual Environment, No Rebuild for Script Edits)
+### Option C: Run Scripts in Docker (No Local Python Setup, No Rebuild for Script Edits)
 
 Use the `script-runner` service (profile `dev`) to execute scripts from your host-mounted workspace.
 When you edit a `.py` file on host, just rerun the command, no image rebuild is needed.
@@ -134,6 +135,16 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 
 Rebuild only when dependencies or Dockerfiles change.
 
+### Option D: Run Full Test Suite In Docker
+
+```powershell
+docker compose --profile dev run --rm `
+  -e SERVICE_HOST=host.docker.internal `
+  script-runner python -m pytest tests/ --tb=short
+```
+
+This runs unit and Docker integration tests from inside the containerized dev environment.
+
 #### Check Moldina Installation
 
 ```bash
@@ -144,7 +155,7 @@ docker exec mcp-moldina-runner moldina --version
 
 ```bash
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Check output
 ls demo_output/
@@ -159,26 +170,26 @@ pymol demo_output/visualization/visualization.pml
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # Restart a service
-docker-compose restart ligand-preparer
+docker compose restart ligand-preparer
 
 # View status
-docker-compose ps
+docker compose ps
 ```
 
 ### Monitoring
 
 ```bash
 # View logs (all services)
-docker-compose logs -f
+docker compose logs -f
 
 # View logs (specific service)
-docker-compose logs -f moldina-runner
+docker compose logs -f moldina-runner
 
 # View resource usage
 docker stats
@@ -207,10 +218,10 @@ docker inspect mcp-moldina-runner
 
 ```bash
 # Stop and remove containers
-docker-compose down
+docker compose down
 
 # Remove volumes too
-docker-compose down -v
+docker compose down -v
 
 # Remove all MCP images
 docker images | grep mcp | awk '{print $3}' | xargs docker rmi
@@ -222,7 +233,7 @@ docker images | grep mcp | awk '{print $3}' | xargs docker rmi
 
 **Check logs:**
 ```bash
-docker-compose logs
+docker compose logs
 ```
 
 **Common fixes:**
@@ -247,7 +258,7 @@ Wait 30-60 seconds for services to initialize:
 
 ```bash
 # Watch status
-watch docker-compose ps
+watch docker compose ps
 
 # Check specific health
 docker inspect mcp-moldina-runner --format='{{json .State.Health}}'
@@ -284,12 +295,13 @@ docker image prune -a
 - Auto-restart
 - Resource limits
 - Volume persistence
+- GPU acceleration for Ollama (if NVIDIA runtime is available)
 
 ## Next Steps
 
 1. **Read Full Guide**: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md)
 2. **Command Reference**: [docs/DOCKER_QUICK_REFERENCE.md](docs/DOCKER_QUICK_REFERENCE.md)
-3. **Run Tests**: `pytest tests/test_docker_integration.py -v`
+3. **Run Tests**: `docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short`
 4. **Customize**: Edit `docker-compose.yml` for your needs
 
 ## Performance Tips
@@ -297,7 +309,7 @@ docker image prune -a
 ### Build Faster
 ```bash
 # Use BuildKit
-DOCKER_BUILDKIT=1 docker-compose build
+DOCKER_BUILDKIT=1 docker compose build
 
 # Build in parallel
 ./docker_build.ps1 -Parallel
@@ -323,7 +335,7 @@ deploy:
 
 ## Getting Help
 
-- **Logs**: `docker-compose logs -f [service]`
+- **Logs**: `docker compose logs -f [service]`
 - **Shell**: `docker exec -it [container] bash`
 - **Health**: `curl http://localhost:800X/health`
 - **Stats**: `docker stats`

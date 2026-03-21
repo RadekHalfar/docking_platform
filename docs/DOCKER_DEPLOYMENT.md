@@ -2,7 +2,7 @@
 
 ## MCP Docking System - Containerized Deployment
 
-This guide covers deploying the MCP Docking System using Docker containers, eliminating the need to install complex dependencies like Moldina, PyMOL, RDKit, and scientific libraries on your host system.
+This guide explains how to deploy the MCP Docking System with Docker containers.
 
 ---
 
@@ -55,28 +55,28 @@ This guide covers deploying the MCP Docking System using Docker containers, elim
 # Windows PowerShell
 .\docker_build.ps1
 
-# Or using docker-compose directly
-docker-compose build
+# Or using docker compose directly
+docker compose build
 ```
 
 ```bash
 # Linux/Mac
-./docker_build.sh  # (create similar bash script)
+./docker_build.sh
 
-# Or using docker-compose directly
-docker-compose build
+# Or using docker compose directly
+docker compose build
 ```
 
 ### 2. Start All Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 3. Verify Services are Running
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 Expected output:
@@ -87,6 +87,7 @@ mcp-ligand-preparer     mcp-ligand-preparer:latest   Up (healthy)
 mcp-protein-preparer    mcp-protein-preparer:latest  Up (healthy)
 mcp-moldina-runner      mcp-moldina-runner:latest    Up (healthy)
 mcp-pymol-visualizer    mcp-pymol-visualizer:latest  Up (healthy)
+mcp-ollama              ollama/ollama:latest         Up (healthy)
 ```
 
 ### 4. Test a Service
@@ -100,19 +101,20 @@ Expected response:
 {"status": "healthy", "service": "rcsb_downloader", "version": "1.0"}
 ```
 
-### 5. Run Complete Workflow
+### 5. Run Workflow Without Local Python Environment
+
+Use the dev profile script runner. The workspace is bind-mounted into the container,
+so script edits on host are picked up immediately (no image rebuild needed).
 
 ```powershell
-# Modify example_complete_workflow.py to use localhost URLs
-# Services are accessible at:
-# - RCSB Downloader: http://localhost:8001
-# - Ligand Preparer: http://localhost:8002
-# - Protein Preparer: http://localhost:8003
-# - Moldina Runner: http://localhost:8004
-# - PyMOL Visualizer: http://localhost:8005
+# Check orchestration health from inside container network
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
 
-python example_complete_workflow.py
+# Run full natural-language workflow
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
+
+If you prefer local execution, services remain available at localhost ports 8001-8005 and Ollama at 11434.
 
 ---
 
@@ -137,7 +139,7 @@ python example_complete_workflow.py
 │  └───────────────┘  └───────────────┘                      │
 │                                                               │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │         Docker Network (172.28.0.0/16)              │   │
+│  │ Docker Bridge Network (auto-assigned subnet)        │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                               │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
@@ -221,44 +223,44 @@ docker build -f docker/pymol_visualizer.Dockerfile -t mcp-pymol-visualizer:lates
 ### Start All Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Start Specific Services
 
 ```bash
-docker-compose up -d rcsb-downloader ligand-preparer
+docker compose up -d rcsb-downloader ligand-preparer
 ```
 
 ### View Logs
 
 ```bash
 # All services
-docker-compose logs -f
+docker compose logs -f
 
 # Specific service
-docker-compose logs -f moldina-runner
+docker compose logs -f moldina-runner
 
 # Last 100 lines
-docker-compose logs --tail=100
+docker compose logs --tail=100
 ```
 
 ### Stop Services
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Restart Services
 
 ```bash
-docker-compose restart
+docker compose restart
 ```
 
 ### Stop and Remove Everything
 
 ```bash
-docker-compose down -v  # Removes volumes too
+docker compose down -v  # Removes volumes too
 ```
 
 ---
@@ -278,6 +280,16 @@ MOLDINA_PATH=/usr/local/bin/moldina
 
 # PyMOL Configuration  
 DISPLAY=:99
+
+# Service URLs for container-based script execution
+MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
+MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
+MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
+MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
+MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
+
+# Ollama URL for nlp_orchestrator.py
+OLLAMA_URL=http://ollama:11434
 
 # Resource Limits
 MOLDINA_CPU_LIMIT=4
@@ -322,13 +334,13 @@ The docker-compose.yml configures two main volumes:
 docker volume ls
 
 # Inspect a volume
-docker volume inspect docking-system_cache-data
+docker volume inspect docking_platform_cache-data
 
 # Backup cache
-docker run --rm -v docking-system_cache-data:/cache -v $(pwd):/backup ubuntu tar czf /backup/cache-backup.tar.gz /cache
+docker run --rm -v docking_platform_cache-data:/cache -v $(pwd):/backup ubuntu tar czf /backup/cache-backup.tar.gz /cache
 
 # Restore cache
-docker run --rm -v docking-system_cache-data:/cache -v $(pwd):/backup ubuntu tar xzf /backup/cache-backup.tar.gz -C /
+docker run --rm -v docking_platform_cache-data:/cache -v $(pwd):/backup ubuntu tar xzf /backup/cache-backup.tar.gz -C /
 
 # Clean up unused volumes
 docker volume prune
@@ -338,18 +350,24 @@ docker volume prune
 
 ## Testing
 
-### Run Container Integration Tests
+### Run Full Test Suite In Docker
 
 ```bash
 # Make sure services are running
-docker-compose up -d
+docker compose up -d
 
-# Wait for services to be healthy
-sleep 10
+# Run all tests from script-runner (integration tests included)
+docker compose --profile dev run --rm \
+  -e SERVICE_HOST=host.docker.internal \
+  script-runner python -m pytest tests/ --tb=short
 
-# Run tests
-pytest tests/test_docker_integration.py -v
+# Optional: run only slow tests
+docker compose --profile dev run --rm \
+  -e SERVICE_HOST=host.docker.internal \
+  script-runner python -m pytest tests/ -m "slow" --tb=short
 ```
+
+`SERVICE_HOST=host.docker.internal` allows containerized tests to reach host-published service ports.
 
 ### Manual Health Checks
 
@@ -377,7 +395,7 @@ done
 
 **Check logs:**
 ```bash
-docker-compose logs
+docker compose logs
 ```
 
 **Common issues:**
@@ -389,7 +407,7 @@ docker-compose logs
 
 **Check service status:**
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 **Inspect container:**
@@ -445,13 +463,30 @@ chmod -R 777 ./cache ./demo_output
 
 **Check network:**
 ```bash
-docker network inspect docking-system_mcp-network
+docker network inspect docking_platform_mcp-network
 ```
 
 **Test connectivity between containers:**
 ```bash
 docker exec mcp-rcsb-downloader ping mcp-ligand-preparer
 ```
+
+### Integration Tests Cannot Reach Services
+
+**Problem:** Docker integration tests fail to connect when run from script-runner.
+
+**Fix:** Set service host for containerized test process.
+
+```bash
+docker compose --profile dev run --rm \
+  -e SERVICE_HOST=host.docker.internal \
+  script-runner python -m pytest tests/test_docker_integration.py --tb=short
+```
+
+### Unknown Mark Warning For slow
+
+If pytest still prints `PytestUnknownMarkWarning: slow` in your environment,
+the test still runs correctly and passes; this is an environment-specific warning with pytest 9.
 
 ---
 
@@ -516,10 +551,10 @@ services:
 
 ```bash
 # Start only docking services
-docker-compose --profile docking up -d
+docker compose --profile docking up -d
 
 # Start everything
-docker-compose --profile full up -d
+docker compose --profile full up -d
 ```
 
 ### CI/CD Integration
@@ -538,10 +573,10 @@ jobs:
       - uses: actions/checkout@v3
       
       - name: Build images
-        run: docker-compose build
+        run: docker compose build
       
       - name: Start services
-        run: docker-compose up -d
+        run: docker compose up -d
       
       - name: Wait for health
         run: sleep 30
@@ -550,7 +585,7 @@ jobs:
         run: pytest tests/test_docker_integration.py
       
       - name: Stop services
-        run: docker-compose down
+        run: docker compose down
 ```
 
 ---
@@ -584,7 +619,7 @@ jobs:
 
 ```bash
 # Scale moldina runner to 3 instances
-docker-compose up -d --scale moldina-runner=3
+docker compose up -d --scale moldina-runner=3
 
 # Use load balancer (e.g., nginx) to distribute requests
 ```
@@ -612,16 +647,16 @@ services:
 
 You now have a fully containerized MCP Docking System that:
 
-✅ Requires only Docker (no Moldina, PyMOL, RDKit installation on host)  
-✅ Is portable across Windows, Linux, and macOS  
-✅ Has proper resource limits and health checks  
-✅ Supports easy scaling and deployment  
-✅ Includes comprehensive testing  
+- Requires only Docker (no local Moldina, PyMOL, or RDKit installation).
+- Works across Windows, Linux, and macOS.
+- Includes health checks and resource limits.
+- Supports scaling and deployment workflows.
+- Includes comprehensive tests.
 
 **Next steps:**
-1. Build images: `.\docker_build.ps1`
-2. Start services: `docker-compose up -d`
-3. Run workflow: `python example_complete_workflow.py`
+1. Build images: `./docker_build.ps1`
+2. Start services: `docker compose up -d`
+3. Run workflow: `docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"`
 4. View results in `./demo_output/`
 
 For issues or questions, check the [Troubleshooting](#troubleshooting) section or open an issue on GitHub.

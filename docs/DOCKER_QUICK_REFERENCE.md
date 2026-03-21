@@ -4,13 +4,13 @@
 
 ```bash
 # Build all images
-docker-compose build
+docker compose build
 
 # Build specific service
-docker-compose build rcsb-downloader
+docker compose build rcsb-downloader
 
 # Build with no cache (clean build)
-docker-compose build --no-cache
+docker compose build --no-cache
 
 # Build using helper scripts
 ./docker_build.ps1              # Windows
@@ -21,47 +21,71 @@ docker-compose build --no-cache
 
 ```bash
 # Start all services in background
-docker-compose up -d
+docker compose up -d
 
 # Start specific services
-docker-compose up -d rcsb-downloader ligand-preparer
+docker compose up -d rcsb-downloader ligand-preparer
 
 # Start with log output
-docker-compose up
+docker compose up
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # Stop and remove volumes
-docker-compose down -v
+docker compose down -v
 
 # Restart services
-docker-compose restart
+docker compose restart
 
 # Restart specific service
-docker-compose restart moldina-runner
+docker compose restart moldina-runner
 ```
 
 ## Monitoring Commands
 
 ```bash
 # View running containers
-docker-compose ps
+docker compose ps
 
 # View all containers (including stopped)
 docker ps -a
 
 # View service logs
-docker-compose logs -f
+docker compose logs -f
 
 # View logs for specific service
-docker-compose logs -f pymol-visualizer
+docker compose logs -f pymol-visualizer
 
 # View last 100 lines
-docker-compose logs --tail=100 moldina-runner
+docker compose logs --tail=100 moldina-runner
 
 # Follow logs from specific time
-docker-compose logs --since 10m -f
+docker compose logs --since 10m -f
+```
+
+## Script Runner (Dev Profile)
+
+```bash
+# Run orchestrator health check inside Docker (no local Python setup required)
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
+
+# Run workflow command
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+```
+
+## Test Commands
+
+```bash
+# Run full test suite from script-runner (includes docker integration tests)
+docker compose --profile dev run --rm \
+  -e SERVICE_HOST=host.docker.internal \
+  script-runner python -m pytest tests/ --tb=short
+
+# Run only slow tests
+docker compose --profile dev run --rm \
+  -e SERVICE_HOST=host.docker.internal \
+  script-runner python -m pytest tests/ -m "slow" --tb=short
 ```
 
 ## Health Checks
@@ -109,20 +133,20 @@ docker stats mcp-moldina-runner
 docker volume ls
 
 # Inspect volume
-docker volume inspect docking-system_cache-data
+docker volume inspect docking_platform_cache-data
 
 # Remove unused volumes
 docker volume prune
 
 # Backup volume
 docker run --rm \
-  -v docking-system_cache-data:/cache \
+  -v docking_platform_cache-data:/cache \
   -v $(pwd):/backup \
   ubuntu tar czf /backup/cache-backup.tar.gz /cache
 
 # Restore volume
 docker run --rm \
-  -v docking-system_cache-data:/cache \
+  -v docking_platform_cache-data:/cache \
   -v $(pwd):/backup \
   ubuntu tar xzf /backup/cache-backup.tar.gz -C /
 ```
@@ -134,13 +158,13 @@ docker run --rm \
 docker network ls
 
 # Inspect network
-docker network inspect docking-system_mcp-network
+docker network inspect docking_platform_mcp-network
 
 # Test connectivity between containers
 docker exec mcp-rcsb-downloader ping mcp-ligand-preparer
 
 # View network connections
-docker network inspect docking-system_mcp-network -f '{{json .Containers}}'
+docker network inspect docking_platform_mcp-network -f '{{json .Containers}}'
 ```
 
 ## Image Management
@@ -193,8 +217,18 @@ docker system prune
 docker system prune -a --volumes
 
 # Stop and remove all MCP containers
-docker-compose down -v
+docker compose down -v
 docker ps -a | grep mcp | awk '{print $1}' | xargs docker rm -f
+```
+
+## GPU Check (Ollama)
+
+```bash
+# Verify GPU device request was applied to ollama container
+docker inspect mcp-ollama --format "Runtime={{.HostConfig.Runtime}} DeviceRequests={{json .HostConfig.DeviceRequests}}"
+
+# Check active model processor split (CPU/GPU)
+docker exec mcp-ollama ollama ps
 ```
 
 ## Service-Specific Commands
@@ -203,7 +237,7 @@ docker ps -a | grep mcp | awk '{print $1}' | xargs docker rm -f
 
 ```bash
 # View logs
-docker-compose logs -f rcsb-downloader
+docker compose logs -f rcsb-downloader
 
 # Test download
 curl -X POST http://localhost:8001/jsonrpc \
@@ -215,7 +249,7 @@ curl -X POST http://localhost:8001/jsonrpc \
 
 ```bash
 # View logs
-docker-compose logs -f ligand-preparer
+docker compose logs -f ligand-preparer
 
 # Check RDKit installation
 docker exec mcp-ligand-preparer python -c "import rdkit; print(rdkit.__version__)"
@@ -225,7 +259,7 @@ docker exec mcp-ligand-preparer python -c "import rdkit; print(rdkit.__version__
 
 ```bash
 # View logs
-docker-compose logs -f protein-preparer
+docker compose logs -f protein-preparer
 
 # Check available tools
 docker exec mcp-protein-preparer which python
@@ -236,7 +270,7 @@ docker exec mcp-protein-preparer python -c "import rdkit, gemmi; print('OK')"
 
 ```bash
 # View logs
-docker-compose logs -f moldina-runner
+docker compose logs -f moldina-runner
 
 # Check Moldina installation
 docker exec mcp-moldina-runner which moldina
@@ -250,7 +284,7 @@ docker stats mcp-moldina-runner
 
 ```bash
 # View logs
-docker-compose logs -f pymol-visualizer
+docker compose logs -f pymol-visualizer
 
 # Check PyMOL installation
 docker exec mcp-pymol-visualizer pymol -c -Q -e "quit"
@@ -318,13 +352,13 @@ docker exec mcp-rcsb-downloader ls -la /app/cache
 ```bash
 # 1. Make code changes
 # 2. Rebuild affected service
-docker-compose build ligand-preparer
+docker compose build ligand-preparer
 
 # 3. Restart service
-docker-compose restart ligand-preparer
+docker compose restart ligand-preparer
 
 # 4. View logs
-docker-compose logs -f ligand-preparer
+docker compose logs -f ligand-preparer
 
 # 5. Test changes
 curl http://localhost:8002/health
@@ -334,10 +368,10 @@ curl http://localhost:8002/health
 
 ```bash
 # Use BuildKit for faster builds
-DOCKER_BUILDKIT=1 docker-compose build
+DOCKER_BUILDKIT=1 docker compose build
 
 # Limit Moldina runner resources
-docker-compose up -d --scale moldina-runner=1
+docker compose up -d --scale moldina-runner=1
 
 # View resource usage
 docker stats --no-stream
@@ -350,10 +384,10 @@ docker builder prune
 
 ```bash
 # Build for production
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 
 # Start in production mode
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 # Enable auto-restart
 docker update --restart=unless-stopped $(docker ps -q)
@@ -368,21 +402,21 @@ Add to your shell profile (`.bashrc`, `.zshrc`, or PowerShell profile):
 
 ```bash
 # Bash/Zsh
-alias dps='docker-compose ps'
-alias dlogs='docker-compose logs -f'
-alias dup='docker-compose up -d'
-alias ddown='docker-compose down'
-alias drestart='docker-compose restart'
-alias dexec='docker-compose exec'
+alias dps='docker compose ps'
+alias dlogs='docker compose logs -f'
+alias dup='docker compose up -d'
+alias ddown='docker compose down'
+alias drestart='docker compose restart'
+alias dexec='docker compose exec'
 ```
 
 ```powershell
 # PowerShell
-function dps { docker-compose ps @args }
-function dlogs { docker-compose logs -f @args }
-function dup { docker-compose up -d @args }
-function ddown { docker-compose down @args }
-function drestart { docker-compose restart @args }
+function dps { docker compose ps @args }
+function dlogs { docker compose logs -f @args }
+function dup { docker compose up -d @args }
+function ddown { docker compose down @args }
+function drestart { docker compose restart @args }
 ```
 
 ---

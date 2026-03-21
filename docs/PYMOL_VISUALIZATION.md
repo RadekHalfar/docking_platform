@@ -6,14 +6,14 @@ The PyMOL Visualizer service creates publication-quality molecular visualization
 
 ## Features
 
-- 📜 **Script Generation**: Creates .pml scripts for automated visualization
-- 🎨 **Smart Coloring**: Colors ligand poses by binding affinity (green=best, red=worst)
-- 🔍 **Binding Site Highlighting**: Automatically highlights residues near ligand
-- 🖼️ **Image Rendering**: Optionally renders PNG images if PyMOL is available
-- 📦 **Session Files**: Saves .pse session files for interactive exploration
-- ⚙️ **Customizable**: Control surface display, transparency, image quality, etc.
+- **Script Generation**: Creates .pml scripts for automated visualization.
+- **Smart Coloring**: Colors ligand poses by binding affinity.
+- **Binding Site Highlighting**: Highlights residues near ligands.
+- **Image Rendering**: Optionally renders PNG images when PyMOL is available.
+- **Session Files**: Saves .pse files for interactive exploration.
+- **Customizable**: Supports surface display, transparency, image quality, and related options.
 
-## What Does It Do?
+## Workflow Overview
 
 The service generates PyMOL scripts that:
 
@@ -28,7 +28,7 @@ The service generates PyMOL scripts that:
 ## Installation
 
 ### Required
-- Python packages (already installed in .venv)
+- Python packages (included in Docker images or install locally via requirements.txt)
 
 ### Optional: PyMOL for Rendering
 If you want to automatically render images, install PyMOL:
@@ -342,7 +342,7 @@ Typical workflow:
 2. **Prepare Protein**: Protein Preparer → `receptor.pdbqt`
 3. **Prepare Ligands**: Ligand Preparer → `ligand.pdbqt`
 4. **Dock**: Moldina Runner → `docked_poses.pdbqt` + affinities
-5. **Visualize**: PyMOL Visualizer → `.pml`, `.pse`, `.png` ✨
+5. **Visualize**: PyMOL Visualizer → `.pml`, `.pse`, `.png`
 
 See `example_complete_workflow.py` for full integration example.
 

@@ -13,8 +13,8 @@
 ```bash
 # See ../DOCKER_QUICKSTART.md for complete guide
 .\docker_build.ps1        # Build images (Windows)
-docker-compose up -d      # Start services
-python3 example_complete_workflow.py  # Run workflow
+docker compose up -d      # Start services
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
 
 **→ For Docker deployment, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)**
@@ -23,7 +23,7 @@ python3 example_complete_workflow.py  # Run workflow
 
 ## Alternative: Local Installation (Development Only)
 
-**⚠️ Only needed for development or if Docker is unavailable.**
+Only use local installation for development or when Docker is unavailable.
 
 ### Prerequisites
 
@@ -33,43 +33,9 @@ python3 example_complete_workflow.py  # Run workflow
 
 ## Installation Methods
 
-### Method 1: Virtual Environment with pip (Recommended)
+### Method 1: Conda Environment (Recommended)
 
-**Important: Use `python3` command (not `python` which may be Python 2.7)**
-
-```bash
-# 1. Verify Python version
-python3 --version  # Should show 3.9 or higher
-
-# 2. Create virtual environment
-cd docking-system
-python3 -m venv .venv
-
-# 3. Activate virtual environment
-# Windows (PowerShell):
-.\.venv\Scripts\Activate.ps1
-# Windows (CMD):
-.venv\Scripts\activate.bat
-# Linux/Mac:
-source .venv/bin/activate
-
-# 4. Install Python dependencies
-pip install -r requirements.txt
-
-# 5. Install chemistry packages (for Ligand Preparer)
-pip install rdkit meeko
-
-# 6. (Optional) Install OpenBabel - requires conda
-# If you need OpenBabel, use conda:
-# conda install -c conda-forge openbabel
-
-# 7. Download spaCy language model (if needed)
-python3 -m spacy download en_core_web_sm
-```
-
-### Method 2: Conda Environment (Alternative)
-
-Use conda if you prefer or need OpenBabel.
+Use conda for reliable chemistry package installation (RDKit, OpenBabel, Meeko).
 
 ```bash
 # 1. Create conda environment
@@ -89,20 +55,34 @@ conda install -c conda-forge rdkit openbabel meeko
 python3 -m spacy download en_core_web_sm
 ```
 
+### Method 2: pip Installation (No Conda)
+
+Use this when you only need basic services or already manage Python dependencies globally.
+
+```bash
+# 1. Verify Python version
+python3 --version  # Should show 3.9 or higher
+
+# 2. Navigate to project directory
+cd docking-system
+
+# 3. Install Python dependencies
+pip install -r requirements.txt
+
+# 4. Install chemistry packages (if available on your platform)
+pip install rdkit meeko
+
+# 5. Download spaCy model
+python3 -m spacy download en_core_web_sm
+```
+
 ### Method 3: Minimal Installation (Core Services Only)
 
 Install only core dependencies without chemistry packages.
 
 ```bash
-# 1. Create virtual environment
+# 1. Navigate to project directory
 cd docking-system
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-
-# Linux/Mac
-source .venv/bin/activate
 
 # 2. Install core dependencies
 pip install requests flask python-dotenv spacy pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
@@ -113,12 +93,12 @@ python -m spacy download en_core_web_sm
 
 **Note:** Ligand Preparer service will not work without RDKit.
 
-### Method 3: Docker Installation (Coming in Phase 6)
+### Method 4: Docker Installation (Recommended)
 
-Docker images will be provided for easy deployment.
+All services and dependencies are pre-packaged in Docker images.
 
 ```bash
-docker-compose up
+docker compose up -d
 ```
 
 ## Verifying Installation
@@ -238,7 +218,7 @@ curl -X POST http://localhost:8001/mcp \
 ### Issue: "RDKit not found"
 **Solution:** Install via pip (or conda):
 ```bash
-# Using pip (recommended for venv):
+# Using pip:
 pip install rdkit
 
 # Or using conda:
@@ -248,7 +228,7 @@ conda install -c conda-forge rdkit
 ### Issue: "Meeko not found"
 **Solution:** Install via pip (or conda):
 ```bash
-# Using pip (recommended for venv):
+# Using pip:
 pip install meeko
 
 # Or using conda:

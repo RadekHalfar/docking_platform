@@ -2,9 +2,9 @@
 
 A fully containerized molecular docking pipeline using Model Context Protocol (MCP) to coordinate protein preparation, ligand preparation, Moldina PSO-based docking, and PyMOL visualization.
 
-**🚀 Zero Installation Required!** Everything runs in Docker containers - no need to install Moldina, PyMOL, RDKit, or other dependencies locally.
+**Zero Installation Required:** Everything runs in Docker containers, so you do not need to install Moldina, PyMOL, RDKit, or other dependencies locally.
 
-**✨ NEW: Natural Language Interface!** Control the entire workflow with simple text commands powered by a local LLM (Ollama).
+**Natural Language Interface:** Control the workflow with text commands powered by a local Ollama LLM.
 
 ## Architecture
 
@@ -27,14 +27,14 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
 
 ## Components
 
-1. **RCSB Downloader** ✅ - Fetches protein structures and ligands from RCSB PDB
-2. **Protein Preparer** ✅ - Prepares proteins (clean, add hydrogens, convert to PDBQT)
-3. **Ligand Preparer** ✅ - Prepares ligands (protonation, 3D conformers, PDBQT conversion)
-4. **Moldina Runner** ✅ - Executes Moldina PSO-based molecular docking
-5. **PyMOL Visualizer** ✅ - Generates visualizations and renders high-quality images
-6. **LLM Orchestrator** ✨ - Natural language interface powered by local Ollama LLM
+1. **RCSB Downloader** - Fetches protein structures and ligands from RCSB PDB.
+2. **Protein Preparer** - Cleans proteins, adds hydrogens, and converts to PDBQT.
+3. **Ligand Preparer** - Prepares ligands (protonation, 3D conformers, PDBQT conversion).
+4. **Moldina Runner** - Executes Moldina PSO-based molecular docking.
+5. **PyMOL Visualizer** - Generates visualization scripts and rendered outputs.
+6. **LLM Orchestrator** - Provides natural-language workflow orchestration via Ollama.
 
-**All services fully operational in Docker containers!**
+All services run in Docker containers.
 
 ## Quick Start
 
@@ -44,22 +44,19 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
 
 ```powershell
 # 1. Start all services (including Ollama LLM)
-docker-compose up -d
+docker compose up -d
 
 # 2. Download the LLM model (once, ~4 GB for Llama 2)
 docker exec -it mcp-ollama ollama pull llama2
 
-# 3. Activate virtual environment (if using local Python)
-.\.venv\Scripts\activate  # Windows PowerShell
-# source .venv/bin/activate  # Linux/Mac
+# 3. Check everything is healthy from script-runner (no local Python setup required)
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
 
-# 4. Check everything is healthy
-python nlp_orchestrator.py --check-health
-# Or use python3 if virtual environment not activated:
-# python3 nlp_orchestrator.py --check-health
+# 4. Run a complete workflow with natural language
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download protein 6lu7 and ligand ATP, prepare them, and dock with center at 10,20,30 and box size 25,30,35"
 
-# 5. Run a complete workflow with natural language!
-python nlp_orchestrator.py "Download protein 6lu7 and ligand ATP, prepare them, and dock with center at 10,20,30 and box size 25,30,35"
+# Optional local execution (if you want host Python)
+# python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 
 # Verbosity options (default is 'low' for clean output):
 # --verbose low        # Minimal output (default)
@@ -81,20 +78,16 @@ python nlp_orchestrator.py "Download protein 6lu7 and ligand ATP, prepare them, 
 # ./docker_build.sh     # Linux/Mac
 
 # 2. Start all services (~30 seconds)
-docker-compose up -d
+docker compose up -d
 
 # 3. Check services are healthy
-docker-compose ps
+docker compose ps
 
-# 4. Activate virtual environment (if running Python scripts locally)
-.\.venv\Scripts\activate  # Windows PowerShell
-# source .venv/bin/activate  # Linux/Mac
+# 4. Run complete workflow from Docker dev script-runner
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 
-# 5. Run complete workflow
-$env:PYTHONIOENCODING="utf-8"  # Windows only
-python example_complete_workflow.py
-# Or use python3 if virtual environment not activated:
-# python3 example_complete_workflow.py
+# 5. Optional: run full tests in Docker
+docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 
 # 6. View results
 pymol .\demo_output\visualization\visualization.pse
@@ -138,16 +131,12 @@ python3 -m services.pymol_visualizer.server
 
 ## Example Workflow
 
-### Using Natural Language (NEW!)
+### Using Natural Language
 
 ```powershell
-# Activate virtual environment first (if using local Python)
-.\.venv\Scripts\activate  # Windows PowerShell
-# source .venv/bin/activate  # Linux/Mac
-
 # Simple command-line mode
 python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
-# Or use python3 if virtual environment not activated:
+# Or use python3 if needed:
 # python3 nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 
 # Interactive mode with prompts
@@ -163,7 +152,7 @@ python nlp_orchestrator.py --interactive
 #   5. Run docking
 #   6. Create visualization
 # 
-# ⚠️  Missing required parameter: center (docking box center coordinates)
+# Missing required parameter: center (docking box center coordinates)
 # Please provide: x,y,z coordinates in Angstroms
 # Your input: 10,20,30
 #
@@ -174,14 +163,10 @@ python nlp_orchestrator.py --interactive
 ### Using Python API
 
 ```bash
-# Activate virtual environment first (if not already activated)
-.\.venv\Scripts\activate  # Windows PowerShell
-# source .venv/bin/activate  # Linux/Mac
-
 # Using Python 3 (not Python 2.7!)
 $env:PYTHONIOENCODING="utf-8"  # Windows: Enable UTF-8 output
 python example_complete_workflow.py
-# Or use python3 if virtual environment not activated:
+# Or use python3 if needed:
 # python3 example_complete_workflow.py
 
 # Output:
@@ -286,43 +271,32 @@ mcp_demo/
 ### Running Tests
 
 ```bash
-# Activate virtual environment
-.\.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
-
 # Run all unit tests
 python3 -m pytest tests/ -v
 
 # Run Docker integration tests (requires services running)
-docker-compose up -d
-python3 -m pytest tests/test_docker_integration.py -v
+docker compose up -d
+docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/test_docker_integration.py -v
 
 # Expected: ~110+ tests passing
 ```
 
 ## Key Features
 
-✅ **Natural Language Control** - Command workflows with simple text (NEW!)  
-✅ **Three Verbosity Levels** - From minimal output to full MCP JSON-RPC demonstration (NEW!)  
-✅ **Local LLM** - Ollama with GPU support for privacy and speed  
-✅ **Containerized Deployment** - All dependencies in Docker, zero local installation  
-✅ **Moldina PSO Docking** - Particle Swarm Optimization for better binding poses  
-✅ **Headless PyMOL** - Automated high-quality image rendering in containers  
-✅ **Cross-Platform** - Windows/Linux path handling, works everywhere  
-✅ **Caching** - Smart caching of downloaded structures  
-✅ **MCP Protocol** - Standard JSON-RPC interface for all services
+- **Natural Language Control** - Command workflows with plain text.
+- **Three Verbosity Levels** - Choose minimal, detailed, or protocol-level output.
+- **Local LLM** - Ollama-based parsing and planning, with GPU support when available.
+- **Containerized Deployment** - Run all dependencies in Docker.
+- **Moldina PSO Docking** - PSO-based docking for pose search.
+- **Headless PyMOL** - Automated rendering in containers.
+- **Cross-Platform** - Works across Windows and Linux path styles.
+- **Caching** - Reuses downloaded structures to reduce repeated work.
+- **MCP Protocol** - Standard JSON-RPC interface across services.
 
 ## Important Notes
 
-### Virtual Environment
-- **Always activate virtual environment** before running Python scripts:
-  - Windows: `.\.venv\Scripts\activate`
-  - Linux/Mac: `source .venv/bin/activate`
-- **Alternative:** Use `python3` command if virtual environment not activated
-- Check activation: prompt should show `(.venv)` prefix
-
 ### Python Version
-- **Use `python3` command** (Python 3.12+) if virtual environment not activated
+- **Use `python3` command** (Python 3.12+) when `python` points to an incompatible interpreter
 - System `python` may be Python 2.7 (not compatible)
 - Check: `python3 --version` should show 3.9+
 
@@ -338,7 +312,7 @@ python3 -m pytest tests/test_docker_integration.py -v
 
 ## Documentation
 
-- **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - **NEW!** Guide to verbosity levels (low/normal/mcp_demo)
+- **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - Guide to verbosity levels (`low`, `normal`, `mcp_demo`)
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages
 - **[docs/API.md](docs/API.md)** - Complete MCP tool specifications and JSON-RPC examples

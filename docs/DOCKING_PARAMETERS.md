@@ -214,7 +214,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 ### Critical Parameters
 
-#### `center` - Search Box Center ⚠️ **CRITICAL**
+#### `center` - Search Box Center (Critical)
 - **Format:** `[x, y, z]` coordinates in Angstroms
 - **Purpose:** Defines where docking algorithm searches
 - **How to determine:**
@@ -225,7 +225,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 - **Example:** `[10.5, 20.3, -5.2]`
 - **Impact:** Wrong center = docking in wrong location!
 
-#### `box_size` - Search Box Dimensions ⚠️ **CRITICAL**
+#### `box_size` - Search Box Dimensions (Critical)
 - **Format:** `[x, y, z]` dimensions in Angstroms
 - **Purpose:** Defines size of search space
 - **Guidelines:**
@@ -435,8 +435,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
 | | `remove_waters` | `true` | Clean structure |
 | **Docking** | `receptor_path` | - | Prepared PDBQT |
 | | `ligand_paths` | - | Prepared PDBQT list |
-| | **`center`** | - | ⚠️ Must determine from structure |
-| | **`box_size`** | - | ⚠️ Must encompass binding site |
+| | **`center`** | - | Must determine from structure |
+| | **`box_size`** | - | Must encompass binding site |
 | | `exhaustiveness` | `8` | Higher = better quality |
 | | `population` | `500` | PSO parameter |
 | **Visualization** | `receptor_path` | - | Original or prepared |
@@ -608,7 +608,7 @@ Purpose: Compare binding at different pH
 
 ## Best Practices
 
-✅ **DO:**
+**Do:**
 - Match pH between ligand and protein preparation
 - Verify binding site location before docking
 - Use adequate exhaustiveness (≥8 for real work)
@@ -616,7 +616,7 @@ Purpose: Compare binding at different pH
 - Keep important cofactors
 - Use ray tracing for publication figures
 
-❌ **DON'T:**
+**Do not:**
 - Use pH 7.4 blindly (check protein's functional pH)
 - Guess binding site coordinates
 - Use exhaustiveness < 4 (unreliable)

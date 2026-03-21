@@ -1,0 +1,36 @@
+# Core dependencies
+requests>=2.31.0
+flask>=3.0.0
+python-dotenv>=1.0.0
+
+# NLP and parsing (for future orchestrator phase)
+spacy>=3.7.0
+# Download model: python -m spacy download en_core_web_sm
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Chemistry packages (REQUIRED for ligand/protein preparation)
+rdkit>=2023.9.1           # Core chemistry library (pip install rdkit)
+meeko>=0.5.0              # Ligand PDBQT conversion (pip install meeko)
+scipy>=1.11.0             # Required by Meeko
+numpy>=1.24.0             # Required by Meeko and RDKit
+gemmi>=0.6.0              # Required by Meeko
+
+# Optional chemistry tools
+openbabel-wheel>=3.1.1    # Alternative conversion (pip install openbabel-wheel)
+                          # Note: Not used for receptors, available as fallback for ligands
+
+# MCP SDK (if using official implementation)
+# mcp>=0.1.0
+
+# Utilities
+pydantic>=2.5.0
+jsonschema>=4.20.0
+pyyaml>=6.0.1
+
+# Optional: ML-based parsing
+# transformers>=4.35.0
+# torch>=2.1.0

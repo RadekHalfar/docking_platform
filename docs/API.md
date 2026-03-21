@@ -1,0 +1,593 @@
+# MCP Docking System API Documentation
+
+## Overview
+
+This document describes the JSON-RPC 2.0 API for all MCP servers in the docking system.
+
+All communication uses JSON-RPC 2.0 protocol over HTTP POST to `/mcp` endpoint.
+
+## Common Endpoints
+
+All services implement these standard endpoints:
+
+### Health Check
+```
+GET /health
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "service": "service_name"
+}
+```
+
+### List Tools
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "request_id",
+  "method": "tools/list"
+}
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "request_id",
+  "result": {
+    "tools": [
+      {
+        "name": "tool_name",
+        "description": "Tool description",
+        "parameters": [...],
+        "returns": {...}
+      }
+    ]
+  }
+}
+```
+
+## 1. RCSB Downloader Service
+
+**Port:** 8001  
+**Base URL:** `http://localhost:8001`
+
+### Tool: download_structures
+
+Downloads protein structures and ligand molecules from RCSB PDB.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `protein_id` | string | Yes | PDB identifier (4 characters, e.g., '1ABC') |
+| `ligand_ids` | array | No | List of ligand identifiers (e.g., ['ATP', 'HEM']) |
+| `formats` | object | No | File formats: `{"protein": "pdb"\|"cif", "ligand": "sdf"\|"mol"}` |
+| `save_dir` | string | No | Directory to save files (default: "./data") |
+
+**Request Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_1",
+  "method": "tool_call",
+  "params": {
+    "name": "download_structures",
+    "arguments": {
+      "protein_id": "1ABC",
+      "ligand_ids": ["ATP", "HEM"],
+      "formats": {
+        "protein": "pdb",
+        "ligand": "sdf"
+      },
+      "save_dir": "/data/jobs/job_001/raw"
+    }
+  }
+}
+```
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_1",
+  "result": {
+    "protein_path": "/data/jobs/job_001/raw/1ABC.pdb",
+    "ligand_paths": [
+      "/data/jobs/job_001/raw/ATP.sdf",
+      "/data/jobs/job_001/raw/HEM.sdf"
+    ],
+    "sources": {
+      "protein": "https://files.rcsb.org/download/1ABC.pdb",
+      "ligands": [
+        "https://files.rcsb.org/ligands/view/ATP_ideal.sdf",
+        "https://files.rcsb.org/ligands/view/HEM_ideal.sdf"
+      ]
+    },
+    "checksums": {
+      "protein": "a1b2c3d4e5f6...",
+      "ligands": ["g7h8i9j0k1l2...", "m3n4o5p6q7r8..."]
+    },
+    "status": "ok"
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_1",
+  "error": {
+    "code": -32602,
+    "message": "Invalid PDB ID: INVALID"
+  }
+}
+```
+
+---
+
+## 2. Ligand Preparer Service
+
+**Port:** 8002  
+**Base URL:** `http://localhost:8002`
+
+### Tool: prepare_ligands
+
+Prepares ligand molecules for molecular docking by converting them to PDBQT format with proper charges, hydrogens, and rotatable bonds. Compatible with Moldina and AutoDock Vina.
+
+**Preparation Steps:**
+1. Read ligand from SDF/MOL/MOL2 file
+2. Add explicit hydrogens at specified pH
+3. Generate 3D coordinates if missing
+4. Optimize geometry with MMFF force field
+5. Assign Gasteiger partial charges
+6. Detect and mark rotatable bonds
+7. Convert to PDBQT format
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `ligand_paths` | array | Yes | List of paths to ligand files (SDF, MOL, MOL2) |
+| `output_dir` | string | No | Directory to save prepared ligands (default: "./data/prepared") |
+| `ph` | number | No | pH for protonation state (default: 7.4) |
+| `add_hydrogens` | boolean | No | Add explicit hydrogens (default: true) |
+| `generate_3d` | boolean | No | Generate 3D coordinates if missing (default: true) |
+| `optimize` | boolean | No | Optimize 3D structure with force field (default: true) |
+
+**Request Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_2",
+  "method": "tool_call",
+  "params": {
+    "name": "prepare_ligands",
+    "arguments": {
+      "ligand_paths": [
+        "/data/jobs/job_001/raw/ATP.sdf",
+        "/data/jobs/job_001/raw/HEM.sdf"
+      ],
+      "output_dir": "/data/jobs/job_001/prepared",
+      "ph": 7.4,
+      "add_hydrogens": true,
+      "optimize": true
+    }
+  }
+}
+```
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_2",
+  "result": {
+    "prepared_ligands": [
+      {
+        "id": "ATP",
+        "input_path": "/data/jobs/job_001/raw/ATP.sdf",
+        "pdb_path": "/data/jobs/job_001/prepared/ATP_prepared.pdb",
+        "pdbqt_path": "/data/jobs/job_001/prepared/ATP.pdbqt",
+        "checksum": "a1b2c3d4e5f6...",
+        "rotatable_bonds": 8,
+        "conversion_method": "meeko",
+        "preparation_params": {
+          "ph": 7.4,
+          "add_hydrogens": true,
+          "generate_3d": true,
+          "optimize": true
+        }
+      },
+      {
+        "id": "HEM",
+        "input_path": "/data/jobs/job_001/raw/HEM.sdf",
+        "pdb_path": "/data/jobs/job_001/prepared/HEM_prepared.pdb",
+        "pdbqt_path": "/data/jobs/job_001/prepared/HEM.pdbqt",
+        "checksum": "g7h8i9j0k1l2...",
+        "rotatable_bonds": 12,
+        "conversion_method": "meeko",
+        "preparation_params": {
+          "ph": 7.4,
+          "add_hydrogens": true,
+          "generate_3d": true,
+          "optimize": true
+        }
+      }
+    ],
+    "total": 2,
+    "successful": 2,
+    "failed": 0,
+    "errors": [],
+    "status": "ok"
+  }
+}
+```
+
+**Error Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_2",
+  "result": {
+    "prepared_ligands": [
+      {
+        "id": "ATP",
+        "pdbqt_path": "/data/jobs/job_001/prepared/ATP.pdbqt",
+        "rotatable_bonds": 8
+      }
+    ],
+    "total": 2,
+    "successful": 1,
+    "failed": 1,
+    "errors": [
+      {
+        "ligand": "/data/jobs/job_001/raw/INVALID.sdf",
+        "error": "Failed to read molecule from file"
+      }
+    ],
+    "status": "ok"
+  }
+}
+```
+
+**Notes:**
+- Requires RDKit (install via pip: `pip install rdkit`)
+- Optionally uses Meeko for PDBQT conversion (recommended)
+- Falls back to OpenBabel or manual conversion if Meeko unavailable
+- PDBQT files include TORSDOF (torsional degrees of freedom) for Moldina/Vina
+
+---
+
+## 3. Protein Preparer Service
+
+**Port:** 8003  
+**Base URL:** `http://localhost:8003`
+
+### Tool: prepare_proteins
+
+Prepares protein structures for docking by cleaning, adding hydrogens, and converting to PDBQT format.
+
+**Preparation Steps:**
+1. Read protein from PDB/CIF file
+2. Remove water molecules (optional)
+3. Remove non-protein heteroatoms (optional)
+4. Add explicit hydrogens at specified pH
+5. Assign Gasteiger partial charges
+6. Convert to PDBQT format
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `protein_paths` | array | Yes | List of paths to protein files (PDB, CIF) |
+| `output_dir` | string | No | Directory to save prepared proteins (default: "./data/prepared") |
+| `ph` | number | No | pH for protonation state (default: 7.4) |
+| `remove_waters` | boolean | No | Remove water molecules (default: true) |
+| `remove_heteroatoms` | boolean | No | Remove non-protein heteroatoms (default: true) |
+| `add_hydrogens` | boolean | No | Add explicit hydrogens (default: true) |
+
+**Request Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_2b",
+  "method": "tool_call",
+  "params": {
+    "name": "prepare_proteins",
+    "arguments": {
+      "protein_paths": ["/data/jobs/job_001/raw/6lu7.pdb"],
+      "output_dir": "/data/jobs/job_001/prepared",
+      "ph": 7.4,
+      "remove_waters": true,
+      "remove_heteroatoms": true,
+      "add_hydrogens": true
+    }
+  }
+}
+```
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_2b",
+  "result": {
+    "prepared_proteins": [
+      {
+        "id": "6lu7",
+        "input_path": "/data/jobs/job_001/raw/6lu7.pdb",
+        "pdb_path": "/data/jobs/job_001/prepared/6lu7_prepared.pdb",
+        "pdbqt_path": "/data/jobs/job_001/prepared/6lu7.pdbqt",
+        "checksum": "x1y2z3a4b5c6...",
+        "conversion_method": "meeko",
+        "atom_count": 4897,
+        "residue_count": 306,
+        "preparation_params": {
+          "ph": 7.4,
+          "remove_waters": true,
+          "remove_heteroatoms": true,
+          "add_hydrogens": true
+        }
+      }
+    ],
+    "total": 1,
+    "successful": 1,
+    "failed": 0,
+    "errors": [],
+    "status": "ok"
+  }
+}
+```
+
+---
+
+## 4. Moldina Runner Service
+
+**Port:** 8004  
+**Base URL:** `http://localhost:8004`
+
+### Tool: run_docking
+
+Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows or natively on Linux.
+
+**Docking Process:**
+1. Generate Moldina configuration file
+2. Create ligands list file
+3. Execute Moldina with PSO parameters
+4. Parse docking results and affinities
+5. Return sorted results (best affinity first)
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `receptor_path` | string | Yes | Path to receptor PDBQT file |
+| `ligand_paths` | array | Yes | List of paths to ligand PDBQT files |
+| `output_dir` | string | Yes | Directory for output files |
+| `center` | array | Yes | Search box center coordinates `[x, y, z]` in Angstroms |
+| `box_size` | array | Yes | Search box dimensions `[x, y, z]` in Angstroms |
+| `cpu` | integer | No | Number of CPUs to use (default: 1) |
+| `population` | integer | No | PSO population size (default: 500, min: 5) |
+| `exhaustiveness` | integer | No | Search exhaustiveness (default: 8) |
+| `num_modes` | integer | No | Maximum binding modes to output (default: 15) |
+| `energy_range` | number | No | Max energy difference for modes in kcal/mol (default: 100.0) |
+
+**Request Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_3",
+  "method": "tool_call",
+  "params": {
+    "name": "run_docking",
+    "arguments": {
+      "receptor_path": "/data/jobs/job_001/prepared/6lu7.pdbqt",
+      "ligand_paths": [
+        "/data/jobs/job_001/prepared/ATP.pdbqt",
+        "/data/jobs/job_001/prepared/HEM.pdbqt"
+      ],
+      "output_dir": "/data/jobs/job_001/docking",
+      "center": [10.5, 20.3, -5.2],
+      "box_size": [25.0, 30.0, 35.0],
+      "cpu": 4,
+      "population": 500,
+      "exhaustiveness": 16,
+      "num_modes": 15,
+      "energy_range": 100.0
+    }
+  }
+}
+```
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_3",
+  "result": {
+    "status": "ok",
+    "receptor": "/data/jobs/job_001/prepared/6lu7.pdbqt",
+    "total": 2,
+    "successful": 2,
+    "failed": 0,
+    "config_file": "/data/jobs/job_001/docking/moldina_config.txt",
+    "output_dir": "/data/jobs/job_001/docking",
+    "results": [
+      {
+        "ligand_id": "ATP",
+        "ligand_path": "/data/jobs/job_001/prepared/ATP.pdbqt",
+        "output_path": "/data/jobs/job_001/docking/ATP_out.pdbqt",
+        "log_path": "/data/jobs/job_001/docking/ATP_out.log",
+        "best_affinity": -8.5,
+        "checksum": "m3n4o5p6q7r8...",
+        "modes": [
+          {
+            "mode": 1,
+            "affinity": -8.5,
+            "rmsd_lb": 0.0,
+            "rmsd_ub": 0.0
+          },
+          {
+            "mode": 2,
+            "affinity": -8.2,
+            "rmsd_lb": 1.234,
+            "rmsd_ub": 3.456
+          }
+        ]
+      },
+      {
+        "ligand_id": "HEM",
+        "ligand_path": "/data/jobs/job_001/prepared/HEM.pdbqt",
+        "output_path": "/data/jobs/job_001/docking/HEM_out.pdbqt",
+        "log_path": "/data/jobs/job_001/docking/HEM_out.log",
+        "best_affinity": -7.2,
+        "checksum": "s9t0u1v2w3x4...",
+        "modes": [
+          {
+            "mode": 1,
+            "affinity": -7.2,
+            "rmsd_lb": 0.0,
+            "rmsd_ub": 0.0
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Notes:**
+- Moldina is Linux-only; Windows users require WSL (Windows Subsystem for Linux)
+- Uses Particle Swarm Optimization (PSO) for improved binding pose prediction
+- Results are sorted by best_affinity (most negative = best binding)
+- Population size should be ≥ 5; recommended: 100 × rotatable_bonds
+- Higher exhaustiveness and population = more thorough but slower
+- See `docs/MOLDINA_DOCKING.md` for detailed guide
+
+---
+
+## 5. PyMOL Visualizer Service
+
+**Port:** 8005  
+**Base URL:** `http://localhost:8005`
+
+### Tool: visualize_docking
+
+Generates PyMOL visualization scripts and optionally renders high-quality images of docking results.
+
+**Features:**
+- Generates `.pml` scripts with relative paths (works on host and in Docker)
+- Creates `.pse` PyMOL session files for interactive analysis
+- Headless rendering in Docker containers (xvfb + ray tracing)
+- Automatic coloring by binding affinity
+- Binding site highlighting
+
+**Parameters:**
+- `receptor_path` (string, required): Path to receptor PDBQT file
+- `ligand_paths` (array of strings, required): Paths to docked ligand PDBQT files
+- `output_dir` (string, required): Directory for output files
+- `affinities` (array of numbers, optional): Binding affinities for color coding
+- `show_surface` (boolean, default: true): Show protein surface
+- `show_binding_site` (boolean, default: true): Highlight binding site residues
+- `binding_site_radius` (number, default: 5.0): Radius for binding site detection (Ångströms)
+- `render_image` (boolean, default: false): Generate PNG image
+- `image_width` (number, default: 1920): Image width in pixels
+- `image_height` (number, default: 1080): Image height in pixels
+- `image_dpi` (number, default: 300): Image DPI for publication quality
+- `ray_trace` (boolean, default: true): Use ray tracing for rendering
+
+**Returns:**
+```json
+{
+  "script_path": "./demo_output/visualization/visualization.pml",
+  "session_path": "./demo_output/visualization/visualization.pse",
+  "image_path": "./demo_output/visualization/docking_visualization.png",
+  "receptor": "./demo_output/prepared_proteins/6LU7.pdbqt",
+  "num_ligands": 1,
+  "ligands": ["./demo_output/docking_results/moldina_out.pdbqt"],
+  "affinities": [-2.4]
+}
+```
+
+**Notes:**
+- Script paths are relative for cross-platform compatibility
+- PyMOL installation not required on host (rendering in Docker)
+- `.pse` files can be opened with local PyMOL for interactive analysis
+- Image rendering requires PyMOL in Docker (automatically available)
+
+---
+
+## 4. PyMOL Visualizer Service (Duplicate - Remove)
+
+**Port:** 8004  
+**Base URL:** `http://localhost:8004`
+
+### Tool: render_visuals
+
+*(To be implemented in Phase 4)*
+
+---
+
+## Error Codes
+
+Standard JSON-RPC 2.0 error codes:
+
+| Code | Message | Description |
+|------|---------|-------------|
+| -32700 | Parse error | Invalid JSON |
+| -32600 | Invalid Request | Invalid JSON-RPC format |
+| -32601 | Method not found | Unknown method |
+| -32602 | Invalid params | Invalid parameters |
+| -32603 | Internal error | Server error |
+| -32000 | Tool execution error | Tool failed to execute |
+| -32001 | Validation error | Parameter validation failed |
+| -32002 | Resource not found | Requested resource not found |
+| -32003 | Timeout error | Operation timed out |
+
+---
+
+## Client Usage Example (Python)
+
+```python
+import requests
+
+def call_mcp_tool(service_url, tool_name, arguments, request_id="1"):
+    """Call an MCP tool via JSON-RPC."""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tool_call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments
+        }
+    }
+    
+    response = requests.post(f"{service_url}/mcp", json=payload)
+    response.raise_for_status()
+    
+    data = response.json()
+    if "error" in data:
+        raise Exception(f"MCP Error: {data['error']['message']}")
+    
+    return data["result"]
+
+
+# Download protein and ligands
+result = call_mcp_tool(
+    "http://localhost:8001",
+    "download_structures",
+    {
+        "protein_id": "1ABC",
+        "ligand_ids": ["ATP"],
+        "save_dir": "./data/test"
+    }
+)
+
+print(f"Downloaded protein: {result['protein_path']}")
+```

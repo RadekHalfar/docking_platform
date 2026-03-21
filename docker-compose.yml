@@ -1,0 +1,225 @@
+# Docker Compose configuration for MCP Docking System
+# Orchestrates all microservices with proper networking and volumes
+#
+# Usage:
+#   docker-compose up -d          # Start all services in background
+#   docker-compose ps             # Check service status
+#   docker-compose logs -f        # View logs
+#   docker-compose down           # Stop all services
+#   docker-compose restart        # Restart services
+
+# Base service configuration template
+x-service-common: &service-common
+  restart: unless-stopped
+  networks:
+    - mcp-network
+  volumes:
+    - cache-data:/app/cache
+    - ./demo_output:/app/output
+    - ./demo_output:/app/demo_output
+    - ./orchestrator_output:/app/orchestrator_output
+  environment:
+    - PYTHONUNBUFFERED=1
+    - LOG_LEVEL=INFO
+
+services:
+  # RCSB Downloader Service (Port 8001)
+  # Downloads protein and ligand structures from RCSB PDB
+  rcsb-downloader:
+    <<: *service-common
+    image: mcp-rcsb-downloader:latest
+    build:
+      context: .
+      dockerfile: docker/rcsb_downloader.Dockerfile
+    container_name: mcp-rcsb-downloader
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Ligand Preparer Service (Port 8002)
+  # Prepares ligands for docking (protonation, PDBQT conversion)
+  ligand-preparer:
+    <<: *service-common
+    image: mcp-ligand-preparer:latest
+    build:
+      context: .
+      dockerfile: docker/ligand_preparer.Dockerfile
+    container_name: mcp-ligand-preparer
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Protein Preparer Service (Port 8003)
+  # Prepares proteins for docking (clean, add H, PDBQT conversion)
+  protein-preparer:
+    <<: *service-common
+    image: mcp-protein-preparer:latest
+    build:
+      context: .
+      dockerfile: docker/protein_preparer.Dockerfile
+    container_name: mcp-protein-preparer
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Moldina Runner Service (Port 8004)
+  # Executes molecular docking with Moldina/Vina
+  moldina-runner:
+    <<: *service-common
+    image: mcp-moldina-runner:latest
+    build:
+      context: .
+      dockerfile: docker/moldina_runner.Dockerfile
+    container_name: mcp-moldina-runner
+    ports:
+      - "8004:8004"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - MOLDINA_PATH=/usr/local/bin/moldina
+    # Resource limits for compute-intensive docking
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PyMOL Visualizer Service (Port 8005)
+  # Creates molecular visualizations with PyMOL
+  pymol-visualizer:
+    <<: *service-common
+    image: mcp-pymol-visualizer:latest
+    build:
+      context: .
+      dockerfile: docker/pymol_visualizer.Dockerfile
+    container_name: mcp-pymol-visualizer
+    ports:
+      - "8005:8005"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DISPLAY=:99  # Virtual display for headless PyMOL
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Ollama LLM Service (Port 11434)
+  # Local LLM for natural language workflow orchestration
+  ollama:
+    image: ollama/ollama:latest
+    container_name: mcp-ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - mcp-network
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    # Enable GPU support for faster inference (requires nvidia-docker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Development Script Runner (no venv needed, no rebuild on script edits)
+  # Usage:
+  #   docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
+  #   docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+  script-runner:
+    profiles: ["dev"]
+    image: mcp-docking-base:latest
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    container_name: mcp-script-runner
+    working_dir: /workspace
+    command: ["python", "--version"]
+    networks:
+      - mcp-network
+    volumes:
+      - ./:/workspace
+      - ./cache:/workspace/cache
+      - ./demo_output:/workspace/demo_output
+      - ./orchestrator_output:/workspace/orchestrator_output
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
+      - MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
+      - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
+      - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
+      - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      rcsb-downloader:
+        condition: service_healthy
+      ligand-preparer:
+        condition: service_healthy
+      protein-preparer:
+        condition: service_healthy
+      moldina-runner:
+        condition: service_healthy
+      pymol-visualizer:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+# Network configuration
+networks:
+  mcp-network:
+    driver: bridge
+
+# Volume configuration
+volumes:
+  # Persistent cache for downloaded structures and intermediate files
+  cache-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./cache
+
+  # Ollama model storage
+  ollama-data:
+    driver: local
+
+  # Output directory for docking results and visualizations
+  # Mounted from host for easy access
+  # (defined inline in service configs above)

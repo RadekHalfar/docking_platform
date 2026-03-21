@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Data
+data/jobs/*/
+cache/
+*.pdb
+*.pdbqt
+*.sdf
+*.mol
+*.mol2
+*.pse
+*.png
+orchestrator_output/*
+demo_output/*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development reports and analysis
+dev_reports/*
+
+# other
+docs/MCP_GENERAL_PRESENTATION_SPEAKER_NOTES.md
+docs/MCP_DEVELOPMENT_PRESENTATION_2_SPEAKER_NOTES.md

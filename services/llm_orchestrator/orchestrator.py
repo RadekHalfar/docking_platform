@@ -1,0 +1,447 @@
+"""
+Workflow Orchestrator
+
+Coordinates execution of molecular docking workflow across MCP services.
+"""
+import os
+import json
+import logging
+import requests
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Verbosity levels (match nlp_orchestrator.py)
+VERBOSITY_LOW = 0       # Minimal output (step summaries only)
+VERBOSITY_NORMAL = 1    # Normal output (current behavior)
+VERBOSITY_MCP_DEMO = 2  # Full MCP demonstration mode (show JSON-RPC messages)
+
+
+class WorkflowOrchestrator:
+    """Orchestrates workflow execution across MCP services."""
+    
+    def __init__(self, output_base: str = "./orchestrator_output", verbosity: int = VERBOSITY_NORMAL):
+        """
+        Initialize orchestrator.
+        
+        Args:
+            output_base: Base directory for workflow outputs
+            verbosity: Verbosity level (VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO)
+        """
+        self.output_base = Path(output_base).resolve()
+        self.output_base.mkdir(parents=True, exist_ok=True)
+        
+        # Store the base directory for path conversion
+        self.workspace_root = Path.cwd().resolve()
+        
+        # Verbosity level
+        self.verbosity = verbosity
+        
+        # MCP service URLs (env-overridable for Docker/container usage)
+        self.services = {
+            "rcsb_downloader": os.getenv("MCP_RCSB_DOWNLOADER_URL", "http://localhost:8001"),
+            "ligand_preparer": os.getenv("MCP_LIGAND_PREPARER_URL", "http://localhost:8002"),
+            "protein_preparer": os.getenv("MCP_PROTEIN_PREPARER_URL", "http://localhost:8003"),
+            "moldina_runner": os.getenv("MCP_MOLDINA_RUNNER_URL", "http://localhost:8004"),
+            "pymol_visualizer": os.getenv("MCP_PYMOL_VISUALIZER_URL", "http://localhost:8005")
+        }
+        
+        # Workflow state
+        self.workflow_state = {}
+        self.current_job_id = None
+    
+    def check_services_health(self) -> Dict[str, bool]:
+        """Check health of all MCP services."""
+        health = {}
+        for name, url in self.services.items():
+            try:
+                response = requests.get(f"{url}/health", timeout=5)
+                health[name] = response.status_code == 200
+            except requests.RequestException:
+                health[name] = False
+        return health
+    
+    def call_mcp_tool(self, service_url: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Call an MCP tool via JSON-RPC 2.0.
+        
+        Args:
+            service_url: URL of the MCP service
+            tool_name: Name of the tool to call
+            arguments: Tool arguments
+            
+        Returns:
+            Tool result
+        """
+        import uuid
+        
+        # Generate unique ID for each request (required by JSON-RPC 2.0)
+        request_id = f"orchestrator_{self.current_job_id}_{str(uuid.uuid4())[:8]}"
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tool_call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        
+        # MCP Demo mode: Show full JSON-RPC communication
+        if self.verbosity == VERBOSITY_MCP_DEMO:
+            print("\n" + "." * 80)
+            print(f"📡 MCP Client → Server ({service_url})")
+            print("." * 80)
+            print()
+            print("JSON-RPC:")
+            print(json.dumps(payload, indent=2))
+            print("─" * 80)
+        
+        logger.info(f"Calling {tool_name} on {service_url}")
+        # Only log arguments in normal verbosity (not in MCP demo mode where we already show full payload)
+        if self.verbosity != VERBOSITY_MCP_DEMO:
+            logger.debug(f"Arguments: {json.dumps(arguments, indent=2)}")
+        
+        try:
+            response = requests.post(f"{service_url}/mcp", json=payload, timeout=300)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # MCP Demo mode: Show response
+            if self.verbosity == VERBOSITY_MCP_DEMO:
+                print("." * 80)
+                print(f"📡 MCP Server ({service_url}) → Client")
+                print("." * 80)
+                print()
+                print("JSON-RPC:")
+                print(json.dumps(data, indent=2))
+                print("─" * 80 + "\n")
+            
+            if "error" in data:
+                error_msg = data["error"].get("message", "Unknown error")
+                logger.error(f"MCP Error: {error_msg}")
+                raise RuntimeError(f"MCP Error: {error_msg}")
+            
+            return data.get("result", {})
+            
+        except requests.RequestException as e:
+            logger.error(f"Request failed: {e}")
+            raise RuntimeError(f"Failed to call {tool_name}: {e}")
+    
+    def normalize_path(self, path: str) -> str:
+        """
+        Convert path to Docker container-compatible format.
+        
+        Converts absolute Windows paths to container mount paths:
+        - C:/Users/.../docking-system/orchestrator_output/... -> /app/orchestrator_output/...
+        - C:/Users/.../docking-system/demo_output/... -> /app/demo_output/...
+        """
+        # Normalize Windows path separators first
+        path_str = str(path).replace("\\", "/")
+
+        # Windows absolute path (e.g. C:/Users/...) — return with forward slashes
+        if len(path_str) >= 3 and path_str[1] == ":" and path_str[2] == "/":
+            return path_str
+
+        abs_path = Path(path_str).resolve()
+
+        # Convert to relative path from workspace root
+        try:
+            rel_path = abs_path.relative_to(self.workspace_root)
+            # Convert to container mount path
+            container_path = Path("/app") / rel_path
+            return container_path.as_posix()
+        except ValueError:
+            # Path is outside workspace, return as-is (with POSIX format)
+            return abs_path.as_posix()
+    
+    def execute_workflow(self, workflow: Dict[str, Any], job_id: str = None) -> Dict[str, Any]:
+        """
+        Execute a complete workflow.
+        
+        Args:
+            workflow: Validated workflow dictionary
+            job_id: Optional job identifier
+            
+        Returns:
+            Workflow execution results
+        """
+        if job_id:
+            self.current_job_id = job_id
+        else:
+            import time
+            self.current_job_id = f"job_{int(time.time())}"
+        
+        services = workflow.get("services", [])
+        params = workflow.get("parameters", {})
+        
+        # Create job directory
+        job_dir = self.output_base / self.current_job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        
+        results = {
+            "job_id": self.current_job_id,
+            "services_executed": [],
+            "results": {},
+            "errors": []
+        }
+        
+        logger.info(f"Starting workflow execution: {self.current_job_id}")
+        logger.info(f"Services to execute: {services}")
+        
+        try:
+            # Step 1: Download structures
+            if "download" in services:
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print("\n📥 STEP 1: Downloading structures...")
+                else:
+                    logger.info("\n" + "="*80)
+                    logger.info("STEP 1: Downloading structures")
+                    logger.info("="*80)
+                
+                download_dir = job_dir / "downloads"
+                download_dir.mkdir(exist_ok=True)
+                
+                download_result = self.call_mcp_tool(
+                    self.services["rcsb_downloader"],
+                    "download_structures",
+                    {
+                        "protein_id": params["protein_id"],
+                        "ligand_ids": params.get("ligand_ids", []),
+                        "formats": params.get("formats", {"protein": "pdb", "ligand": "sdf"}),
+                        "save_dir": self.normalize_path(download_dir)
+                    }
+                )
+                
+                results["results"]["download"] = download_result
+                results["services_executed"].append("download")
+                
+                # Store file paths for next steps (paths are already in container format from download service)
+                protein_path = download_result.get("protein_path")
+                ligand_paths = download_result.get("ligand_paths", [])
+                
+                self.workflow_state["protein_file"] = protein_path
+                self.workflow_state["ligand_files"] = ligand_paths
+                
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print(f"   ✅ Downloaded protein and {len(self.workflow_state['ligand_files'])} ligand(s)")
+                else:
+                    logger.info(f"✅ Downloaded protein: {self.workflow_state['protein_file']}")
+                    logger.info(f"✅ Downloaded {len(self.workflow_state['ligand_files'])} ligands")
+            
+            # Step 2: Prepare ligands
+            if "prepare_ligands" in services or "prepare_protein" in services:
+                prepared_dir = job_dir / "prepared"
+                prepared_dir.mkdir(exist_ok=True)
+            
+            if "prepare_ligands" in services:
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print("\n🧪 STEP 2: Preparing ligands...")
+                else:
+                    logger.info("\n" + "="*80)
+                    logger.info("STEP 2: Preparing ligands")
+                    logger.info("="*80)
+                
+                if not self.workflow_state.get("ligand_files"):
+                    raise RuntimeError("No ligand files available for preparation")
+                
+                prepare_ligands_result = self.call_mcp_tool(
+                    self.services["ligand_preparer"],
+                    "prepare_ligands",
+                    {
+                        "ligand_paths": self.workflow_state["ligand_files"],  # Already in container format
+                        "output_dir": self.normalize_path(prepared_dir),
+                        "ph": params.get("ph", 7.4),
+                        "add_hydrogens": params.get("add_hydrogens", True),
+                        "generate_3d": params.get("generate_3d", True),
+                        "optimize": params.get("optimize", True)
+                    }
+                )
+                
+                results["results"]["prepare_ligands"] = prepare_ligands_result
+                results["services_executed"].append("prepare_ligands")
+                
+                # Store prepared ligand paths
+                prepared_ligands = []
+                for result in prepare_ligands_result.get("prepared_ligands", []):
+                    if result.get("pdbqt_path"):
+                        prepared_ligands.append(result["pdbqt_path"])
+                
+                self.workflow_state["prepared_ligands"] = prepared_ligands
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print(f"   ✅ Prepared {len(prepared_ligands)} ligand(s)")
+                else:
+                    logger.info(f"✅ Prepared {len(prepared_ligands)} ligands")
+            
+            # Step 3: Prepare protein
+            if "prepare_protein" in services:
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print("\n🧬 STEP 3: Preparing protein...")
+                else:
+                    logger.info("\n" + "="*80)
+                    logger.info("STEP 3: Preparing protein")
+                    logger.info("="*80)
+                
+                if not self.workflow_state.get("protein_file"):
+                    raise RuntimeError("No protein file available for preparation")
+                
+                prepare_protein_result = self.call_mcp_tool(
+                    self.services["protein_preparer"],
+                    "prepare_proteins",
+                    {
+                        "protein_paths": [self.workflow_state["protein_file"]],  # Already in container format
+                        "output_dir": self.normalize_path(prepared_dir),
+                        "ph": params.get("ph", 7.4),
+                        "add_hydrogens": params.get("add_hydrogens", True),
+                        "remove_waters": params.get("remove_waters", True)
+                    }
+                )
+                
+                results["results"]["prepare_protein"] = prepare_protein_result
+                results["services_executed"].append("prepare_protein")
+                
+                # Store prepared protein path
+                protein_results = prepare_protein_result.get("prepared_proteins", [])
+                if protein_results and protein_results[0].get("pdbqt_path"):
+                    self.workflow_state["prepared_protein"] = protein_results[0].get("pdbqt_path")
+                    if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                        print(f"   ✅ Protein prepared successfully")
+                    else:
+                        logger.info(f"✅ Prepared protein: {self.workflow_state['prepared_protein']}")
+            
+            # Step 4: Run docking
+            if "dock" in services:
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print("\n⚛️  STEP 4: Running molecular docking...")
+                else:
+                    logger.info("\n" + "="*80)
+                    logger.info("STEP 4: Running molecular docking")
+                    logger.info("="*80)
+                
+                if not self.workflow_state.get("prepared_protein"):
+                    raise RuntimeError("No prepared protein available for docking")
+                if not self.workflow_state.get("prepared_ligands"):
+                    raise RuntimeError("No prepared ligands available for docking")
+                
+                docking_dir = job_dir / "docking_results"
+                docking_dir.mkdir(exist_ok=True)
+                
+                if self.verbosity != VERBOSITY_LOW:
+                    logger.info(f"Docking parameters:")
+                    logger.info(f"  Center: {params['center']}")
+                    logger.info(f"  Box Size: {params['box_size']}")
+                    logger.info(f"  Exhaustiveness: {params.get('exhaustiveness', 8)}")
+                    logger.info(f"  Population: {params.get('population', 500)}")
+                
+                docking_result = self.call_mcp_tool(
+                    self.services["moldina_runner"],
+                    "run_docking",
+                    {
+                        "receptor_path": self.workflow_state["prepared_protein"],  # Already in container format
+                        "ligand_paths": self.workflow_state["prepared_ligands"],  # Already in container format
+                        "output_dir": self.normalize_path(docking_dir),
+                        "center": params["center"],
+                        "box_size": params["box_size"],
+                        "cpu": params.get("cpu", 4),
+                        "population": params.get("population", 500),
+                        "exhaustiveness": params.get("exhaustiveness", 8),
+                        "num_modes": params.get("num_modes", 15),
+                        "energy_range": params.get("energy_range", 100.0)
+                    }
+                )
+                
+                results["results"]["dock"] = docking_result
+                results["services_executed"].append("dock")
+                
+                # Store docking results
+                self.workflow_state["docking_results"] = docking_result
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print(f"   ✅ Docking completed: {docking_result.get('successful', 0)} successful")
+                else:
+                    logger.info(f"✅ Docking completed: {docking_result.get('successful', 0)} successful")
+            
+            # Step 5: Visualize
+            if "visualize" in services:
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print("\n🎨 STEP 5: Generating visualization...")
+                else:
+                    logger.info("\n" + "="*80)
+                    logger.info("STEP 5: Generating visualization")
+                    logger.info("="*80)
+                
+                if not self.workflow_state.get("prepared_protein"):
+                    raise RuntimeError("No prepared protein available for visualization")
+                
+                # Get docked ligands
+                docked_ligands = []
+                affinities = []
+                
+                if self.workflow_state.get("docking_results"):
+                    for ligand_result in self.workflow_state["docking_results"].get("results", []):
+                        if ligand_result.get("output_path"):
+                            docked_ligands.append(ligand_result["output_path"])
+                            affinities.append(ligand_result.get("best_affinity", 0.0))
+                
+                if not docked_ligands:
+                    if self.verbosity != VERBOSITY_LOW:
+                        logger.warning("No docked ligands found, using prepared ligands for visualization")
+                    docked_ligands = self.workflow_state.get("prepared_ligands", [])
+                    affinities = None
+                
+                viz_dir = job_dir / "visualization"
+                viz_dir.mkdir(exist_ok=True)
+                
+                viz_result = self.call_mcp_tool(
+                    self.services["pymol_visualizer"],
+                    "visualize_docking",
+                    {
+                        "receptor_path": self.workflow_state["prepared_protein"],  # Already in container format
+                        "ligand_paths": docked_ligands,  # Already in container format
+                        "output_dir": self.normalize_path(viz_dir),
+                        "affinities": affinities,
+                        "show_surface": True,
+                        "show_binding_site": True,
+                        "binding_site_radius": 5.0,
+                        "render_image": True,
+                        "image_width": 1920,
+                        "image_height": 1080,
+                        "image_dpi": 300,
+                        "ray_trace": True
+                    }
+                )
+                
+                results["results"]["visualize"] = viz_result
+                results["services_executed"].append("visualize")
+                
+                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                    print(f"   ✅ Visualization created")
+                else:
+                    logger.info(f"✅ Visualization created: {viz_result.get('script_path')}")
+                    if viz_result.get("image_path"):
+                        logger.info(f"✅ Image rendered: {viz_result.get('image_path')}")
+            
+            # Success
+            results["status"] = "completed"
+            if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
+                print("\n✅ WORKFLOW COMPLETED SUCCESSFULLY\n")
+            else:
+                logger.info("\n" + "="*80)
+                logger.info("✅ WORKFLOW COMPLETED SUCCESSFULLY")
+                logger.info("="*80)
+            
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+            results["status"] = "failed"
+            results["errors"].append(str(e))
+        
+        # Save results to file
+        results_file = job_dir / "workflow_results.json"
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        logger.info(f"Results saved to: {results_file}")
+        
+        return results

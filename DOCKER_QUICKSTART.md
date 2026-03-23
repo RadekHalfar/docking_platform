@@ -68,7 +68,7 @@ mcp-ligand-preparer    Up (healthy)
 mcp-protein-preparer   Up (healthy)
 mcp-moldina-runner     Up (healthy)
 mcp-pymol-visualizer   Up (healthy)
-mcp-ollama             Up (healthy)
+mcp-llm                Up (healthy)
 ```
 
 **Health check URLs:**

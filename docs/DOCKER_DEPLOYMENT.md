@@ -87,7 +87,7 @@ mcp-ligand-preparer     mcp-ligand-preparer:latest   Up (healthy)
 mcp-protein-preparer    mcp-protein-preparer:latest  Up (healthy)
 mcp-moldina-runner      mcp-moldina-runner:latest    Up (healthy)
 mcp-pymol-visualizer    mcp-pymol-visualizer:latest  Up (healthy)
-mcp-ollama              ollama/ollama:latest         Up (healthy)
+mcp-llm                 ollama/ollama:latest         Up (healthy)
 ```
 
 ### 4. Test a Service

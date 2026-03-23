@@ -46,8 +46,8 @@ All services run in Docker containers.
 # 1. Start all services (including Ollama LLM)
 docker compose up -d
 
-# 2. Download the LLM model (once, ~4 GB for Llama 2)
-docker exec -it mcp-ollama ollama pull llama2
+# 2. Download the default LLM model (DeepSeek Coder 6.7B Q4, ~4.1 GB)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Optional: switch model at runtime (no rebuild needed)
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
@@ -70,6 +70,60 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 ```
 
 **See [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) for complete guide and examples.**
+
+### LLM Model Selection (No Rebuild Needed!)
+
+Switch between different LLM models at runtime without rebuilding Docker images:
+
+#### Available Models
+
+| Model | Download Size | Speed | Best For |
+|-------|---|---|---|
+| **DeepSeek Coder 6.7B Q4** (default) | 4.1 GB | Medium | Complex reasoning, code understanding |
+| **Mistral 7B Q4** | 4.0 GB | Medium | Balanced performance, strong reasoning |
+| **Phi-3 Mini Q4** | 2.0 GB | Fast | Quick responses, lower memory |
+| **Llama 2 7B Q4** | 3.8 GB | Medium | General purpose |
+
+#### How to Use Different Models
+
+**Step 1: Download a model into the LLM container** (one-time per model)
+```powershell
+# DeepSeek (project default, already pre-installed)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+
+# Mistral
+docker exec -it mcp-llm ollama pull mistral
+
+# Phi-3 (lightweight)
+docker exec -it mcp-llm ollama pull phi3
+
+# Llama 2
+docker exec -it mcp-llm ollama pull llama2
+```
+
+**Step 2: Use the model in your workflows** (just add `--llm-model` flag)
+```powershell
+# Use default model
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+
+# Use Mistral instead
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
+
+# Use lightweight Phi-3 for faster inference
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model phi3 "Download 6lu7 and ATP, prepare and dock"
+
+# List available models
+docker exec -it mcp-llm ollama list
+```
+
+#### Key Features
+
+✅ **No Docker rebuild** – Just pull a model and use `--llm-model` flag  
+✅ **Multiple providers** – Extensible architecture supports other LLM APIs  
+✅ **Environment variables** – Set `LLM_MODEL`, `LLM_ENDPOINT`, `LLM_PROVIDER` for custom configuration  
+✅ **Model persistence** – Models are cached in the `ollama-data` volume (survives container restarts)
+
+**See [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) for advanced configuration and troubleshooting.**
 
 ### Docker Deployment (Recommended - 5 Minutes!)
 

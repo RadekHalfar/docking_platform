@@ -231,10 +231,10 @@ docker ps -a | grep mcp | awk '{print $1}' | xargs docker rm -f
 
 ```bash
 # Verify GPU device request was applied to ollama container
-docker inspect mcp-ollama --format "Runtime={{.HostConfig.Runtime}} DeviceRequests={{json .HostConfig.DeviceRequests}}"
+docker inspect mcp-llm --format "Runtime={{.HostConfig.Runtime}} DeviceRequests={{json .HostConfig.DeviceRequests}}"
 
 # Check active model processor split (CPU/GPU)
-docker exec mcp-ollama ollama ps
+docker exec mcp-llm ollama ps
 ```
 
 ## Service-Specific Commands

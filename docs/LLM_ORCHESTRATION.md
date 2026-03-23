@@ -75,14 +75,14 @@ docker ps
 ### 2. Download LLM Model
 
 ```bash
-# Download Llama 2 (recommended, ~4GB)
-docker exec -it mcp-ollama ollama pull llama2
+# Download DeepSeek Coder 6.7B Q4 (default, ~4.1GB)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # OR download Mistral (alternative, ~4GB)
-docker exec -it mcp-ollama ollama pull mistral
+docker exec -it mcp-llm ollama pull mistral
 
 # OR download Phi-3 (smaller, faster, ~2GB)
-docker exec -it mcp-ollama ollama pull phi3
+docker exec -it mcp-llm ollama pull phi3
 ```
 
 ### 3. Check Service Health
@@ -94,7 +94,7 @@ python nlp_orchestrator.py --check-health
 ### 4. Optional: Select Provider/Model at Runtime
 
 ```bash
-# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model llama2
+# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model deepseek-coder:6.7b-instruct-q4_K_M
 python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP"
 
 # Explicit provider and endpoint
@@ -156,7 +156,7 @@ Options:
   --interactive, -i         Run in interactive mode
   --llm-provider NAME       LLM provider name (default: ollama)
   --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
-  --llm-model MODEL         LLM model name (default: llama2)
+  --llm-model MODEL         LLM model name (default: deepseek-coder:6.7b-instruct-q4_K_M)
   --llm-api-key KEY         Optional API key for providers that require auth
   --output-dir DIR          Output directory (default: ./orchestrator_output)
   --check-health            Check all services and exit
@@ -322,22 +322,23 @@ orchestrator_output/
 
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
-| **llama2** | ~4GB | Medium | High | Best overall (recommended) |
-| **mistral** | ~4GB | Fast | High | Alternative to Llama 2 |
+| **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Project default |
+| **llama2** | ~4GB | Medium | High | Stable alternative |
+| **mistral** | ~4GB | Fast | High | Fast alternative |
 | **phi3** | ~2GB | Very Fast | Good | Resource-constrained systems |
 | **codellama** | ~4GB | Medium | High | Code-focused (alternative) |
 
 ### Download Models
 
 ```bash
-# Llama 2 (recommended)
-docker exec -it mcp-ollama ollama pull llama2
+# DeepSeek Coder 6.7B Q4 (project default)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Mistral (alternative)
-docker exec -it mcp-ollama ollama pull mistral
+docker exec -it mcp-llm ollama pull mistral
 
 # Phi-3 (lightweight)
-docker exec -it mcp-ollama ollama pull phi3
+docker exec -it mcp-llm ollama pull phi3
 ```
 
 ### List Available Models
@@ -346,7 +347,7 @@ docker exec -it mcp-ollama ollama pull phi3
 python nlp_orchestrator.py --list-models
 
 # OR
-docker exec -it mcp-ollama ollama list
+docker exec -it mcp-llm ollama list
 ```
 
 ### Use Different Model
@@ -359,7 +360,7 @@ python nlp_orchestrator.py --llm-model mistral "Download 6lu7"
 
 ```bash
 # Pull model once
-docker exec -it mcp-ollama ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Use it immediately (no docker image rebuild)
 python nlp_orchestrator.py --llm-model deepseek-coder:6.7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
@@ -378,7 +379,7 @@ docker ps | grep ollama
 
 **View logs:**
 ```bash
-docker logs mcp-ollama
+docker logs mcp-llm
 ```
 
 **Restart:**
@@ -390,12 +391,12 @@ docker compose restart ollama
 
 **Download the model:**
 ```bash
-docker exec -it mcp-ollama ollama pull llama2
+docker exec -it mcp-llm ollama pull llama2
 ```
 
 **Check available models:**
 ```bash
-docker exec -it mcp-ollama ollama list
+docker exec -it mcp-llm ollama list
 ```
 
 ### GPU Not Detected
@@ -413,7 +414,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
 **Use smaller model:**
 ```bash
-docker exec -it mcp-ollama ollama pull phi3
+docker exec -it mcp-llm ollama pull phi3
 python nlp_orchestrator.py --llm-model phi3 "..."
 ```
 

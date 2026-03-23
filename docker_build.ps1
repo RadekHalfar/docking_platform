@@ -55,6 +55,12 @@ $allServices = @{
         description = "PyMOL visualization service"
         depends = @("base")
     }
+    "pymol-interactive" = @{
+        dockerfile = "docker/pymol_interactive.Dockerfile"
+        tag = "mcp-pymol-interactive:latest"
+        description = "Interactive PyMOL service (noVNC + helper API)"
+        depends = @("base")
+    }
 }
 
 # Determine which services to build

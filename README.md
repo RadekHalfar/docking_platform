@@ -153,8 +153,14 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 # 5. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 
-# 6. View results
-pymol .\demo_output\visualization\visualization.pse
+# 6. Optional: start interactive PyMOL in browser (no host PyMOL needed)
+docker compose --profile interactive up -d pymol-interactive
+# open: http://localhost:6080/vnc.html
+# helper API: http://localhost:8090
+# If your workflow command includes "visualize", the CLI will auto-load that job into pymol-interactive when this service is running.
+
+# 7. View rendered image output from containerized PyMOL
+# .\demo_output\visualization\docking_visualization.png
 ```
 
 **See [DOCKER_QUICKSTART.md](DOCKER_QUICKSTART.md) for detailed guide.**
@@ -190,6 +196,7 @@ python3 -m services.pymol_visualizer.server
 - Protein Preparer (port 8003) - ~2 GB
 - Moldina Runner (port 8004) - ~2 GB with custom Moldina executable
 - PyMOL Visualizer (port 8005) - ~3.5 GB with conda PyMOL + headless rendering
+- PyMOL Interactive (ports 6080/8090) - Browser-based noVNC session + docking-box helper API
 
 **See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) for complete Docker guide.**
 
@@ -278,6 +285,9 @@ mcp_demo/
 │   ├── pymol_visualizer/       # Visualization service
 │   │   ├── __init__.py
 │   │   └── server.py
+│   ├── pymol_interactive/      # Interactive noVNC PyMOL helper service
+│   │   ├── __init__.py
+│   │   └── server.py
 │   └── llm_orchestrator/       # LLM-based workflow orchestration
 │       ├── __init__.py
 │       ├── llm_base.py         # Provider interface
@@ -299,7 +309,8 @@ mcp_demo/
 │   ├── ligand_preparer.Dockerfile
 │   ├── protein_preparer.Dockerfile
 │   ├── moldina_runner.Dockerfile
-│   └── pymol_visualizer.Dockerfile
+│   ├── pymol_visualizer.Dockerfile
+│   └── pymol_interactive.Dockerfile
 │
 ├── docs/                        # Documentation
 │   ├── API.md                  # MCP tool specifications

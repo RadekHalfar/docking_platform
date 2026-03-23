@@ -7,6 +7,8 @@ import sys
 import os
 import logging
 import argparse
+import subprocess
+import requests
 from typing import Optional, List
 
 from services.llm_orchestrator import (
@@ -345,6 +347,77 @@ def _collect_missing_parameters(parser_obj: WorkflowParser) -> None:
         )
 
 
+def _is_running_in_container() -> bool:
+    """Best-effort check whether this process runs inside a container."""
+    return os.path.exists("/.dockerenv")
+
+
+def _try_start_pymol_interactive_service() -> bool:
+    """Try to start pymol-interactive via docker compose on host runtime."""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "--profile", "interactive", "up", "-d", "pymol-interactive"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _integrate_with_pymol_interactive(results: dict) -> None:
+    """When visualization is requested, load job in interactive PyMOL if available."""
+    if "visualize" not in results.get("services_executed", []):
+        return
+
+    base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
+    no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
+    job_id = results.get("job_id")
+
+    def _service_healthy() -> bool:
+        try:
+            response = requests.get(f"{base_url}/health", timeout=5)
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
+    healthy = _service_healthy()
+    if not healthy:
+        started = False
+        if not _is_running_in_container():
+            started = _try_start_pymol_interactive_service()
+            if started:
+                healthy = _service_healthy()
+
+        if not healthy:
+            print("\nℹ️  Visualization is ready, but pymol_interactive is not reachable.")
+            print("   Start it with: docker compose --profile interactive up -d pymol-interactive")
+            print(f"   Then open: {no_vnc_url}")
+            return
+
+    try:
+        response = requests.post(
+            f"{base_url}/api/load_job",
+            json={"job_id": job_id},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            print("\n⚠️  pymol_interactive is running, but failed to auto-load job.")
+            print(f"   API response: {response.text}")
+            print(f"   Open noVNC: {no_vnc_url}")
+            return
+
+        print("\n✅ Interactive PyMOL session is ready.")
+        print(f"   Open noVNC: {no_vnc_url}")
+        print(f"   Loaded job: {job_id}")
+        print("   To derive docking box from your selection (e.g., 'sele'):")
+        print(f"   POST {base_url}/api/box/from_selection with {{\"job_id\":\"{job_id}\",\"selection\":\"sele\"}}")
+    except requests.RequestException as exc:
+        print(f"\n⚠️  Could not contact pymol_interactive API: {exc}")
+        print(f"   Open noVNC: {no_vnc_url}")
+
+
 def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: WorkflowOrchestrator, parser_obj: WorkflowParser) -> int:
     """
     Process a workflow from natural language input.
@@ -410,6 +483,8 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
         
         print("\n✅ Workflow completed successfully!")
         print(f"\nResults saved to: {orchestrator.output_base / results['job_id']}")
+
+        _integrate_with_pymol_interactive(results)
         
         return 0
         

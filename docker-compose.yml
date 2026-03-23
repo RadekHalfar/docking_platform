@@ -130,6 +130,32 @@ services:
       retries: 3
       start_period: 40s
 
+  # Interactive PyMOL Service (noVNC + helper API)
+  # Browser UI for interactive visualization and docking-box definition.
+  pymol-interactive:
+    <<: *service-common
+    profiles: ["interactive"]
+    image: mcp-pymol-interactive:latest
+    build:
+      context: .
+      dockerfile: docker/pymol_interactive.Dockerfile
+    container_name: mcp-pymol-interactive
+    ports:
+      - "6080:6080"  # noVNC web UI
+      - "8090:8090"  # helper API
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DISPLAY=:99
+      - ORCHESTRATOR_OUTPUT_DIR=/app/orchestrator_output
+      - PYMOL_INTERACTIVE_PORT=8090
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # Ollama LLM Service (Port 11434)
   # Local LLM for natural language workflow orchestration
   ollama:
@@ -186,6 +212,7 @@ services:
       - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
       - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
       - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
+      - MCP_PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
       - LLM_PROVIDER=ollama
       - LLM_ENDPOINT=http://ollama:11434
       - LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M

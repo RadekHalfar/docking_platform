@@ -154,6 +154,39 @@ docker compose --profile dev run --rm `
 
 This runs unit and Docker integration tests from inside the containerized dev environment.
 
+### Option E: Interactive PyMOL In Browser (no host PyMOL required)
+
+Start the interactive service:
+
+```powershell
+docker compose --profile interactive up -d pymol-interactive
+```
+
+Open browser UI:
+
+```text
+http://localhost:6080/vnc.html
+```
+
+When your natural-language command includes `visualize`, `nlp_orchestrator.py` automatically calls `pymol-interactive` and loads the created job into the live PyMOL session (if this service is up).
+
+Helper API (load latest workflow and derive docking box):
+
+```powershell
+# List jobs
+Invoke-RestMethod -Uri "http://localhost:8090/api/jobs"
+
+# Load a job into the live PyMOL session
+Invoke-RestMethod -Uri "http://localhost:8090/api/load_job" -Method Post -ContentType "application/json" -Body '{"job_id":"job_1774258373"}'
+
+# In PyMOL GUI, create a visual selection (e.g., name: sele), then derive center/box and save
+Invoke-RestMethod -Uri "http://localhost:8090/api/box/from_selection" -Method Post -ContentType "application/json" -Body '{"job_id":"job_1774258373","selection":"sele"}'
+```
+
+The saved file `orchestrator_output/<job_id>/docking_box.json` contains:
+- `center`: `[x, y, z]`
+- `box_size`: `[x, y, z]`
+
 #### Check Moldina Installation
 
 ```bash

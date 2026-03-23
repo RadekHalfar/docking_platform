@@ -329,6 +329,10 @@ curl -X POST http://localhost:8090/api/load_job \
   -d '{"job_id":"job_123456"}'
 ```
 
+CLI behavior for missing docking box coordinates:
+- The orchestrator asks whether to provide box values manually or define them in PyMOL Interactive.
+- Choosing PyMOL mode creates `orchestrator_output/<job_id>/docking_box.json` from the current selection.
+
 ## Troubleshooting
 
 ### Port Already in Use

@@ -8,8 +8,9 @@ import os
 import logging
 import argparse
 import subprocess
+import time
 import requests
-from typing import Optional, List
+from typing import Optional, List, Callable, Dict, Any
 
 from services.llm_orchestrator import (
     BaseLLMClient,
@@ -275,15 +276,178 @@ def _parse_coordinate_triplet(value: str) -> Optional[List[float]]:
         return None
 
 
-def _collect_missing_parameters(parser_obj: WorkflowParser) -> None:
+def _generate_job_id() -> str:
+    """Generate a job id to keep all workflow artifacts under one folder."""
+    return f"job_{int(time.time() * 1000)}"
+
+
+def _create_box_via_live_pymol(orchestrator: WorkflowOrchestrator, workflow: Dict[str, Any], job_id: str) -> Optional[dict]:
+    """Run pre-docking prep, open interactive PyMOL flow, and derive center/box_size from selection."""
+    base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
+    no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
+
+    def _service_healthy() -> bool:
+        try:
+            response = requests.get(f"{base_url}/health", timeout=5)
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
+    # Ensure PyMOL Interactive is available.
+    healthy = _service_healthy()
+    if not healthy and not _is_running_in_container():
+        if _try_start_pymol_interactive_service():
+            for _ in range(30):
+                if _service_healthy():
+                    healthy = True
+                    break
+                time.sleep(1)
+
+    if not healthy:
+        print("pymol_interactive is not reachable.")
+        print("Start it with: docker compose --profile interactive up -d pymol-interactive")
+        print(f"Then open: {no_vnc_url}")
+        return None
+
+    # Run the preparation phase so interactive service can load prepared receptor/ligands.
+    print("\n🧪 Preparing structures for interactive box selection...")
+    prep_workflow = {
+        "services": ["download", "prepare_ligands", "prepare_protein"],
+        "parameters": workflow.get("parameters", {}),
+    }
+    prep_results = orchestrator.execute_workflow(prep_workflow, job_id=job_id)
+    if prep_results.get("errors"):
+        print("Could not prepare structures for PyMOL-guided box selection.")
+        for err in prep_results["errors"]:
+            print(f"  - {err}")
+        return None
+
+    prep_job_id = prep_results.get("job_id", job_id)
+
+    # Load prepared assets into live PyMOL session.
+    loaded = False
+    for _ in range(30):
+        try:
+            response = requests.post(
+                f"{base_url}/api/load_job",
+                json={"job_id": prep_job_id},
+                timeout=15,
+            )
+            if response.status_code == 200:
+                loaded = True
+                break
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+
+    if not loaded:
+        print("Could not auto-load prepared structures into interactive PyMOL.")
+        print(f"Open noVNC manually: {no_vnc_url}")
+        return None
+
+    print("\n✅ Interactive PyMOL is ready for box selection.")
+    print(f"Open noVNC: {no_vnc_url}")
+    print("In PyMOL, create/select your target region, then type selection name (default: sele).")
+
+    selection = input("Selection name to use for docking box [sele]: ").strip() or "sele"
+
+    try:
+        response = requests.post(
+            f"{base_url}/api/box/from_selection",
+            json={"job_id": prep_job_id, "selection": selection},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            print(f"Failed to derive docking box from selection '{selection}'.")
+            print(f"API response: {response.text}")
+            return None
+
+        payload = response.json()
+        return {
+            "center": payload.get("center"),
+            "box_size": payload.get("box_size"),
+            "job_id": prep_job_id,
+            "path": payload.get("saved_to", ""),
+        }
+    except requests.RequestException as exc:
+        print(f"Could not contact pymol_interactive API: {exc}")
+        return None
+
+
+def _choose_docking_box_source(
+    parser_obj: WorkflowParser,
+    output_base: str,
+    live_box_provider: Optional[Callable[[], Optional[dict]]] = None,
+) -> bool:
+    """Ask user whether to type box values manually or define a new box in PyMOL.
+
+    Returns True when coordinates were populated from PyMOL box, False for manual flow.
+    """
+    while True:
+        print("\nDocking box coordinates are missing.")
+        print("Choose how to provide them:")
+        print("  1) Write center/box_size manually")
+        print("  2) Define a new box in PyMOL Interactive now")
+        choice = input("Select [1/2] (default: 1): ").strip().lower()
+
+        if choice in ["", "1", "manual", "write", "w"]:
+            return False
+
+        if choice in ["2", "pymol", "visual", "v"]:
+            if not live_box_provider:
+                print("PyMOL-guided box definition is not available in this run. Please choose manual entry.")
+                return False
+
+            box_payload = live_box_provider()
+            if not box_payload:
+                print("Could not define docking box from interactive PyMOL.")
+                if _ask_yes_no("Do you want to enter coordinates manually now? [Y/n]: ", default_yes=True):
+                    return False
+                continue
+
+            center = box_payload.get("center")
+            box_size = box_payload.get("box_size")
+            if not parser_obj.validate_coordinates(center) or not parser_obj.validate_coordinates(box_size):
+                print("PyMOL returned invalid coordinates. Please choose manual entry.")
+                return False
+
+            parser_obj.update_parameters({"center": center, "box_size": box_size})
+            print("✅ Loaded docking box from live PyMOL session:")
+            print(f"   center: {center}")
+            print(f"   box_size: {box_size}")
+            print(f"   source: {box_payload.get('path', 'pymol_interactive')}")
+            return True
+
+        print("Please choose 1 or 2.")
+
+
+def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) -> None:
     """Collect missing or invalid required fields in short step-by-step prompts."""
     prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
     center_default = [10.0, 20.0, 30.0]
     box_size_default = [25.0, 30.0, 35.0]
+    box_source_decided = False
 
     while parser_obj.has_missing_parameters():
         missing = parser_obj.get_missing_parameters()
         current_param = next((p for p in prompt_order if p in missing), missing[0])
+
+        if current_param in ["center", "box_size"] and not box_source_decided:
+            box_source_decided = True
+            used_pymol = _choose_docking_box_source(
+                parser_obj,
+                output_base,
+                live_box_provider=getattr(parser_obj, "_live_box_provider", None),
+            )
+            if used_pymol:
+                # Re-run validation and continue with any other missing fields.
+                parser_obj.validate_workflow(
+                    {
+                        "services": parser_obj.parsed_workflow["services"],
+                        "parameters": parser_obj.parsed_workflow["parameters"],
+                    }
+                )
+                continue
 
         if current_param == "protein_id":
             issue = parser_obj.get_parameter_issue("protein_id")
@@ -442,13 +606,18 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
         # Show summary
         print("\n" + parser_obj.get_workflow_summary())
         
+        # Reserve one job id so prep + docking phases stay in the same folder.
+        shared_job_id = _generate_job_id()
+
         # Check for missing parameters
         if parser_obj.has_missing_parameters():
             print("\n⚠️  I need a bit more information before running this workflow.")
             print(parser_obj.format_missing_prompt())
 
             # Ask only for missing/invalid fields, one short question at a time.
-            _collect_missing_parameters(parser_obj)
+            parser_obj._live_box_provider = lambda: _create_box_via_live_pymol(orchestrator, parser_obj.parsed_workflow, shared_job_id)
+            _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
+            parser_obj._live_box_provider = None
             workflow = parser_obj.parsed_workflow
             
             print("\n" + parser_obj.get_workflow_summary())
@@ -465,7 +634,7 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
         print("Executing workflow...")
         print("="*80 + "\n")
         
-        results = orchestrator.execute_workflow(workflow)
+        results = orchestrator.execute_workflow(workflow, job_id=shared_job_id)
         
         # Show results
         print("\n" + "="*80)

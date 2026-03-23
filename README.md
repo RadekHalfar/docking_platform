@@ -158,6 +158,10 @@ docker compose --profile interactive up -d pymol-interactive
 # open: http://localhost:6080/vnc.html
 # helper API: http://localhost:8090
 # If your workflow command includes "visualize", the CLI will auto-load that job into pymol-interactive when this service is running.
+# If docking center/box_size are missing, the CLI asks:
+#   1) Write center/box_size manually
+#   2) Define box in PyMOL Interactive now
+# Option 2 creates docking_box.json from your current PyMOL selection.
 
 # 7. View rendered image output from containerized PyMOL
 # .\demo_output\visualization\docking_visualization.png

@@ -175,6 +175,12 @@ http://localhost:6080/vnc.html
 
 When your natural-language command includes `visualize`, `nlp_orchestrator.py` automatically calls `pymol-interactive` and loads the created job into the live PyMOL session (if this service is up).
 
+When docking coordinates are missing, `nlp_orchestrator.py` now asks how to provide them:
+1. Write `center/box_size` manually
+2. Define box in PyMOL Interactive now
+
+Option 2 creates `docking_box.json` from your current PyMOL selection and continues the workflow.
+
 Helper API (load latest workflow and derive docking box):
 
 ```powershell

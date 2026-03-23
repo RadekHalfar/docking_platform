@@ -120,6 +120,12 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
 
+If docking coordinates are missing, the CLI prompts for box source:
+- Manual entry (`center`/`box_size`)
+- PyMOL Interactive definition
+
+When PyMOL mode is selected, the orchestrator launches an interactive selection flow and creates `orchestrator_output/<job_id>/docking_box.json` from the current selection.
+
 If you prefer local execution, core APIs remain available at localhost ports 8001-8005 and Ollama at 11434.
 The optional interactive PyMOL service exposes noVNC on 6080 and helper API on 8090.
 

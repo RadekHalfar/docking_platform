@@ -178,12 +178,15 @@ conda activate docking-system
 conda install -c conda-forge rdkit openbabel meeko
 pip install -r requirements.txt
 
-# Start services individually (ports 8001-8005)
+# Start core API services individually (ports 8001-8005)
 python3 -m services.rcsb_downloader.server
 python3 -m services.ligand_preparer.server
 python3 -m services.protein_preparer.server
 python3 -m services.moldina_runner.server
 python3 -m services.pymol_visualizer.server
+
+# Optional interactive browser service (ports 6080/8090)
+# docker compose --profile interactive up -d pymol-interactive
 ```
 
 ### Docker Deployment Details

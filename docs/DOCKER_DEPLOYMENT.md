@@ -90,6 +90,12 @@ mcp-pymol-visualizer    mcp-pymol-visualizer:latest  Up (healthy)
 mcp-llm                 ollama/ollama:latest         Up (healthy)
 ```
 
+Optional interactive service:
+```bash
+docker compose --profile interactive up -d pymol-interactive
+docker compose ps pymol-interactive
+```
+
 ### 4. Test a Service
 
 ```bash
@@ -114,7 +120,8 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
 
-If you prefer local execution, services remain available at localhost ports 8001-8005 and Ollama at 11434.
+If you prefer local execution, core APIs remain available at localhost ports 8001-8005 and Ollama at 11434.
+The optional interactive PyMOL service exposes noVNC on 6080 and helper API on 8090.
 
 ---
 
@@ -170,8 +177,11 @@ mcp-docking-base:latest
         ├── mcp-moldina-runner:latest
         │   └─ Moldina/Vina binary
         │
-        └── mcp-pymol-visualizer:latest
-            └─ PyMOL, Xvfb (virtual display)
+        ├── mcp-pymol-visualizer:latest
+        │   └─ PyMOL, Xvfb (virtual display)
+        │
+        └── mcp-pymol-interactive:latest
+          └─ PyMOL GUI + noVNC + helper API
 ```
 
 ---
@@ -214,6 +224,7 @@ docker build -f docker/ligand_preparer.Dockerfile -t mcp-ligand-preparer:latest 
 docker build -f docker/protein_preparer.Dockerfile -t mcp-protein-preparer:latest .
 docker build -f docker/moldina_runner.Dockerfile -t mcp-moldina-runner:latest .
 docker build -f docker/pymol_visualizer.Dockerfile -t mcp-pymol-visualizer:latest .
+docker build -f docker/pymol_interactive.Dockerfile -t mcp-pymol-interactive:latest .
 ```
 
 ---
@@ -287,6 +298,7 @@ MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
 MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
 MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
 MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
+MCP_PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
 
 # LLM configuration for nlp_orchestrator.py
 LLM_PROVIDER=ollama
@@ -552,6 +564,9 @@ services:
   
   pymol-visualizer:
     profiles: ["full", "visualization"]
+
+  pymol-interactive:
+    profiles: ["interactive", "full", "visualization"]
 ```
 
 ```bash
@@ -560,6 +575,9 @@ docker compose --profile docking up -d
 
 # Start everything
 docker compose --profile full up -d
+
+# Start browser-based interactive PyMOL only
+docker compose --profile interactive up -d pymol-interactive
 ```
 
 ### CI/CD Integration

@@ -57,6 +57,9 @@ docker compose logs -f
 # View logs for specific service
 docker compose logs -f pymol-visualizer
 
+# Interactive PyMOL logs (noVNC + helper API)
+docker compose --profile interactive logs -f pymol-interactive
+
 # View last 100 lines
 docker compose logs --tail=100 moldina-runner
 
@@ -303,6 +306,27 @@ docker exec mcp-pymol-visualizer ps aux | grep Xvfb
 
 # Test rendering
 docker exec mcp-pymol-visualizer pymol -c -Q test.pml
+```
+
+### PyMOL Interactive (Ports 6080/8090)
+
+```bash
+# Start interactive service only
+docker compose --profile interactive up -d pymol-interactive
+
+# Check API health
+curl http://localhost:8090/health
+
+# Open browser desktop
+# http://localhost:6080/vnc.html
+
+# List available jobs
+curl http://localhost:8090/api/jobs
+
+# Load a job into the live PyMOL session
+curl -X POST http://localhost:8090/api/load_job \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"job_123456"}'
 ```
 
 ## Troubleshooting

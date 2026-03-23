@@ -36,6 +36,7 @@ docker compose build
 ✅ Successfully built protein-preparer
 ✅ Successfully built moldina-runner
 ✅ Successfully built pymol-visualizer
+✅ Successfully built pymol-interactive
 🎉 All images built successfully!
 ```
 
@@ -81,6 +82,10 @@ mcp-llm                Up (healthy)
 ## Step 4: Run Workflow
 
 The services are now running and accessible via HTTP on ports 8001-8005.
+
+Interactive PyMOL runs as an optional service with:
+- noVNC UI: http://localhost:6080/vnc.html
+- helper API: http://localhost:8090/health
 
 ### Option A: Use the Example Workflow Script
 
@@ -279,7 +284,7 @@ docker compose logs
 ```
 
 **Common fixes:**
-- Ensure ports 8001-8005 are available
+- Ensure ports 8001-8005 are available (and 6080/8090 if using interactive PyMOL)
 - Increase Docker Desktop memory (Settings → Resources)
 - Restart Docker Desktop
 

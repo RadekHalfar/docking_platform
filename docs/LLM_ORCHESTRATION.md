@@ -1,17 +1,18 @@
 # LLM Workflow Orchestration
 
-Natural-language interface for molecular docking workflows using local Ollama and MCP services.
+Natural-language interface for molecular docking workflows using modular LLM providers and MCP services.
 
 ---
 
 ## Overview
 
-This system lets you control the full molecular docking pipeline with plain-language commands. A local LLM parses each request, extracts parameters, and orchestrates calls across MCP services.
+This system lets you control the full molecular docking pipeline with plain-language commands. A provider-configured LLM parses each request, extracts parameters, and orchestrates calls across MCP services.
 
 ### Key Features
 
 - **Natural Language Input** - Describe workflows in plain English.
-- **Local LLM** - Runs on your hardware (Ollama, with GPU support when available).
+- **Modular LLM Architecture** - Provider interface + adapters (default: Ollama).
+- **Runtime Model Switching** - Change model with flags/env vars, no rebuild required.
 - **MCP Integration** - Coordinates all services through a single workflow.
 - **Smart Defaults** - Applies defaults when optional parameters are omitted.
 - **Validation** - Checks required parameters and prompts for missing values.
@@ -30,10 +31,10 @@ This system lets you control the full molecular docking pipeline with plain-lang
                     │
                     ▼
 ┌─────────────────────────────────────────────────────┐
-│              Ollama LLM (Local)                     │
-│  - Parses natural language                          │
-│  - Extracts services & parameters                   │
-│  - Returns structured JSON                          │
+│      LLM Provider Adapter (default: Ollama)         │
+│  - Provider interface (BaseLLMClient)               │
+│  - Adapter implementation (OllamaAdapter)           │
+│  - Factory-based selection (create_llm_client)      │
 └───────────────────┬─────────────────────────────────┘
                     │
                     ▼
@@ -90,7 +91,17 @@ docker exec -it mcp-ollama ollama pull phi3
 python nlp_orchestrator.py --check-health
 ```
 
-### 4. Run Your First Workflow
+### 4. Optional: Select Provider/Model at Runtime
+
+```bash
+# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model llama2
+python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP"
+
+# Explicit provider and endpoint
+python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model phi3 "Download 6lu7"
+```
+
+### 5. Run Your First Workflow
 
 ```bash
 python nlp_orchestrator.py "Download ligands ATP, HEM and protein 6lu7, prepare them for docking and perform docking with center 10,20,30 and box size 25,30,35"
@@ -143,11 +154,13 @@ python nlp_orchestrator.py --help
 
 Options:
   --interactive, -i         Run in interactive mode
-  --ollama-url URL          Ollama API URL (default: http://localhost:11434)
-  --model MODEL             Ollama model (default: llama2)
+  --llm-provider NAME       LLM provider name (default: ollama)
+  --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
+  --llm-model MODEL         LLM model name (default: llama2)
+  --llm-api-key KEY         Optional API key for providers that require auth
   --output-dir DIR          Output directory (default: ./orchestrator_output)
   --check-health            Check all services and exit
-  --list-models             List available Ollama models
+  --list-models             List available models from selected provider
   --debug                   Enable debug logging
 ```
 
@@ -339,7 +352,17 @@ docker exec -it mcp-ollama ollama list
 ### Use Different Model
 
 ```bash
-python nlp_orchestrator.py --model mistral "Download 6lu7"
+python nlp_orchestrator.py --llm-model mistral "Download 6lu7"
+```
+
+### Switch Models Without Rebuild
+
+```bash
+# Pull model once
+docker exec -it mcp-ollama ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+
+# Use it immediately (no docker image rebuild)
+python nlp_orchestrator.py --llm-model deepseek-coder:6.7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
 ```
 
 ---
@@ -391,7 +414,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 **Use smaller model:**
 ```bash
 docker exec -it mcp-ollama ollama pull phi3
-python nlp_orchestrator.py --model phi3 "..."
+python nlp_orchestrator.py --llm-model phi3 "..."
 ```
 
 **Check GPU usage:**
@@ -403,7 +426,7 @@ nvidia-smi
 
 **Try different model:**
 ```bash
-python nlp_orchestrator.py --model mistral "..."
+python nlp_orchestrator.py --llm-model mistral "..."
 ```
 
 **Enable debug mode:**
@@ -568,8 +591,11 @@ python nlp_orchestrator.py "..."
 # All tests
 python -m pytest tests/test_llm_orchestrator.py -v
 
+# Adapter and provider wiring tests
+python -m pytest tests/test_llm_adapters.py -v
+
 # Specific test
-python -m pytest tests/test_llm_orchestrator.py::TestOllamaClient::test_parse_workflow -v
+python -m pytest tests/test_llm_orchestrator.py::TestLLMArchitecture::test_parse_workflow_with_llm -v
 
 # With coverage
 python -m pytest tests/test_llm_orchestrator.py --cov=services.llm_orchestrator
@@ -611,7 +637,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 A: Only for initial model download and RCSB structure downloads. LLM runs locally.
 
 **Q: Can I use a different LLM?**  
-A: Yes! The system is designed to work with any Ollama model. You can also modify the code to use other LLM backends.
+A: Yes. The CLI uses a provider/model abstraction. Today, the built-in adapter is Ollama, and you can switch Ollama models via `--llm-model` without rebuild. New providers can be added as adapters.
 
 **Q: How accurate is the parameter parsing?**  
 A: Very good for clear, explicit commands. If ambiguous, the system will prompt for clarification.
@@ -637,4 +663,4 @@ A: Yes, in interactive mode you can provide missing parameters. For programmatic
 
 ---
 
-*Last updated: October 30, 2025*
+*Last updated: March 23, 2026*

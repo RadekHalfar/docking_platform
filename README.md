@@ -4,7 +4,7 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
 
 **Zero Installation Required:** Everything runs in Docker containers, so you do not need to install Moldina, PyMOL, RDKit, or other dependencies locally.
 
-**Natural Language Interface:** Control the workflow with text commands powered by a local Ollama LLM.
+**Natural Language Interface:** Control the workflow with text commands powered by a modular LLM layer (default provider: local Ollama).
 
 ## Architecture
 
@@ -32,7 +32,7 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
 3. **Ligand Preparer** - Prepares ligands (protonation, 3D conformers, PDBQT conversion).
 4. **Moldina Runner** - Executes Moldina PSO-based molecular docking.
 5. **PyMOL Visualizer** - Generates visualization scripts and rendered outputs.
-6. **LLM Orchestrator** - Provides natural-language workflow orchestration via Ollama.
+6. **LLM Orchestrator** - Provides natural-language workflow orchestration via pluggable LLM providers (default: Ollama).
 
 All services run in Docker containers.
 
@@ -48,6 +48,9 @@ docker compose up -d
 
 # 2. Download the LLM model (once, ~4 GB for Llama 2)
 docker exec -it mcp-ollama ollama pull llama2
+
+# Optional: switch model at runtime (no rebuild needed)
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
 
 # 3. Check everything is healthy from script-runner (no local Python setup required)
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
@@ -214,7 +217,10 @@ mcp_demo/
 │   │   └── server.py
 │   └── llm_orchestrator/       # LLM-based workflow orchestration
 │       ├── __init__.py
-│       ├── llm_client.py       # Ollama LLM client
+│       ├── llm_base.py         # Provider interface
+│       ├── llm_adapters.py     # Provider implementations (Ollama adapter)
+│       ├── llm_factory.py      # Provider factory
+│       ├── workflow_llm_parser.py  # Provider-neutral workflow parsing
 │       ├── orchestrator.py     # Workflow executor
 │       └── workflow_parser.py  # Workflow validator
 │
@@ -285,7 +291,7 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 
 - **Natural Language Control** - Command workflows with plain text.
 - **Three Verbosity Levels** - Choose minimal, detailed, or protocol-level output.
-- **Local LLM** - Ollama-based parsing and planning, with GPU support when available.
+- **Modular LLM Layer** - Provider interface + adapters (default provider is Ollama) with runtime model selection.
 - **Containerized Deployment** - Run all dependencies in Docker.
 - **Moldina PSO Docking** - PSO-based docking for pose search.
 - **Headless PyMOL** - Automated rendering in containers.

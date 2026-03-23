@@ -6,51 +6,33 @@ Unit and integration tests for natural language workflow orchestration.
 import pytest
 import json
 import platform
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
-from services.llm_orchestrator import WorkflowOrchestrator, OllamaClient, WorkflowParser
+from services.llm_orchestrator import (
+    WorkflowOrchestrator,
+    WorkflowParser,
+    create_llm_client,
+    parse_workflow_with_llm,
+)
 
 
-class TestOllamaClient:
-    """Test Ollama LLM client."""
-    
-    def test_init(self):
-        """Test client initialization."""
-        client = OllamaClient(base_url="http://test:11434", model="llama2")
-        assert client.base_url == "http://test:11434"
+class TestLLMArchitecture:
+    """Test provider-agnostic LLM architecture."""
+
+    def test_factory_creates_provider_adapter(self):
+        """Factory should return a configured adapter for supported provider."""
+        client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        assert client.endpoint == "http://test:11434"
         assert client.model == "llama2"
-        assert client.api_url == "http://test:11434/api/generate"
-    
-    @patch('services.llm_orchestrator.llm_client.requests.get')
-    def test_check_health_success(self, mock_get):
-        """Test health check with successful response."""
-        mock_get.return_value.status_code = 200
-        client = OllamaClient()
-        assert client.check_health() is True
-    
-    @patch('services.llm_orchestrator.llm_client.requests.get')
-    def test_check_health_failure(self, mock_get):
-        """Test health check with failed response."""
-        mock_get.side_effect = Exception("Connection failed")
-        client = OllamaClient()
-        assert client.check_health() is False
-    
-    @patch('services.llm_orchestrator.llm_client.requests.post')
-    def test_generate(self, mock_post):
-        """Test text generation."""
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {"response": "Test response"}
-        
-        client = OllamaClient()
-        response = client.generate("Test prompt")
-        
-        assert response == "Test response"
-        mock_post.assert_called_once()
-    
-    @patch('services.llm_orchestrator.llm_client.requests.post')
-    def test_parse_workflow(self, mock_post):
-        """Test workflow parsing."""
+
+    def test_factory_rejects_unknown_provider(self):
+        """Factory should raise for unsupported providers."""
+        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+            create_llm_client(provider="unknown", endpoint="http://test", model="demo")
+
+    def test_parse_workflow_with_llm(self):
+        """Provider-neutral parser should parse JSON returned by adapter."""
         workflow_json = {
             "services": ["download", "dock"],
             "parameters": {
@@ -61,18 +43,31 @@ class TestOllamaClient:
             },
             "missing_required": []
         }
-        
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {
-            "response": json.dumps(workflow_json)
-        }
-        
-        client = OllamaClient()
-        result = client.parse_workflow("Download ATP and dock to 6lu7")
-        
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(workflow_json)):
+            result = parse_workflow_with_llm(llm_client, "Download ATP and dock to 6lu7")
+
         assert result["services"] == ["download", "dock"]
         assert result["parameters"]["protein_id"] == "6lu7"
         assert "center" in result["parameters"]
+
+    def test_parse_workflow_visualization_fallback(self):
+        """Visualization keyword fallback should append visualize service."""
+        llm_output = {
+            "services": ["download", "prepare_ligands", "prepare_protein", "dock"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_ids": ["ATP"]
+            },
+            "missing_required": []
+        }
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(llm_output)):
+            result = parse_workflow_with_llm(llm_client, "Download 6lu7 and ATP, then render image")
+
+        assert "visualize" in result["services"]
 
 
 class TestWorkflowParser:
@@ -284,11 +279,9 @@ class TestWorkflowOrchestrator:
 class TestIntegration:
     """Integration tests for full workflow."""
     
-    @patch('services.llm_orchestrator.llm_client.OllamaClient.generate')
     @patch('services.llm_orchestrator.orchestrator.requests.post')
-    def test_full_workflow_mock(self, mock_mcp_post, mock_generate):
+    def test_full_workflow_mock(self, mock_mcp_post):
         """Test full workflow with mocked services."""
-        # Mock LLM response - the generate method returns the text directly
         workflow_json = {
             "services": ["download"],
             "parameters": {
@@ -297,9 +290,6 @@ class TestIntegration:
             },
             "missing_required": []
         }
-        
-        # Mock the generate method to return JSON string
-        mock_generate.return_value = json.dumps(workflow_json)
         
         # Mock MCP responses
         mock_mcp_response = Mock()
@@ -316,9 +306,9 @@ class TestIntegration:
         mock_mcp_response.raise_for_status = Mock()
         mock_mcp_post.return_value = mock_mcp_response
         
-        # Parse workflow
-        llm_client = OllamaClient()
-        parsed = llm_client.parse_workflow("Download 6lu7 and ATP")
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(workflow_json)):
+            parsed = parse_workflow_with_llm(llm_client, "Download 6lu7 and ATP")
         
         assert parsed["parameters"]["protein_id"] == "6lu7"
         

@@ -7,10 +7,14 @@ import sys
 import os
 import logging
 import argparse
-import json
-from pathlib import Path
 
-from services.llm_orchestrator import WorkflowOrchestrator, OllamaClient, WorkflowParser
+from services.llm_orchestrator import (
+    BaseLLMClient,
+    WorkflowOrchestrator,
+    WorkflowParser,
+    create_llm_client,
+    parse_workflow_with_llm,
+)
 
 # Verbosity levels
 VERBOSITY_LOW = 0       # Minimal output (step summaries only)
@@ -91,14 +95,24 @@ Examples:
         help="Run in interactive mode"
     )
     parser.add_argument(
-        "--ollama-url",
-        default=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        help="Ollama API URL (default: http://localhost:11434)"
+        "--llm-provider",
+        default=os.getenv("LLM_PROVIDER", "ollama"),
+        help="LLM provider name (default: ollama)"
     )
     parser.add_argument(
-        "--model",
-        default="llama2",
-        help="Ollama model to use (default: llama2)"
+        "--llm-endpoint",
+        default=os.getenv("LLM_ENDPOINT", "http://localhost:11434"),
+        help="LLM API endpoint URL (default: http://localhost:11434)"
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=os.getenv("LLM_MODEL", "llama2"),
+        help="LLM model name to use (default: llama2)"
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        default=os.getenv("LLM_API_KEY"),
+        help="Optional API key for LLM providers that require authentication"
     )
     parser.add_argument(
         "--output-dir",
@@ -113,7 +127,7 @@ Examples:
     parser.add_argument(
         "--list-models",
         action="store_true",
-        help="List available Ollama models and exit"
+        help="List available models from selected LLM provider and exit"
     )
     parser.add_argument(
         "--debug",
@@ -143,26 +157,31 @@ Examples:
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Initialize components
-    llm_client = OllamaClient(base_url=args.ollama_url, model=args.model)
+    llm_client = create_llm_client(
+        provider=args.llm_provider,
+        endpoint=args.llm_endpoint,
+        model=args.llm_model,
+        api_key=args.llm_api_key,
+    )
     orchestrator = WorkflowOrchestrator(output_base=args.output_dir, verbosity=current_verbosity)
     parser_obj = WorkflowParser()
     
     # Handle special commands
     if args.list_models:
-        print("Available Ollama models:")
+        print(f"Available models for provider '{args.llm_provider}':")
         models = llm_client.list_models()
         if models:
             for model in models:
                 print(f"  - {model}")
         else:
-            print("  No models found or Ollama not accessible")
+            print("  No models found or provider endpoint not accessible")
         return 0
     
     if args.check_health:
         print("Checking service health...")
-        print("\nOllama LLM:")
+        print("\nLLM Provider:")
         ollama_ok = llm_client.check_health()
-        print(f"  {'✅' if ollama_ok else '❌'} Ollama API ({args.ollama_url})")
+        print(f"  {'✅' if ollama_ok else '❌'} {args.llm_provider} ({args.llm_endpoint})")
         
         print("\nMCP Services:")
         health = orchestrator.check_services_health()
@@ -224,7 +243,7 @@ Examples:
         return 1
 
 
-def process_workflow(user_input: str, llm_client: OllamaClient, orchestrator: WorkflowOrchestrator, parser_obj: WorkflowParser) -> int:
+def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: WorkflowOrchestrator, parser_obj: WorkflowParser) -> int:
     """
     Process a workflow from natural language input.
     
@@ -239,7 +258,7 @@ def process_workflow(user_input: str, llm_client: OllamaClient, orchestrator: Wo
         
         # Parse with LLM
         print("🤖 Parsing with LLM...")
-        parsed = llm_client.parse_workflow(user_input)
+        parsed = parse_workflow_with_llm(llm_client, user_input)
         
         # Validate and enrich
         print("✅ Validating workflow...")

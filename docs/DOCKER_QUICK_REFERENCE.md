@@ -72,6 +72,12 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 
 # Run workflow command
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+
+# Run workflow with explicit model (no rebuild needed)
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
+
+# Explicit provider + endpoint + model
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://ollama:11434 --llm-model llama2 "Download 6lu7"
 ```
 
 ## Test Commands

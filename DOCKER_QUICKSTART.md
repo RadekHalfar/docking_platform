@@ -131,6 +131,12 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 
 # Run a natural-language workflow command
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --verbose normal "Download 6lu7 and ATP, prepare and dock"
+
+# Switch LLM model at runtime (no rebuild required)
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
+
+# You can also override provider/endpoint explicitly
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://ollama:11434 --llm-model llama2 "Download 6lu7 and ATP"
 ```
 
 Rebuild only when dependencies or Dockerfiles change.

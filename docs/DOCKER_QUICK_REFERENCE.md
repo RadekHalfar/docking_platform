@@ -76,6 +76,9 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 # Run workflow with explicit model (no rebuild needed)
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
 
+# Run workflow with Qwen 2.5 Coder 7B Q4
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
+
 # Explicit provider + endpoint + model
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://ollama:11434 --llm-model llama2 "Download 6lu7"
 ```

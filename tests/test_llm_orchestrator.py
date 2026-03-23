@@ -130,6 +130,25 @@ class TestWorkflowParser:
         assert parser.has_missing_parameters()
         assert "center" in result["missing_required"]
         assert "box_size" in result["missing_required"]
+
+    def test_empty_docking_coordinates_are_treated_as_missing(self):
+        """Empty coordinate arrays from LLM output should be treated as missing."""
+        parser = WorkflowParser()
+
+        workflow = {
+            "services": ["dock"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_ids": ["ATP"],
+                "center": [],
+                "box_size": []
+            }
+        }
+
+        result = parser.validate_workflow(workflow)
+
+        assert "center" in result["missing_required"]
+        assert "box_size" in result["missing_required"]
     
     def test_update_parameters(self):
         """Test parameter updates."""

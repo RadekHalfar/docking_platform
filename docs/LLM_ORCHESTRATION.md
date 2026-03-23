@@ -78,6 +78,9 @@ docker ps
 # Download DeepSeek Coder 6.7B Q4 (default, ~4.1GB)
 docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
+# OR download Qwen 2.5 Coder 7B Q4 (code-focused, ~4.7GB)
+docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+
 # OR download Mistral (alternative, ~4GB)
 docker exec -it mcp-llm ollama pull mistral
 
@@ -96,6 +99,9 @@ python nlp_orchestrator.py --check-health
 ```bash
 # Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model deepseek-coder:6.7b-instruct-q4_K_M
 python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP"
+
+# Use Qwen 2.5 Coder 7B Q4
+python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP"
 
 # Explicit provider and endpoint
 python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model phi3 "Download 6lu7"
@@ -323,6 +329,7 @@ orchestrator_output/
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
 | **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Project default |
+| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Code-focused alternative |
 | **llama2** | ~4GB | Medium | High | Stable alternative |
 | **mistral** | ~4GB | Fast | High | Fast alternative |
 | **phi3** | ~2GB | Very Fast | Good | Resource-constrained systems |
@@ -333,6 +340,9 @@ orchestrator_output/
 ```bash
 # DeepSeek Coder 6.7B Q4 (project default)
 docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+
+# Qwen 2.5 Coder 7B Q4 (code-focused alternative)
+docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # Mistral (alternative)
 docker exec -it mcp-llm ollama pull mistral
@@ -354,6 +364,9 @@ docker exec -it mcp-llm ollama list
 
 ```bash
 python nlp_orchestrator.py --llm-model mistral "Download 6lu7"
+
+# Qwen 2.5 Coder 7B Q4
+python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7"
 ```
 
 ### Switch Models Without Rebuild
@@ -434,6 +447,20 @@ python nlp_orchestrator.py --llm-model mistral "..."
 ```bash
 python nlp_orchestrator.py --debug "..."
 ```
+
+### Empty Docking Coordinates From LLM
+
+Some models may return empty arrays for docking coordinates, for example `center: []` or `box_size: []`.
+The orchestrator now treats these as missing required parameters (instead of running docking with invalid values) and prompts for valid coordinates.
+
+Accepted input format at the prompt:
+```text
+10,20,30
+```
+
+If parsing fails, safe defaults are applied:
+- Center: `[10.0, 20.0, 30.0]`
+- Box size: `[25.0, 30.0, 35.0]`
 
 ### Service Connection Errors
 

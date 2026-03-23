@@ -80,6 +80,7 @@ Switch between different LLM models at runtime without rebuilding Docker images:
 | Model | Download Size | Speed | Best For |
 |-------|---|---|---|
 | **DeepSeek Coder 6.7B Q4** (default) | 4.1 GB | Medium | Complex reasoning, code understanding |
+| **Qwen 2.5 Coder 7B Q4** | 4.7 GB | Medium | Code-heavy workflows, strong instruction following |
 | **Mistral 7B Q4** | 4.0 GB | Medium | Balanced performance, strong reasoning |
 | **Phi-3 Mini Q4** | 2.0 GB | Fast | Quick responses, lower memory |
 | **Llama 2 7B Q4** | 3.8 GB | Medium | General purpose |
@@ -90,6 +91,9 @@ Switch between different LLM models at runtime without rebuilding Docker images:
 ```powershell
 # DeepSeek (project default, already pre-installed)
 docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+
+# Qwen 2.5 Coder 7B Q4
+docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # Mistral
 docker exec -it mcp-llm ollama pull mistral
@@ -108,6 +112,9 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 
 # Use Mistral instead
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
+
+# Use Qwen 2.5 Coder instead
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
 
 # Use lightweight Phi-3 for faster inference
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model phi3 "Download 6lu7 and ATP, prepare and dock"

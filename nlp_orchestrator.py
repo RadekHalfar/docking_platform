@@ -106,8 +106,8 @@ Examples:
     )
     parser.add_argument(
         "--llm-model",
-        default=os.getenv("LLM_MODEL", "deepseek-coder:6.7b-instruct-q4_K_M"),
-        help="LLM model name to use (default: deepseek-coder:6.7b-instruct-q4_K_M)"
+        default=os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M"),
+        help="LLM model name to use (default: qwen2.5-coder:7b-instruct-q4_K_M)"
     )
     parser.add_argument(
         "--llm-api-key",

@@ -288,7 +288,12 @@ MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
 MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
 MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
 
-# Ollama URL for nlp_orchestrator.py
+# LLM configuration for nlp_orchestrator.py
+LLM_PROVIDER=ollama
+LLM_ENDPOINT=http://ollama:11434
+LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
+
+# Optional backward-compatible alias (legacy)
 OLLAMA_URL=http://ollama:11434
 
 # Resource Limits

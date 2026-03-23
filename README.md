@@ -46,8 +46,8 @@ All services run in Docker containers.
 # 1. Start all services (including Ollama LLM)
 docker compose up -d
 
-# 2. Download the default LLM model (DeepSeek Coder 6.7B Q4, ~4.1 GB)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+# 2. Download the default LLM model (Qwen 2.5 Coder 7B Q4, ~4.7 GB)
+docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # Optional: switch model at runtime (no rebuild needed)
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP, prepare and dock"
@@ -79,8 +79,8 @@ Switch between different LLM models at runtime without rebuilding Docker images:
 
 | Model | Download Size | Speed | Best For |
 |-------|---|---|---|
-| **DeepSeek Coder 6.7B Q4** (default) | 4.1 GB | Medium | Complex reasoning, code understanding |
-| **Qwen 2.5 Coder 7B Q4** | 4.7 GB | Medium | Code-heavy workflows, strong instruction following |
+| **Qwen 2.5 Coder 7B Q4** (default) | 4.7 GB | Medium | Code-heavy workflows, strong instruction following |
+| **DeepSeek Coder 6.7B Q4** | 4.1 GB | Medium | Complex reasoning, code understanding |
 | **Mistral 7B Q4** | 4.0 GB | Medium | Balanced performance, strong reasoning |
 | **Phi-3 Mini Q4** | 2.0 GB | Fast | Quick responses, lower memory |
 | **Llama 2 7B Q4** | 3.8 GB | Medium | General purpose |
@@ -89,11 +89,11 @@ Switch between different LLM models at runtime without rebuilding Docker images:
 
 **Step 1: Download a model into the LLM container** (one-time per model)
 ```powershell
-# DeepSeek (project default, already pre-installed)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
-
-# Qwen 2.5 Coder 7B Q4
+# Qwen 2.5 Coder 7B Q4 (project default, already pre-installed)
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+
+# DeepSeek
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Mistral
 docker exec -it mcp-llm ollama pull mistral

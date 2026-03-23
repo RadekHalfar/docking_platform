@@ -188,7 +188,7 @@ services:
       - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
       - LLM_PROVIDER=ollama
       - LLM_ENDPOINT=http://ollama:11434
-      - LLM_MODEL=deepseek-coder:6.7b-instruct-q4_K_M
+      - LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
       - OLLAMA_URL=http://ollama:11434
     depends_on:
       rcsb-downloader:

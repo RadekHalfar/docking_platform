@@ -75,11 +75,11 @@ docker ps
 ### 2. Download LLM Model
 
 ```bash
-# Download DeepSeek Coder 6.7B Q4 (default, ~4.1GB)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
-
-# OR download Qwen 2.5 Coder 7B Q4 (code-focused, ~4.7GB)
+# Download Qwen 2.5 Coder 7B Q4 (default, ~4.7GB)
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+
+# OR download DeepSeek Coder 6.7B Q4 (alternative, ~4.1GB)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # OR download Mistral (alternative, ~4GB)
 docker exec -it mcp-llm ollama pull mistral
@@ -97,7 +97,7 @@ python nlp_orchestrator.py --check-health
 ### 4. Optional: Select Provider/Model at Runtime
 
 ```bash
-# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model deepseek-coder:6.7b-instruct-q4_K_M
+# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model qwen2.5-coder:7b-instruct-q4_K_M
 python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP"
 
 # Use Qwen 2.5 Coder 7B Q4
@@ -162,7 +162,7 @@ Options:
   --interactive, -i         Run in interactive mode
   --llm-provider NAME       LLM provider name (default: ollama)
   --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
-  --llm-model MODEL         LLM model name (default: deepseek-coder:6.7b-instruct-q4_K_M)
+  --llm-model MODEL         LLM model name (default: qwen2.5-coder:7b-instruct-q4_K_M)
   --llm-api-key KEY         Optional API key for providers that require auth
   --output-dir DIR          Output directory (default: ./orchestrator_output)
   --check-health            Check all services and exit
@@ -328,8 +328,8 @@ orchestrator_output/
 
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
-| **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Project default |
-| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Code-focused alternative |
+| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Project default |
+| **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Strong alternative |
 | **llama2** | ~4GB | Medium | High | Stable alternative |
 | **mistral** | ~4GB | Fast | High | Fast alternative |
 | **phi3** | ~2GB | Very Fast | Good | Resource-constrained systems |
@@ -338,11 +338,11 @@ orchestrator_output/
 ### Download Models
 
 ```bash
-# DeepSeek Coder 6.7B Q4 (project default)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
-
-# Qwen 2.5 Coder 7B Q4 (code-focused alternative)
+# Qwen 2.5 Coder 7B Q4 (project default)
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+
+# DeepSeek Coder 6.7B Q4 (strong alternative)
+docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Mistral (alternative)
 docker exec -it mcp-llm ollama pull mistral
@@ -373,10 +373,10 @@ python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Downloa
 
 ```bash
 # Pull model once
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
+docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # Use it immediately (no docker image rebuild)
-python nlp_orchestrator.py --llm-model deepseek-coder:6.7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
+python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
 ```
 
 ---

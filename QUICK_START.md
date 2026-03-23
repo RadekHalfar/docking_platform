@@ -1,313 +1,120 @@
-# Quick Start: Prepare Ligands for Docking
+# QUICK START
 
-## Example of Incorrect Input
+This quick start matches the current workflow behavior in this repository.
 
-```python
-# This fails because 1CRN.pdb is a protein file, not a ligand file.
-response = requests.post("http://localhost:8002/mcp", json={
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "tool_call",
-    "params": {
-        "name": "prepare_ligands",
-        "arguments": {
-            "ligand_paths": ["./test_download/1CRN.pdb"],  # This is a protein file.
-            "output_dir": "./data/prepared",
-            "ph": 7.4
-        }
-    }
-})
-# Result: {'error': 'Unsupported file format: .pdb'}
+## 1. Build Images
+
+Windows PowerShell:
+
+```powershell
+.\docker_build.ps1
 ```
 
-**Why it failed:**
-- `1CRN.pdb` is a **PROTEIN** structure (crambin, 46 amino acids)
-- The Ligand Preparer expects **SMALL MOLECULES** in SDF/MOL/MOL2 format
-- PDB format is for proteins/receptors, NOT ligands
+Linux/Mac:
 
----
-
-## Correct Approach
-
-### Step 1: Get a ligand file (SDF format)
-
-**Option A: Download a ligand from RCSB**
-
-```python
-import requests
-
-# Start the RCSB Downloader server first!
-# Terminal: python -m services.rcsb_downloader.server
-
-# Download ATP ligand as SDF
-response = requests.post("http://localhost:8001/mcp", json={
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "tool_call",
-    "params": {
-        "name": "download_structures",
-        "arguments": {
-            "protein_id": "",  # Leave empty - we only want ligand
-            "ligand_ids": ["ATP"],  # ATP = Adenosine triphosphate
-            "save_dir": "./data/ligands"
-        }
-    }
-})
-
-result = response.json()
-print(result)
-# This creates: ./data/ligands/ATP.sdf ✓
-```
-
-**Option B: Download from PubChem**
-1. Go to https://pubchem.ncbi.nlm.nih.gov/
-2. Search for "aspirin" (or your compound)
-3. Click "3D Conformer"
-4. Download as "SDF" format
-5. Save to `./data/ligands/aspirin.sdf`
-
-### Step 2: Prepare the ligand for docking
-
-```python
-import requests
-
-# Make sure Ligand Preparer server is running!
-# Terminal: python -m services.ligand_preparer.server
-
-# Now prepare the SDF file for AutoDock Vina
-response = requests.post("http://localhost:8002/mcp", json={
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "tool_call",
-    "params": {
-        "name": "prepare_ligands",
-        "arguments": {
-            "ligand_paths": ["./data/ligands/ATP.sdf"],  # ✓ SDF file!
-            "output_dir": "./data/prepared",
-            "ph": 7.4
-        }
-    }
-})
-
-result = response.json()
-print(result)
-```
-
-**Expected output:**
-```json
-{
-  "id": "1",
-  "jsonrpc": "2.0",
-  "result": {
-    "status": "success",
-    "ligands": [
-      {
-        "ligand_name": "ATP",
-        "input_file": "./data/ligands/ATP.sdf",
-        "output_file": "./data/prepared/ATP.pdbqt",  // ✓ Ready for docking!
-        "status": "success",
-        "num_atoms": 31,
-        "rotatable_bonds": 6,
-        "method": "meeko"
-      }
-    ],
-    "summary": {
-      "total": 1,
-      "successful": 1,
-      "failed": 0
-    }
-  }
-}
-```
-
----
-
-## Complete Working Example
-
-Save this as `test_ligand_prep.py`:
-
-```python
-#!/usr/bin/env python3
-"""
-Complete example: Download and prepare a ligand for docking
-"""
-import requests
-import json
-
-def download_ligand(ligand_id="ATP"):
-    """Download a ligand from RCSB as SDF."""
-    print(f"1. Downloading {ligand_id} ligand...")
-    
-    response = requests.post("http://localhost:8001/mcp", json={
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "tool_call",
-        "params": {
-            "name": "download_structures",
-            "arguments": {
-                "protein_id": "",
-                "ligand_ids": [ligand_id],
-                "save_dir": "./data/ligands"
-            }
-        }
-    })
-    
-    result = response.json()
-    if "result" in result and result["result"].get("ligand_files"):
-        sdf_file = result["result"]["ligand_files"][0]
-        print(f"   ✓ Downloaded: {sdf_file}")
-        return sdf_file
-    else:
-        print(f"   ✗ Failed: {result}")
-        return None
-
-def prepare_ligand(sdf_file):
-    """Prepare ligand for AutoDock Vina docking."""
-    print(f"\n2. Preparing {sdf_file} for docking...")
-    
-    response = requests.post("http://localhost:8002/mcp", json={
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "tool_call",
-        "params": {
-            "name": "prepare_ligands",
-            "arguments": {
-                "ligand_paths": [sdf_file],
-                "output_dir": "./data/prepared",
-                "ph": 7.4,
-                "add_hydrogens": True,
-                "generate_3d": True,
-                "optimize": True
-            }
-        }
-    })
-    
-    result = response.json()
-    if "result" in result:
-        lig = result["result"]["ligands"][0]
-        if lig["status"] == "success":
-            print(f"   ✓ Prepared: {lig['output_file']}")
-            print(f"   ✓ Atoms: {lig['num_atoms']}")
-            print(f"   ✓ Rotatable bonds: {lig['rotatable_bonds']}")
-            print(f"   ✓ Ready for AutoDock Vina!")
-            return lig["output_file"]
-        else:
-            print(f"   ✗ Failed: {lig.get('error')}")
-    else:
-        print(f"   ✗ Error: {result.get('error', {}).get('message')}")
-    
-    return None
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("LIGAND PREPARATION WORKFLOW")
-    print("=" * 60)
-    print("\nMake sure servers are running:")
-    print("  Terminal 1: python -m services.rcsb_downloader.server")
-    print("  Terminal 2: python -m services.ligand_preparer.server")
-    print()
-    
-    try:
-        # Download ligand
-        sdf_file = download_ligand("ATP")
-        
-        if sdf_file:
-            # Prepare for docking
-            pdbqt_file = prepare_ligand(sdf_file)
-            
-            if pdbqt_file:
-                print("\n" + "=" * 60)
-                print("✓ SUCCESS! Your ligand is ready for docking")
-                print("=" * 60)
-                print(f"\nLigand PDBQT: {pdbqt_file}")
-                print("\nNext steps:")
-                print("  1. Prepare your protein receptor")
-                print("  2. Define docking grid/box")
-                print("  3. Run AutoDock Vina")
-                
-    except requests.exceptions.ConnectionError as e:
-        print("\n✗ Connection Error!")
-        print("   Make sure servers are running:")
-        print("   - http://localhost:8001 (RCSB Downloader)")
-        print("   - http://localhost:8002 (Ligand Preparer)")
-```
-
-**Run it:**
 ```bash
-python test_ligand_prep.py
+./docker_build.sh
 ```
 
----
+## 2. Start Core Services
 
-## Understanding File Types
-
-| Format | Used For | Example | Preparer Accepts? |
-|--------|----------|---------|-------------------|
-| `.pdb` | **Proteins** (receptors) | `1CRN.pdb`, `protein.pdb` | No |
-| `.sdf` | **Ligands** (small molecules) | `ATP.sdf`, `aspirin.sdf` | Yes |
-| `.mol` | **Ligands** (small molecules) | `drug.mol` | Yes |
-| `.mol2` | **Ligands** (small molecules) | `ligand.mol2` | Yes |
-| `.pdbqt` | **Output** (docking-ready) | `ATP.pdbqt` | Output only |
-
-**Key Point:**
-- **Proteins** (receptors): Large, thousands of atoms → `.pdb` format
-- **Ligands** (small molecules): Small, tens-hundreds of atoms → `.sdf`/`.mol` format
-
----
-
-## Common Ligands for Testing
-
-Try these ligands (all available from RCSB):
-
-```python
-# Energy-related molecules
-ligand_ids = ["ATP", "ADP", "NAD", "FAD"]
-
-# Amino acids / cofactors
-ligand_ids = ["HEM", "CLA", "FMN", "COA"]
-
-# Drug molecules from complexes
-# (Need to specify protein_id too)
-ligand_ids = ["MK1"]  # HIV protease inhibitor from 1HSG
-protein_id = "1HSG"
+```powershell
+docker compose up -d
 ```
 
----
+## 3. Verify Health
 
-## Troubleshooting
-
-### Error: "Unsupported file format: .pdb"
-**Cause:** You're trying to prepare a protein file  
-**Fix:** Use SDF/MOL/MOL2 format for ligands
-
-### Error: "Connection refused"
-**Cause:** Server not running  
-**Fix:** Start the server: `python -m services.ligand_preparer.server`
-
-### Error: "RDKit is required but not installed"
-**Cause:** RDKit not installed  
-**Fix:** `pip install rdkit`
-
-### Error: "Failed to read molecule"
-**Cause:** Invalid or corrupted ligand file  
-**Fix:** Download from a reliable source (RCSB, PubChem)
-
----
-
-## More Examples
-
-See the complete example file:
-```bash
-python example_prepare_ligand.py
+```powershell
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
 ```
 
-This runs 4 different examples showing various ways to download and prepare ligands.
+## 4. Run a Complete Workflow
 
----
+Example with explicit docking box:
 
-## Need Help?
+```powershell
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and two ATP, prepare and dock with center 10,20,30 and box size 25,30,35 and visualize"
+```
 
-- **Full guide:** See `USAGE_GUIDE.md`
-- **API docs:** See `docs/API.md`  
-- **Theory:** See `docs/LIGAND_PREPARATION.md`
-- **Installation:** See `docs/INSTALLATION.md`
+Example without docking box (you will be prompted):
+
+```powershell
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and two ATP, prepare and dock and visualize"
+```
+
+## 5. Missing Docking Box: Prompt Behavior
+
+When `center` / `box_size` are missing, CLI asks:
+
+1. Write center/box_size manually
+2. Define box in PyMOL Interactive now
+
+If you choose `2`, orchestrator:
+
+1. Prepares structures
+2. Loads them in interactive PyMOL
+3. Waits for your selection name (default: `sele`)
+4. Calls interactive API to compute box and save `docking_box.json`
+5. Continues docking in the same job folder
+
+## 6. Start Interactive PyMOL (Optional)
+
+```powershell
+docker compose --profile interactive up -d pymol-interactive
+```
+
+Open noVNC desktop:
+
+```text
+http://localhost:6080/vnc.html
+```
+
+Interactive helper API:
+
+```text
+http://localhost:8090
+```
+
+## 7. What `visualize` Currently Does
+
+If workflow includes `visualize`:
+
+1. Regular visualization output is generated through `pymol_visualizer`
+2. After workflow completion, CLI tries to load the same job into `pymol-interactive`
+3. You can inspect it in noVNC when `pymol-interactive` is running
+
+## 8. Output Location
+
+All workflow outputs are saved under:
+
+```text
+orchestrator_output/job_<timestamp_ms>/
+```
+
+Typical contents:
+
+- `downloads/`
+- `prepared/`
+- `docking_results/`
+- `visualization/` (if visualize is used)
+- `docking_box.json` (if box was defined through interactive PyMOL)
+- `workflow_results.json`
+
+## 9. Run Tests
+
+```powershell
+docker compose --profile dev run --rm script-runner python -m pytest tests/ --tb=short
+```
+
+Targeted tests for this flow:
+
+```powershell
+docker compose --profile dev run --rm script-runner pytest tests/test_nlp_orchestrator.py tests/test_pymol_interactive.py -q
+```
+
+## 10. Rebuild Only Interactive Service (When Needed)
+
+```powershell
+.\docker_build.ps1 -Services pymol-interactive -NoCache
+docker compose --profile interactive up -d pymol-interactive
+```

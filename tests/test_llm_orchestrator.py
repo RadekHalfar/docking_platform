@@ -149,6 +149,41 @@ class TestWorkflowParser:
 
         assert "center" in result["missing_required"]
         assert "box_size" in result["missing_required"]
+
+    def test_invalid_protein_id_is_treated_as_missing(self):
+        """Malformed protein IDs should trigger clarification instead of execution."""
+        parser = WorkflowParser()
+
+        workflow = {
+            "services": ["download", "prepare_protein", "dock"],
+            "parameters": {
+                "protein_id": "6lu",
+                "ligand_ids": ["ATP"],
+                "center": [10, 20, 30],
+                "box_size": [25, 30, 35],
+            },
+        }
+
+        result = parser.validate_workflow(workflow)
+
+        assert "protein_id" in result["missing_required"]
+
+    def test_invalid_protein_id_prompt_says_invalid_not_missing(self):
+        """Clarification text should describe invalid protein ID explicitly."""
+        parser = WorkflowParser()
+
+        workflow = {
+            "services": ["download"],
+            "parameters": {
+                "protein_id": "6lu"
+            }
+        }
+
+        parser.validate_workflow(workflow)
+        prompt = parser.format_missing_prompt().lower()
+
+        assert "protein pdb id is invalid" in prompt
+        assert "missing required parameters" not in prompt
     
     def test_update_parameters(self):
         """Test parameter updates."""

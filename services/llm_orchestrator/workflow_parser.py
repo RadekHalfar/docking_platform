@@ -40,19 +40,50 @@ class WorkflowParser:
     def __init__(self):
         self.parsed_workflow = None
 
+    def get_parameter_issue(self, param: str) -> Optional[str]:
+        """Return issue type for required params: 'missing', 'invalid', or None."""
+        if not self.parsed_workflow:
+            return "missing"
+
+        value = self.parsed_workflow.get("parameters", {}).get(param)
+
+        if value is None:
+            return "missing"
+
+        if param == "protein_id":
+            if not isinstance(value, str) or not value.strip():
+                return "missing"
+            if not self.validate_protein_id(value.strip()):
+                return "invalid"
+            return None
+
+        if param == "ligand_ids":
+            if not isinstance(value, list) or len(value) == 0:
+                return "missing"
+            return None
+
+        if param in ["center", "box_size"]:
+            if not isinstance(value, list) or len(value) == 0:
+                return "missing"
+            if not self.validate_coordinates(value):
+                return "invalid"
+            return None
+
+        return None
+
     def _is_missing_required_param(self, param: str, value: Any) -> bool:
         """Return True when a required parameter is absent or invalid."""
         if value is None:
             return True
 
-        if param in ["center", "box_size"]:
-            return not self.validate_coordinates(value)
+        if param == "protein_id":
+            return not isinstance(value, str) or not self.validate_protein_id(value.strip())
 
         if param == "ligand_ids":
             return not isinstance(value, list) or len(value) == 0
 
-        if param == "protein_id":
-            return not isinstance(value, str) or not value.strip()
+        if param in ["center", "box_size"]:
+            return not self.validate_coordinates(value)
 
         return False
     
@@ -115,16 +146,28 @@ class WorkflowParser:
         if not missing:
             return ""
         
-        prompts = {
-            "protein_id": "Please provide the protein PDB ID (e.g., '6lu7')",
-            "ligand_ids": "Please provide ligand IDs (e.g., 'ATP, HEM')",
-            "center": "Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30')",
-            "box_size": "Please provide docking box size [x, y, z] in Angstroms (e.g., '25, 30, 35')"
-        }
-        
-        lines = ["Missing required parameters:"]
+        lines = ["Required parameters needing clarification:"]
         for param in missing:
-            lines.append(f"  - {prompts.get(param, param)}")
+            issue = self.get_parameter_issue(param)
+            if param == "protein_id":
+                if issue == "invalid":
+                    lines.append("  - The protein PDB ID is invalid. Please provide a 4-character ID (e.g., '6lu7').")
+                else:
+                    lines.append("  - Please provide the protein PDB ID (e.g., '6lu7').")
+            elif param == "ligand_ids":
+                lines.append("  - Please provide ligand IDs (e.g., 'ATP, HEM').")
+            elif param == "center":
+                if issue == "invalid":
+                    lines.append("  - Docking box center is invalid. Please provide [x, y, z] (e.g., '10, 20, 30').")
+                else:
+                    lines.append("  - Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30').")
+            elif param == "box_size":
+                if issue == "invalid":
+                    lines.append("  - Docking box size is invalid. Please provide [x, y, z] in Angstroms (e.g., '25, 30, 35').")
+                else:
+                    lines.append("  - Please provide docking box size [x, y, z] in Angstroms (e.g., '25, 30, 35').")
+            else:
+                lines.append(f"  - Please provide {param}.")
         
         return "\n".join(lines)
     

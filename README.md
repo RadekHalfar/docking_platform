@@ -216,12 +216,14 @@ python nlp_orchestrator.py --interactive
 #   5. Run docking
 #   6. Create visualization
 # 
-# Missing required parameter: center (docking box center coordinates)
-# Please provide: x,y,z coordinates in Angstroms
-# Your input: 10,20,30
+# Required parameters needing clarification:
+#   - The protein PDB ID is invalid. Please provide a 4-character ID (e.g., '6lu7').
+#   - Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30').
+# The protein PDB ID looks invalid. Please enter a valid 4-character ID (e.g., 6lu7):
+# I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]:
 #
 # ✅ Executing workflow...
-# ✅ Results saved to ./nlp_orchestration_output/job_20240115_123456/
+# ✅ Results saved to ./orchestrator_output/job_20240115_123456/
 ```
 
 ### Using Python API

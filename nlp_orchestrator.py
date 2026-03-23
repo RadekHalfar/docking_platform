@@ -7,6 +7,7 @@ import sys
 import os
 import logging
 import argparse
+from typing import Optional, List
 
 from services.llm_orchestrator import (
     BaseLLMClient,
@@ -243,6 +244,107 @@ Examples:
         return 1
 
 
+def _ask_yes_no(question: str, default_yes: bool = True) -> bool:
+    """Ask a yes/no question and return True for yes, False for no."""
+    while True:
+        response = input(question).strip().lower()
+        if not response:
+            return default_yes
+        if response in ["y", "yes"]:
+            return True
+        if response in ["n", "no"]:
+            return False
+        print("Please answer with 'y' or 'n'.")
+
+
+def _parse_coordinate_triplet(value: str) -> Optional[List[float]]:
+    """Parse coordinates from formats like '10,20,30' or '[10, 20, 30]'"""
+    normalized = value.strip().strip("[]()").replace(" ", "")
+    if not normalized:
+        return None
+
+    parts = normalized.split(",")
+    if len(parts) != 3:
+        return None
+
+    try:
+        return [float(p) for p in parts]
+    except ValueError:
+        return None
+
+
+def _collect_missing_parameters(parser_obj: WorkflowParser) -> None:
+    """Collect missing or invalid required fields in short step-by-step prompts."""
+    prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
+    center_default = [10.0, 20.0, 30.0]
+    box_size_default = [25.0, 30.0, 35.0]
+
+    while parser_obj.has_missing_parameters():
+        missing = parser_obj.get_missing_parameters()
+        current_param = next((p for p in prompt_order if p in missing), missing[0])
+
+        if current_param == "protein_id":
+            issue = parser_obj.get_parameter_issue("protein_id")
+            while True:
+                if issue == "invalid":
+                    prompt = "The protein PDB ID looks invalid. Please enter a valid 4-character ID (e.g., 6lu7): "
+                else:
+                    prompt = "I am missing the protein PDB ID. Please enter it (e.g., 6lu7): "
+
+                value = input(prompt).strip()
+                if parser_obj.validate_protein_id(value):
+                    parser_obj.update_parameters({"protein_id": value})
+                    break
+                print("That protein ID looks invalid. It should be 4 alphanumeric characters.")
+
+        elif current_param == "ligand_ids":
+            while True:
+                value = input("I am missing ligand IDs. Please provide comma-separated IDs (e.g., ATP,HEM): ").strip()
+                ligands = [x.strip() for x in value.split(",") if x.strip()]
+                if ligands:
+                    parser_obj.update_parameters({"ligand_ids": ligands})
+                    break
+                print("I need at least one ligand ID.")
+
+        elif current_param == "center":
+            use_default = _ask_yes_no(
+                "I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]: "
+            )
+            if use_default:
+                parser_obj.update_parameters({"center": center_default})
+            else:
+                while True:
+                    value = input("Please enter docking box center as x,y,z (e.g., 10,20,30): ").strip()
+                    coords = _parse_coordinate_triplet(value)
+                    if coords and parser_obj.validate_coordinates(coords):
+                        parser_obj.update_parameters({"center": coords})
+                        break
+                    print("Center format is invalid. Please use exactly 3 numbers, for example: 10,20,30")
+
+        elif current_param == "box_size":
+            use_default = _ask_yes_no(
+                "I am missing docking box size [x, y, z]. Do you want to use default [25, 30, 35]? [Y/n]: "
+            )
+            if use_default:
+                parser_obj.update_parameters({"box_size": box_size_default})
+            else:
+                while True:
+                    value = input("Please enter docking box size as x,y,z (e.g., 25,30,35): ").strip()
+                    sizes = _parse_coordinate_triplet(value)
+                    if sizes and parser_obj.validate_coordinates(sizes):
+                        parser_obj.update_parameters({"box_size": sizes})
+                        break
+                    print("Box size format is invalid. Please use exactly 3 numbers, for example: 25,30,35")
+
+        # Re-run validation so missing/invalid fields are always refreshed.
+        parser_obj.validate_workflow(
+            {
+                "services": parser_obj.parsed_workflow["services"],
+                "parameters": parser_obj.parsed_workflow["parameters"],
+            }
+        )
+
+
 def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: WorkflowOrchestrator, parser_obj: WorkflowParser) -> int:
     """
     Process a workflow from natural language input.
@@ -269,55 +371,11 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
         
         # Check for missing parameters
         if parser_obj.has_missing_parameters():
-            print("\n⚠️  Missing required parameters:")
+            print("\n⚠️  I need a bit more information before running this workflow.")
             print(parser_obj.format_missing_prompt())
-            
-            # Prompt for missing parameters
-            print("\nPlease provide missing parameters:")
-            updates = {}
-            
-            for param in parser_obj.get_missing_parameters():
-                if param == "center":
-                    value = input("  Docking box center [x, y, z]: ").strip()
-                    try:
-                        coords = [float(x.strip()) for x in value.split(',')]
-                        if len(coords) == 3:
-                            updates["center"] = coords
-                        else:
-                            print("    Invalid format. Using default: [10, 20, 30]")
-                            updates["center"] = [10.0, 20.0, 30.0]
-                    except ValueError:
-                        print("    Invalid format. Using default: [10, 20, 30]")
-                        updates["center"] = [10.0, 20.0, 30.0]
-                
-                elif param == "box_size":
-                    value = input("  Docking box size [x, y, z]: ").strip()
-                    try:
-                        sizes = [float(x.strip()) for x in value.split(',')]
-                        if len(sizes) == 3:
-                            updates["box_size"] = sizes
-                        else:
-                            print("    Invalid format. Using default: [25, 30, 35]")
-                            updates["box_size"] = [25.0, 30.0, 35.0]
-                    except ValueError:
-                        print("    Invalid format. Using default: [25, 30, 35]")
-                        updates["box_size"] = [25.0, 30.0, 35.0]
-                
-                elif param == "protein_id":
-                    value = input("  Protein PDB ID (4 chars): ").strip()
-                    if parser_obj.validate_protein_id(value):
-                        updates["protein_id"] = value
-                    else:
-                        print("    Invalid PDB ID format")
-                        return 1
-                
-                elif param == "ligand_ids":
-                    value = input("  Ligand IDs (comma-separated): ").strip()
-                    ligands = [x.strip() for x in value.split(',')]
-                    updates["ligand_ids"] = ligands
-            
-            # Update workflow
-            parser_obj.update_parameters(updates)
+
+            # Ask only for missing/invalid fields, one short question at a time.
+            _collect_missing_parameters(parser_obj)
             workflow = parser_obj.parsed_workflow
             
             print("\n" + parser_obj.get_workflow_summary())

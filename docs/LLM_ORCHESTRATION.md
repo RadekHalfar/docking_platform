@@ -232,23 +232,25 @@ The LLM can identify these workflow stages:
 
 ## Missing Parameters
 
-If critical parameters are missing (like `center` or `box_size` for docking), the system will:
+If critical parameters are missing or inconsistent (like invalid `center`/`box_size`), the orchestrator now uses a chatbot-style clarification flow:
 
-1. Detect missing parameters
-2. Prompt you to provide them
-3. Offer to use defaults where appropriate
+1. Parse the request and validate required fields
+2. Ask short, specific follow-up questions only for missing/invalid fields
+3. Offer explicit default confirmation for docking coordinates
+4. Update workflow state after each answer and continue until complete
+
+Notes:
+- The system does not guess required values.
+- Coordinate input accepts both `10,20,30` and `[10,20,30]` formats.
 
 **Example:**
 ```bash
 $ python nlp_orchestrator.py "Download 6lu7 and ATP, dock them"
 
-Missing required parameters:
-  - Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30')
-  - Please provide docking box size [x, y, z] in Angstroms (e.g., '25, 30, 35')
+I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]: n
+Please enter docking box center as x,y,z (e.g., 10,20,30): [10,20,30]
 
-Please provide missing parameters:
-  Docking box center [x, y, z]: 10, 20, 30
-  Docking box size [x, y, z]: 25, 30, 35
+I am missing docking box size [x, y, z]. Do you want to use default [25, 30, 35]? [Y/n]: y
 
 Execute this workflow? [Y/n]:
 ```
@@ -451,16 +453,21 @@ python nlp_orchestrator.py --debug "..."
 ### Empty Docking Coordinates From LLM
 
 Some models may return empty arrays for docking coordinates, for example `center: []` or `box_size: []`.
-The orchestrator now treats these as missing required parameters (instead of running docking with invalid values) and prompts for valid coordinates.
+The orchestrator flags these for clarification (instead of running docking with invalid values) and asks follow-up questions.
 
 Accepted input format at the prompt:
 ```text
 10,20,30
+[10,20,30]
 ```
 
 If parsing fails, safe defaults are applied:
 - Center: `[10.0, 20.0, 30.0]`
 - Box size: `[25.0, 30.0, 35.0]`
+
+### Invalid Protein ID Clarification
+
+If the LLM extracts an invalid protein ID (for example `6lu`), it is reported as invalid (not missing) and the orchestrator asks for a corrected 4-character PDB ID before continuing.
 
 ### Service Connection Errors
 

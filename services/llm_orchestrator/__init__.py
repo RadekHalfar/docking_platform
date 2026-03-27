@@ -9,7 +9,12 @@ from .orchestrator import WorkflowOrchestrator
 from .llm_base import BaseLLMClient
 from .llm_adapters import OllamaAdapter
 from .llm_factory import create_llm_client
-from .workflow_llm_parser import parse_workflow_with_llm
+from .workflow_llm_parser import (
+    parse_workflow_with_llm,
+    generate_llm_follow_up_question,
+    extract_updates_with_llm,
+	extract_box_source_choice_with_llm,
+)
 from .workflow_parser import WorkflowParser
 
 __all__ = [
@@ -18,5 +23,8 @@ __all__ = [
 	'BaseLLMClient',
 	'OllamaAdapter',
 	'create_llm_client',
-	'parse_workflow_with_llm'
+	'parse_workflow_with_llm',
+	'generate_llm_follow_up_question',
+	'extract_updates_with_llm',
+	'extract_box_source_choice_with_llm',
 ]

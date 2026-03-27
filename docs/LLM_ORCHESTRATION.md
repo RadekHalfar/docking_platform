@@ -167,7 +167,14 @@ Options:
   --output-dir DIR          Output directory (default: ./orchestrator_output)
   --check-health            Check all services and exit
   --list-models             List available models from selected provider
+  --clarification-mode MODE Missing-parameter mode: hybrid (default) or legacy
   --debug                   Enable debug logging
+```
+
+Environment variable alternative:
+
+```bash
+CLARIFICATION_MODE=legacy python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
 
 ---
@@ -230,30 +237,78 @@ The LLM can identify these workflow stages:
 
 ---
 
-## Missing Parameters
+## Hybrid Clarification Parser
 
-If critical parameters are missing or inconsistent (like invalid `center`/`box_size`), the orchestrator now uses a chatbot-style clarification flow:
+When required fields are missing or invalid, clarification runs in one of two modes:
 
-1. Parse the request and validate required fields
-2. Ask short, specific follow-up questions only for missing/invalid fields
-3. Offer explicit default confirmation for docking coordinates
-4. Update workflow state after each answer and continue until complete
+- `hybrid` (default): LLM + deterministic safety checks
+- `legacy`: deterministic prompts only (pre-hybrid behavior)
 
-Notes:
-- The system does not guess required values.
-- Coordinate input accepts both `10,20,30` and `[10,20,30]` formats.
+### What Hybrid Is
 
-**Example:**
+Hybrid clarification keeps validation deterministic, but uses the LLM to improve interaction quality:
+
+1. Parse request with LLM and validate against required schema.
+2. Ask one short follow-up for one missing/invalid field.
+3. Convert the user answer into strict JSON parameter updates.
+4. Re-validate the whole workflow after every turn.
+5. Repeat until complete or clarification limit is reached.
+
+### What Hybrid Does
+
+- Uses LLM to generate concise clarification questions.
+- Uses LLM to extract structured updates (JSON only).
+- Uses LLM to classify docking-box source intent (`manual` vs `pymol`) from natural text.
+- Falls back to deterministic menu selection if box-source intent is ambiguous.
+- In manual box mode, parses `center` and `box_size` from natural-language answers with LLM.
+- Never bypasses validation; updates must satisfy required parameter rules.
+
+### Failure Safety
+
+- If an answer cannot be parsed into valid updates, user is prompted to try again.
+- Clarification is bounded (`max_turns=8` in hybrid flow).
+- If required fields are still unresolved after the loop, workflow execution is stopped.
+
+### How To Use Hybrid
+
+Hybrid is default, so no flag is required:
+
 ```bash
-$ python nlp_orchestrator.py "Download 6lu7 and ATP, dock them"
-
-I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]: n
-Please enter docking box center as x,y,z (e.g., 10,20,30): [10,20,30]
-
-I am missing docking box size [x, y, z]. Do you want to use default [25, 30, 35]? [Y/n]: y
-
-Execute this workflow? [Y/n]:
+python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
+
+Explicitly request hybrid:
+
+```bash
+python nlp_orchestrator.py --clarification-mode hybrid "Download 6lu7 and ATP, prepare and dock"
+```
+
+Example (missing docking box):
+
+```text
+How should we define docking box coordinates? (manually define coordinates or interactive PyMOL): I'll type them.
+Please provide docking box center as x,y,z: center 10,20,30 and box size 25,30,35
+```
+
+### How To Use Legacy Mode
+
+Use legacy mode when you want deterministic prompts only:
+
+```bash
+python nlp_orchestrator.py --clarification-mode legacy "Download 6lu7 and ATP, prepare and dock"
+```
+
+Or via environment variable:
+
+```bash
+CLARIFICATION_MODE=legacy python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+```
+
+Legacy behavior characteristics:
+
+- No LLM follow-up question generation for missing fields.
+- No LLM JSON extraction from clarification replies.
+- Docking box path uses deterministic menu/default prompts.
 
 ---
 

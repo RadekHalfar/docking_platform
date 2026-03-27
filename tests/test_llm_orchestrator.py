@@ -14,6 +14,7 @@ from services.llm_orchestrator import (
     WorkflowParser,
     create_llm_client,
     parse_workflow_with_llm,
+    extract_box_source_choice_with_llm,
 )
 
 
@@ -68,6 +69,19 @@ class TestLLMArchitecture:
             result = parse_workflow_with_llm(llm_client, "Download 6lu7 and ATP, then render image")
 
         assert "visualize" in result["services"]
+
+    def test_extract_box_source_choice_with_llm(self):
+        """LLM classifier should map responses to manual/pymol choices."""
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+
+        with patch.object(llm_client, "generate", return_value='{"box_source": "pymol"}'):
+            assert extract_box_source_choice_with_llm(llm_client, "use interactive pymol") == "pymol"
+
+        with patch.object(llm_client, "generate", return_value='{"box_source": "manual"}'):
+            assert extract_box_source_choice_with_llm(llm_client, "I will type coordinates") == "manual"
+
+        with patch.object(llm_client, "generate", return_value='{"box_source": "unknown"}'):
+            assert extract_box_source_choice_with_llm(llm_client, "not sure") is None
 
 
 class TestWorkflowParser:

@@ -42,20 +42,31 @@ Example without docking box (you will be prompted):
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and two ATP, prepare and dock and visualize"
 ```
 
-## 5. Missing Docking Box: Prompt Behavior
+## 5. Missing Docking Box: Hybrid Clarification Behavior
 
-When `center` / `box_size` are missing, CLI asks:
+Default clarification mode is `hybrid`.
 
-1. Write center/box_size manually
-2. Define box in PyMOL Interactive now
+When `center` / `box_size` are missing, CLI first asks in natural language how to provide docking box coordinates (manual vs interactive PyMOL), then:
 
-If you choose `2`, orchestrator:
+1. If intent is clear and manual is chosen, `center` / `box_size` are parsed from your free-text answer by LLM.
+2. If intent is clear and PyMOL is chosen, orchestrator tries interactive PyMOL box capture directly.
+3. If intent is ambiguous, CLI falls back to deterministic menu:
+	- Write center/box_size manually
+	- Define box in PyMOL Interactive now
+
+If PyMOL path is used, orchestrator:
 
 1. Prepares structures
 2. Loads them in interactive PyMOL
 3. Waits for your selection name (default: `sele`)
 4. Calls interactive API to compute box and save `docking_box.json`
 5. Continues docking in the same job folder
+
+Use deterministic-only behavior with legacy mode:
+
+```powershell
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --clarification-mode legacy "Download 6lu7 and two ATP, prepare and dock"
+```
 
 ## 6. Start Interactive PyMOL (Optional)
 

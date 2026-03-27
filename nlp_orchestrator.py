@@ -18,6 +18,9 @@ from services.llm_orchestrator import (
     WorkflowParser,
     create_llm_client,
     parse_workflow_with_llm,
+    generate_llm_follow_up_question,
+    extract_updates_with_llm,
+    extract_box_source_choice_with_llm,
 )
 
 # Verbosity levels
@@ -57,6 +60,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+CLARIFICATION_MODE_HYBRID = "hybrid"
+CLARIFICATION_MODE_LEGACY = "legacy"
 
 # Add verbosity filter to root logger
 verbosity_filter = VerbosityFilter()
@@ -144,6 +150,12 @@ Examples:
         default="low",
         help="Verbosity level: 'low' (minimal, step summaries only), 'normal' (show service logs), 'mcp_demo' (full MCP JSON-RPC demonstration)"
     )
+    parser.add_argument(
+        "--clarification-mode",
+        choices=[CLARIFICATION_MODE_HYBRID, CLARIFICATION_MODE_LEGACY],
+        default=os.getenv("CLARIFICATION_MODE", CLARIFICATION_MODE_HYBRID),
+        help="Missing-parameter clarification mode: 'hybrid' (default, LLM + deterministic checks) or 'legacy' (deterministic-only)."
+    )
     
     args = parser.parse_args()
     
@@ -228,7 +240,13 @@ Examples:
                     continue
                 
                 # Process workflow
-                process_workflow(user_input, llm_client, orchestrator, parser_obj)
+                process_workflow(
+                    user_input,
+                    llm_client,
+                    orchestrator,
+                    parser_obj,
+                    clarification_mode=args.clarification_mode,
+                )
                 
             except KeyboardInterrupt:
                 print("\nGoodbye!")
@@ -241,7 +259,13 @@ Examples:
     
     # Single command mode
     if args.command:
-        return process_workflow(args.command, llm_client, orchestrator, parser_obj)
+        return process_workflow(
+            args.command,
+            llm_client,
+            orchestrator,
+            parser_obj,
+            clarification_mode=args.clarification_mode,
+        )
     else:
         parser.print_help()
         return 1
@@ -279,6 +303,134 @@ def _parse_coordinate_triplet(value: str) -> Optional[List[float]]:
 def _generate_job_id() -> str:
     """Generate a job id to keep all workflow artifacts under one folder."""
     return f"job_{int(time.time() * 1000)}"
+
+
+def _collect_missing_parameters_hybrid(
+    parser_obj: WorkflowParser,
+    output_base: str,
+    llm_client: BaseLLMClient,
+    max_turns: int = 8,
+) -> None:
+    """Hybrid clarification: deterministic branching + LLM wording/intent extraction."""
+    prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
+    center_default = [10.0, 20.0, 30.0]
+    box_size_default = [25.0, 30.0, 35.0]
+    box_source_decided = False
+    manual_box_mode = False
+    turn = 0
+
+    while parser_obj.has_missing_parameters() and turn < max_turns:
+        turn += 1
+        missing = parser_obj.get_missing_parameters()
+        current_param = next((p for p in prompt_order if p in missing), missing[0])
+
+        if current_param in ["center", "box_size"] and not box_source_decided:
+            source_answer = input(
+                "How should we define docking box coordinates? "
+                "(manually define coordinates or interactive PyMOL): "
+            ).strip()
+            box_source_choice = extract_box_source_choice_with_llm(llm_client, source_answer)
+
+            if box_source_choice == "pymol":
+                box_source_decided = True
+                used_pymol = _try_apply_live_pymol_box(
+                    parser_obj,
+                    live_box_provider=getattr(parser_obj, "_live_box_provider", None),
+                )
+                if used_pymol:
+                    parser_obj.validate_workflow(
+                        {
+                            "services": parser_obj.parsed_workflow["services"],
+                            "parameters": parser_obj.parsed_workflow["parameters"],
+                        }
+                    )
+                    continue
+                if not _ask_yes_no(
+                    "Could not define docking box in PyMOL now. Continue with manual coordinates/defaults? [Y/n]: ",
+                    default_yes=True,
+                ):
+                    box_source_decided = False
+                    continue
+                manual_box_mode = True
+
+            elif box_source_choice == "manual":
+                box_source_decided = True
+                manual_box_mode = True
+
+            else:
+                print("I could not determine box mode from that answer. Please choose directly.")
+                box_source_decided = True
+                used_pymol = _choose_docking_box_source(
+                    parser_obj,
+                    output_base,
+                    live_box_provider=getattr(parser_obj, "_live_box_provider", None),
+                )
+                if used_pymol:
+                    parser_obj.validate_workflow(
+                        {
+                            "services": parser_obj.parsed_workflow["services"],
+                            "parameters": parser_obj.parsed_workflow["parameters"],
+                        }
+                    )
+                    continue
+                manual_box_mode = True
+
+        if current_param == "center" and not manual_box_mode:
+            use_default = _ask_yes_no(
+                "I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]: "
+            )
+            if use_default:
+                parser_obj.update_parameters({"center": center_default})
+                parser_obj.validate_workflow(
+                    {
+                        "services": parser_obj.parsed_workflow["services"],
+                        "parameters": parser_obj.parsed_workflow["parameters"],
+                    }
+                )
+                continue
+
+        if current_param == "box_size" and not manual_box_mode:
+            use_default = _ask_yes_no(
+                "I am missing docking box size [x, y, z]. Do you want to use default [25, 30, 35]? [Y/n]: "
+            )
+            if use_default:
+                parser_obj.update_parameters({"box_size": box_size_default})
+                parser_obj.validate_workflow(
+                    {
+                        "services": parser_obj.parsed_workflow["services"],
+                        "parameters": parser_obj.parsed_workflow["parameters"],
+                    }
+                )
+                continue
+
+        question = generate_llm_follow_up_question(llm_client, parser_obj, current_param)
+        user_answer = input(f"{question.rstrip(':')} ").strip()
+
+        updates = extract_updates_with_llm(
+            llm_client=llm_client,
+            parser_obj=parser_obj,
+            user_answer=user_answer,
+            target_param=current_param,
+        )
+
+        if updates:
+            parser_obj.update_parameters(updates)
+        else:
+            print("I could not extract a valid value from that answer. Please try again.")
+
+        parser_obj.validate_workflow(
+            {
+                "services": parser_obj.parsed_workflow["services"],
+                "parameters": parser_obj.parsed_workflow["parameters"],
+            }
+        )
+
+
+def _normalize_clarification_mode(mode: str) -> str:
+    """Normalize clarification mode with hybrid as safe default."""
+    if mode == CLARIFICATION_MODE_LEGACY:
+        return CLARIFICATION_MODE_LEGACY
+    return CLARIFICATION_MODE_HYBRID
 
 
 def _create_box_via_live_pymol(orchestrator: WorkflowOrchestrator, workflow: Dict[str, Any], job_id: str) -> Optional[dict]:
@@ -394,31 +546,41 @@ def _choose_docking_box_source(
             return False
 
         if choice in ["2", "pymol", "visual", "v"]:
-            if not live_box_provider:
-                print("PyMOL-guided box definition is not available in this run. Please choose manual entry.")
+            if _try_apply_live_pymol_box(parser_obj, live_box_provider):
+                return True
+            if _ask_yes_no("Do you want to enter coordinates manually now? [Y/n]: ", default_yes=True):
                 return False
-
-            box_payload = live_box_provider()
-            if not box_payload:
-                print("Could not define docking box from interactive PyMOL.")
-                if _ask_yes_no("Do you want to enter coordinates manually now? [Y/n]: ", default_yes=True):
-                    return False
-                continue
-
-            center = box_payload.get("center")
-            box_size = box_payload.get("box_size")
-            if not parser_obj.validate_coordinates(center) or not parser_obj.validate_coordinates(box_size):
-                print("PyMOL returned invalid coordinates. Please choose manual entry.")
-                return False
-
-            parser_obj.update_parameters({"center": center, "box_size": box_size})
-            print("✅ Loaded docking box from live PyMOL session:")
-            print(f"   center: {center}")
-            print(f"   box_size: {box_size}")
-            print(f"   source: {box_payload.get('path', 'pymol_interactive')}")
-            return True
+            continue
 
         print("Please choose 1 or 2.")
+
+
+def _try_apply_live_pymol_box(
+    parser_obj: WorkflowParser,
+    live_box_provider: Optional[Callable[[], Optional[dict]]],
+) -> bool:
+    """Try to populate center/box_size from interactive PyMOL selection."""
+    if not live_box_provider:
+        print("PyMOL-guided box definition is not available in this run.")
+        return False
+
+    box_payload = live_box_provider()
+    if not box_payload:
+        print("Could not define docking box from interactive PyMOL.")
+        return False
+
+    center = box_payload.get("center")
+    box_size = box_payload.get("box_size")
+    if not parser_obj.validate_coordinates(center) or not parser_obj.validate_coordinates(box_size):
+        print("PyMOL returned invalid coordinates.")
+        return False
+
+    parser_obj.update_parameters({"center": center, "box_size": box_size})
+    print("✅ Loaded docking box from live PyMOL session:")
+    print(f"   center: {center}")
+    print(f"   box_size: {box_size}")
+    print(f"   source: {box_payload.get('path', 'pymol_interactive')}")
+    return True
 
 
 def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) -> None:
@@ -582,7 +744,13 @@ def _integrate_with_pymol_interactive(results: dict) -> None:
         print(f"   Open noVNC: {no_vnc_url}")
 
 
-def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: WorkflowOrchestrator, parser_obj: WorkflowParser) -> int:
+def process_workflow(
+    user_input: str,
+    llm_client: BaseLLMClient,
+    orchestrator: WorkflowOrchestrator,
+    parser_obj: WorkflowParser,
+    clarification_mode: str = CLARIFICATION_MODE_HYBRID,
+) -> int:
     """
     Process a workflow from natural language input.
     
@@ -609,6 +777,8 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
         # Reserve one job id so prep + docking phases stay in the same folder.
         shared_job_id = _generate_job_id()
 
+        clarification_mode = _normalize_clarification_mode(clarification_mode)
+
         # Check for missing parameters
         if parser_obj.has_missing_parameters():
             print("\n⚠️  I need a bit more information before running this workflow.")
@@ -616,8 +786,24 @@ def process_workflow(user_input: str, llm_client: BaseLLMClient, orchestrator: W
 
             # Ask only for missing/invalid fields, one short question at a time.
             parser_obj._live_box_provider = lambda: _create_box_via_live_pymol(orchestrator, parser_obj.parsed_workflow, shared_job_id)
-            _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
-            parser_obj._live_box_provider = None
+            try:
+                if clarification_mode == CLARIFICATION_MODE_HYBRID:
+                    _collect_missing_parameters_hybrid(
+                        parser_obj,
+                        str(orchestrator.output_base),
+                        llm_client=llm_client,
+                    )
+                else:
+                    _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
+            finally:
+                parser_obj._live_box_provider = None
+
+            if parser_obj.has_missing_parameters():
+                print("\n❌ Could not resolve all required parameters.")
+                print(parser_obj.format_missing_prompt())
+                print("Try clarifying your request or run with --clarification-mode legacy.")
+                return 1
+
             workflow = parser_obj.parsed_workflow
             
             print("\n" + parser_obj.get_workflow_summary())

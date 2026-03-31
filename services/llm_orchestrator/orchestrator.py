@@ -169,6 +169,9 @@ class WorkflowOrchestrator:
         Returns:
             Workflow execution results
         """
+        # Reset transient per-run state so artifacts from previous runs are not reused.
+        self.workflow_state = {}
+
         if job_id:
             self.current_job_id = job_id
         else:

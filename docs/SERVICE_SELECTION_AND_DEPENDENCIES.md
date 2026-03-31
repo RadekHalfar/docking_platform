@@ -1,0 +1,494 @@
+# Service Selection and Dependencies
+
+## Overview
+
+The docking platform uses an LLM-driven approach to understand natural language commands and automatically select and configure which services to run. This document explains:
+
+1. **How the LLM selects services** - what triggers each service
+2. **Input/output requirements** - what each service needs and produces
+3. **Service dependencies** - order and data flow between services
+4. **Required parameters** - what must be asked from the user
+
+---
+
+## Part 1: Service Selection (LLM Decision Making)
+
+### The Selection Logic
+
+The LLM parser in [services/llm_orchestrator/workflow_llm_parser.py](../services/llm_orchestrator/workflow_llm_parser.py) uses the `SYSTEM_PROMPT` to determine which services to include based on user keywords:
+
+#### Service Selection Rules
+
+| Service | Selected When | Required Parameters |
+|---------|---------------|-------------------|
+| **download** | Protein/ligand IDs are mentioned | `protein_id` |
+| **prepare_ligands** | User wants to prepare OR dock | `ligand_ids` |
+| **prepare_protein** | User wants to prepare OR dock | `protein_id` |
+| **dock** | User explicitly requests docking | `protein_id`, `ligand_ids`, `center`, `box_size` |
+| **visualize** | User mentions: visualize, show results, render, view, display, image, picture, photo | `protein_id`, `ligand_ids` |
+
+### Example Service Selections
+
+```
+User: "Download 6lu7 and ATP, prepare and dock"
+→ Services: ["download", "prepare_ligands", "prepare_protein", "dock"]
+→ Missing: center, box_size
+
+User: "Dock 5ogo with two WWO ligands and render image"
+→ Services: ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+→ Missing: center, box_size
+
+User: "Just download 1ABC"
+→ Services: ["download"]
+→ Missing: none (only download is needed)
+
+User: "Show results of docking"
+→ Services: ["visualize"]
+→ Missing: None (if previous results exist)
+```
+
+---
+
+## Part 2: Input/Output Requirements for Each Service
+
+### 1. DOWNLOAD Service (`rcsb_downloader`)
+
+**Purpose:** Fetch protein and ligand structures from RCSB Protein Data Bank
+
+**Input Parameters:**
+```json
+{
+  "protein_id": "6lu7",           // 4-char PDB ID (required)
+  "ligand_ids": ["ATP", "HEM"],   // List of ligand codes (required)
+  "formats": {                    // Optional
+    "protein": "pdb",            // or "mmcif"
+    "ligand": "sdf"              // or "mol", "mol2"
+  },
+  "save_dir": "/app/downloads"    // Output directory
+}
+```
+
+**Outputs:**
+```json
+{
+  "protein_path": "/app/downloads/6lu7.pdb",
+  "ligand_paths": [
+    "/app/downloads/ATP.sdf",
+    "/app/downloads/HEM.sdf"
+  ],
+  "protein_metadata": {...},
+  "ligand_metadata": {...}
+}
+```
+
+**Data Flow:** Files are saved to the download directory
+
+---
+
+### 2. PREPARE_LIGANDS Service (`ligand_preparer`)
+
+**Purpose:** Convert ligand SDF files to PDBQT format with proper protonation and charges
+
+**Input Parameters:**
+```json
+{
+  "ligand_paths": [                    // From download service
+    "/app/downloads/ATP.sdf",
+    "/app/downloads/HEM.sdf"
+  ],
+  "output_dir": "/app/prepared",       // Where to save prepared files
+  "ph": 7.4,                           // Protonation pH (default)
+  "add_hydrogens": true,               // Add explicit hydrogens
+  "generate_3d": true,                 // Generate 3D conformer
+  "optimize": true                     // Optimize geometry
+}
+```
+
+**Outputs:**
+```json
+{
+  "prepared_ligands": [
+    {
+      "original_path": "/app/downloads/ATP.sdf",
+      "pdbqt_path": "/app/prepared/ATP.pdbqt",
+      "success": true,
+      "rotatable_bonds": 5
+    },
+    {
+      "original_path": "/app/downloads/HEM.sdf",
+      "pdbqt_path": "/app/prepared/HEM.pdbqt",
+      "success": true,
+      "rotatable_bonds": 0
+    }
+  ]
+}
+```
+
+**Data Flow:** Consumes ligand files from download → produces PDBQT files for docking
+
+---
+
+### 3. PREPARE_PROTEIN Service (`protein_preparer`)
+
+**Purpose:** Convert protein PDB file to PDBQT format with protonation and AutoDock atom types
+
+**Input Parameters:**
+```json
+{
+  "protein_paths": [                   // From download service
+    "/app/downloads/6lu7.pdb"
+  ],
+  "output_dir": "/app/prepared",       // Where to save prepared file
+  "ph": 7.4,                           // Protonation pH
+  "add_hydrogens": true,               // Add explicit hydrogens
+  "remove_waters": true                // Remove water molecules
+}
+```
+
+**Outputs:**
+```json
+{
+  "prepared_proteins": [
+    {
+      "original_path": "/app/downloads/6lu7.pdb",
+      "pdbqt_path": "/app/prepared/6lu7.pdbqt",
+      "success": true,
+      "num_atoms": 2547
+    }
+  ]
+}
+```
+
+**Data Flow:** Consumes protein from download → produces PDBQT file for docking
+
+---
+
+### 4. MOLDINA_RUNNER Service (Docking)
+
+**Purpose:** Run molecular docking simulation using Moldina (PSO-based optimizer)
+
+**Input Parameters:**
+```json
+{
+  "receptor_path": "/app/prepared/6lu7.pdbqt",     // From protein preparation
+  "ligand_paths": [                                // From ligand preparation
+    "/app/prepared/ATP.pdbqt",
+    "/app/prepared/HEM.pdbqt"
+  ],
+  "output_dir": "/app/docking_results",
+  "center": [12.3, 34.5, -5.6],                   // Search box center [x,y,z] (REQUIRED)
+  "box_size": [20.0, 20.0, 20.0],                 // Search box size [x,y,z] (REQUIRED)
+  "cpu": 4,                                        // CPU threads
+  "population": 500,                               // PSO population size
+  "exhaustiveness": 8,                             // Search exhaustiveness
+  "num_modes": 15,                                 // Number of binding modes
+  "energy_range": 100.0                            // Energy range for clustering
+}
+```
+
+**Outputs:**
+```json
+{
+  "successful": 2,
+  "failed": 0,
+  "results": [
+    {
+      "ligand_id": "ATP",
+      "output_path": "/app/docking_results/ATP_docking.pdbqt",
+      "best_affinity": -8.5,
+      "num_poses": 9,
+      "poses": [
+        {
+          "pose_rank": 1,
+          "affinity": -8.5,
+          "rmsd_lb": 0.0,
+          "rmsd_ub": 0.0
+        },
+        ...
+      ]
+    },
+    {
+      "ligand_id": "HEM",
+      "output_path": "/app/docking_results/HEM_docking.pdbqt",
+      "best_affinity": -7.2,
+      "num_poses": 9,
+      ...
+    }
+  ]
+}
+```
+
+**Data Flow:** Consumes prepared protein and ligands → produces docked poses with binding affinities
+
+---
+
+### 5. PYMOL_VISUALIZER Service
+
+**Purpose:** Generate PyMOL visualizations and render PNG images of docking results
+
+**Input Parameters:**
+```json
+{
+  "receptor_path": "/app/prepared/6lu7.pdbqt",     // From protein preparation
+  "ligand_paths": [                                // From docking (preferred) or ligand prep
+    "/app/docking_results/ATP_docking.pdbqt",
+    "/app/docking_results/HEM_docking.pdbqt"
+  ],
+  "output_dir": "/app/visualization",
+  "affinities": [-8.5, -7.2],                      // Binding affinities (optional)
+  "show_surface": true,
+  "show_binding_site": true,
+  "binding_site_radius": 5.0,
+  "render_image": true,
+  "image_width": 1920,
+  "image_height": 1080,
+  "image_dpi": 300,
+  "ray_trace": true
+}
+```
+
+**Outputs:**
+```json
+{
+  "script_path": "/app/visualization/docking_viz.pml",
+  "script_content": "# PyMOL script content...",
+  "image_path": "/app/visualization/docking_viz.png",
+  "image_created": true,
+  "metadata": {
+    "width": 1920,
+    "height": 1080,
+    "dpi": 300
+  }
+}
+```
+
+**Data Flow:** Consumes prepared protein and docked ligands → produces visualization script and images
+
+---
+
+## Part 3: Service Dependencies and Execution Order
+
+### Dependency Graph
+
+```
+User Input
+    ↓
+LLM Parser → determines which services
+    ↓
+Workflow Validator → checks for missing parameters
+    ↓
+Orchestrator executes in this ORDER:
+
+1. DOWNLOAD (if needed)
+   ├─ Input: protein_id, ligand_ids
+   ├─ Output: protein_path, ligand_paths
+   └─ State saved: workflow_state["protein_file"], workflow_state["ligand_files"]
+
+2. PREPARE_LIGANDS (depends on DOWNLOAD)
+   ├─ Input: ligand_files from state
+   ├─ Output: prepared_ligands PDBQT paths
+   └─ State saved: workflow_state["prepared_ligands"]
+
+3. PREPARE_PROTEIN (depends on DOWNLOAD)
+   ├─ Input: protein_file from state
+   ├─ Output: prepared_protein PDBQT path
+   └─ State saved: workflow_state["prepared_protein"]
+
+4. DOCK (depends on PREPARE_LIGANDS and PREPARE_PROTEIN)
+   ├─ Input: prepared_protein, prepared_ligands, center, box_size
+   ├─ Output: docking_results with poses and affinities
+   └─ State saved: workflow_state["docking_results"]
+
+5. VISUALIZE (depends on PREPARE_PROTEIN and optionally DOCK)
+   ├─ Input: prepared_protein, docked_ligands (from DOCK) or prepared_ligands
+   ├─ Output: visualization script and images
+   └─ Complete!
+```
+
+### Critical Dependencies
+
+**CANNOT RUN WITHOUT:**
+- `prepare_ligands` requires output from `download`
+- `prepare_protein` requires output from `download`
+- `dock` requires output from both `prepare_ligands` AND `prepare_protein`
+- `visualize` requires output from `prepare_protein` (and optionally `dock`)
+
+### Data Flow Through Services
+
+```
+download → preparation → docking → visualization
+   ↓            ↓          ↓              ↓
+ Input:    Consumes:   Consumes:     Consumes:
+protein_id  ligand     prepared      docking
+ligand_ids  files      molecules     results
+            protein    + params
+            files      (center,
+                       box_size)
+```
+
+---
+
+## Part 4: Required Parameters and Clarification
+
+### Automatically Provided (from worflow parser)
+
+These come from parsing the user's natural language command:
+
+```json
+"parameters": {
+  "protein_id": "6lu7",           // Extracted from user input
+  "ligand_ids": ["ATP", "HEM"],   // Extracted from user input
+  "ph": 7.4,                      // Default
+  "exhaustiveness": 8,            // Default
+  "cpu": 4,                       // Default
+  "population": 500,              // Default
+  "num_modes": 15,                // Default
+  "energy_range": 100.0,          // Default
+  "add_hydrogens": true,          // Default
+  "remove_waters": true,          // Default
+  "formats": {...}                // Defaults
+}
+```
+
+### Must Ask User For
+
+These are **CRITICAL** and determine if docking can proceed:
+
+| Parameter | Service | Type | Example | When Missing |
+|-----------|---------|------|---------|--------------|
+| `center` | moldina | [x, y, z] floats | [12.3, 34.5, -5.6] | Ask: "Where should the search box be centered?" |
+| `box_size` | moldina | [x, y, z] floats | [20.0, 20.0, 20.0] | Ask: "What should the search box dimensions be?" |
+| `protein_id` | download, dock | 4-char string | "6lu7" | Ask: "What protein PDB ID?" |
+| `ligand_ids` | download, prepare | list of strings | ["ATP", "HEM"] | Ask: "Which ligands?" |
+
+### Optional Parameters (Can Override Defaults)
+
+| Parameter | Default | Range | Impact |
+|-----------|---------|-------|--------|
+| `ph` | 7.4 | 0-14 | Affects protonation state |
+| `exhaustiveness` | 8 | 1-32 | Higher = slower but more thorough |
+| `cpu` | 4 | 1-max | Parallel threads for docking |
+| `population` | 500 | 100-4000 | PSO particles |
+| `num_modes` | 15 | 1-20 | Number of binding poses |
+
+---
+
+## Part 5: Code References
+
+### Service Selection
+- **File:** [workflow_llm_parser.py](../services/llm_orchestrator/workflow_llm_parser.py)
+- **Key:** `SYSTEM_PROMPT` - Contains service selection rules
+- **Function:** `parse_workflow_with_llm()`
+
+### Validation
+- **File:** [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py)
+- **Key:** `REQUIRED` dict - Defines required parameters per service
+- **Function:** `validate_workflow()`
+
+### Orchestration
+- **File:** [orchestrator.py](../services/llm_orchestrator/orchestrator.py)
+- **Key:** `execute_workflow()` - Runs services in order
+- **Function:** `call_mcp_tool()` - Calls individual services
+
+### Schemas
+- **File:** [common/schemas.py](../common/schemas.py)
+- **Key:** `JobSpec` - Complete job specification
+
+---
+
+## Part 6: Example Workflow
+
+### Example: User says "Download 6lu7 and ATP, prepare, dock at 10,20,30 with box 25,30,35, and show results"
+
+#### Step 1: LLM Parsing
+```json
+{
+  "services": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+  "parameters": {
+    "protein_id": "6lu7",
+    "ligand_ids": ["ATP"],
+    "center": [10.0, 20.0, 30.0],
+    "box_size": [25.0, 30.0, 35.0],
+    "ph": 7.4,
+    ...defaults...
+  },
+  "missing_required": []
+}
+```
+
+#### Step 2: Workflow Validation
+- All required parameters present ✓
+- All services can be executed ✓
+
+#### Step 3: Orchestrator Execution
+
+```
+1️⃣ DOWNLOAD
+  Input: protein_id="6lu7", ligand_ids=["ATP"]
+  Output: 6lu7.pdb, ATP.sdf
+  State: workflow_state["protein_file"] = ".../6lu7.pdb"
+         workflow_state["ligand_files"] = [".../ATP.sdf"]
+
+2️⃣ PREPARE_LIGANDS
+  Input: workflow_state["ligand_files"]
+  Output: ATP.pdbqt
+  State: workflow_state["prepared_ligands"] = [".../ATP.pdbqt"]
+
+3️⃣ PREPARE_PROTEIN
+  Input: workflow_state["protein_file"]
+  Output: 6lu7.pdbqt
+  State: workflow_state["prepared_protein"] = ".../6lu7.pdbqt"
+
+4️⃣ DOCK
+  Input: receptor=6lu7.pdbqt, ligands=[ATP.pdbqt], center, box_size
+  Output: ATP_docking.pdbqt with affinity=-8.5
+  State: workflow_state["docking_results"] = {...}
+
+5️⃣ VISUALIZE
+  Input: receptor=6lu7.pdbqt, ligands=[ATP_docking.pdbqt], affinities=[-8.5]
+  Output: docking_viz.pml, docking_viz.png
+  Complete! ✅
+```
+
+---
+
+## Part 7: Troubleshooting
+
+### "Missing required parameters"
+
+**Problem:** User didn't provide enough information
+
+**Solution:** Check [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py) `get_missing_parameters()` and ask for:
+- `protein_id` - "What is the protein PDB ID?"
+- `ligand_ids` - "Which ligands to dock?"
+- `center` - "What are the center coordinates [x, y, z]?"
+- `box_size` - "What is the search box size [x, y, z]?"
+
+### Service fails
+
+**Problem:** One service in the chain fails
+
+**Solution:** Check the error in the previous step's output. Each service depends on the prior ones:
+- If `download` fails → nothing else can run
+- If `prepare_ligands` fails → docking can't proceed
+- If `prepare_protein` fails → docking can't proceed
+- If `dock` fails → visualization uses prepared ligands instead
+
+### No options for input/output specification
+
+**Problem:** User asks "What inputs does prepare_ligands need?"
+
+**Solution:** Direct them to the REQUIRED dict in [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py) line ~33-39, or check this document's Part 2.
+
+---
+
+## Summary Table
+
+| Service | Depends On | Required Input | Outputs | When Used |
+|---------|-----------|----------------|---------|-----------|
+| **download** | None | protein_id, ligand_ids | protein_path, ligand_paths | Always (if IDs given) |
+| **prepare_ligands** | download | ligand_paths | prepared_ligands (PDBQT) | When preparing or docking |
+| **prepare_protein** | download | protein_path | prepared_protein (PDBQT) | When preparing or docking |
+| **dock** | prepare_ligands, prepare_protein | receptor, ligands, center, box_size | docking_results | When docking requested |
+| **visualize** | prepare_protein (+ dock optional) | receptor, ligands | visualization script, PNG | When visualization requested |
+

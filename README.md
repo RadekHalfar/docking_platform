@@ -406,6 +406,7 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages
 - **[docs/API.md](docs/API.md)** - Complete MCP tool specifications and JSON-RPC examples
+- **[docs/PYMOL_INTERACTIVE.md](docs/PYMOL_INTERACTIVE.md)** - Browser-based PyMOL interactive service and docking box helper API
 - **[docs/INSTALLATION.md](docs/INSTALLATION.md)** - Installation instructions (Docker and local)
 - **[docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md)** - Docker deployment guide
 

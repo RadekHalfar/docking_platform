@@ -16,6 +16,7 @@ from services.llm_orchestrator import (
     BaseLLMClient,
     WorkflowOrchestrator,
     WorkflowParser,
+    WorkflowStateManager,
     create_llm_client,
     parse_workflow_with_llm,
     generate_llm_follow_up_question,
@@ -433,7 +434,12 @@ def _normalize_clarification_mode(mode: str) -> str:
     return CLARIFICATION_MODE_HYBRID
 
 
-def _create_box_via_live_pymol(orchestrator: WorkflowOrchestrator, workflow: Dict[str, Any], job_id: str) -> Optional[dict]:
+def _create_box_via_live_pymol(
+    orchestrator: WorkflowOrchestrator,
+    workflow: Dict[str, Any],
+    job_id: str,
+    state_manager: Optional[WorkflowStateManager] = None,
+) -> Optional[dict]:
     """Run pre-docking prep, open interactive PyMOL flow, and derive center/box_size from selection."""
     base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
     no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
@@ -467,7 +473,7 @@ def _create_box_via_live_pymol(orchestrator: WorkflowOrchestrator, workflow: Dic
         "services": ["download", "prepare_ligands", "prepare_protein"],
         "parameters": workflow.get("parameters", {}),
     }
-    prep_results = orchestrator.execute_workflow(prep_workflow, job_id=job_id)
+    prep_results = orchestrator.execute_workflow(prep_workflow, job_id=job_id, state_manager=state_manager)
     if prep_results.get("errors"):
         print("Could not prepare structures for PyMOL-guided box selection.")
         for err in prep_results["errors"]:
@@ -770,12 +776,16 @@ def process_workflow(
         # Validate and enrich
         print("✅ Validating workflow...")
         workflow = parser_obj.validate_workflow(parsed)
+
+        # Persist workflow parameters immediately after parsing/validation.
+        shared_job_id = _generate_job_id()
+        state_manager = WorkflowStateManager(orchestrator.output_base / shared_job_id)
+        parser_obj.set_state_manager(state_manager)
+        state_manager.save_parameters_checkpoint(workflow.get("parameters", {}), source="initial_parse")
         
         # Show summary
         print("\n" + parser_obj.get_workflow_summary())
         
-        # Reserve one job id so prep + docking phases stay in the same folder.
-        shared_job_id = _generate_job_id()
 
         clarification_mode = _normalize_clarification_mode(clarification_mode)
 
@@ -785,7 +795,12 @@ def process_workflow(
             print(parser_obj.format_missing_prompt())
 
             # Ask only for missing/invalid fields, one short question at a time.
-            parser_obj._live_box_provider = lambda: _create_box_via_live_pymol(orchestrator, parser_obj.parsed_workflow, shared_job_id)
+            parser_obj._live_box_provider = lambda: _create_box_via_live_pymol(
+                orchestrator,
+                parser_obj.parsed_workflow,
+                shared_job_id,
+                state_manager=state_manager,
+            )
             try:
                 if clarification_mode == CLARIFICATION_MODE_HYBRID:
                     _collect_missing_parameters_hybrid(
@@ -820,7 +835,15 @@ def process_workflow(
         print("Executing workflow...")
         print("="*80 + "\n")
         
-        results = orchestrator.execute_workflow(workflow, job_id=shared_job_id)
+        latest_parameters = state_manager.load_latest_parameters()
+        if isinstance(latest_parameters, dict):
+            workflow["parameters"] = latest_parameters
+
+        results = orchestrator.execute_workflow(
+            workflow,
+            job_id=shared_job_id,
+            state_manager=state_manager,
+        )
         
         # Show results
         print("\n" + "="*80)
@@ -847,6 +870,8 @@ def process_workflow(
         logger.error(f"Failed to process workflow: {e}", exc_info=True)
         print(f"\n❌ Failed to process workflow: {e}")
         return 1
+    finally:
+        parser_obj.set_state_manager(None)
 
 
 if __name__ == "__main__":

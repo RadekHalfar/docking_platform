@@ -5,7 +5,6 @@ Validates and processes parsed workflow from LLM.
 """
 import logging
 from typing import Dict, Any, List, Optional
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,13 @@ class WorkflowParser:
         "visualize": ["protein_id", "ligand_ids"]
     }
     
-    def __init__(self):
+    def __init__(self, state_manager: Optional[Any] = None):
         self.parsed_workflow = None
+        self.state_manager = state_manager
+
+    def set_state_manager(self, state_manager: Optional[Any]) -> None:
+        """Attach/detach a persistence manager for parameter checkpoints."""
+        self.state_manager = state_manager
 
     def get_parameter_issue(self, param: str) -> Optional[str]:
         """Return issue type for required params: 'missing', 'invalid', or None."""
@@ -171,12 +175,19 @@ class WorkflowParser:
         
         return "\n".join(lines)
     
-    def update_parameters(self, updates: Dict[str, Any]) -> None:
+    def update_parameters(
+        self,
+        updates: Dict[str, Any],
+        source: str = "parameter_update",
+        persist: bool = True,
+    ) -> None:
         """
         Update workflow parameters.
         
         Args:
             updates: Dictionary of parameter updates
+            source: Update source for persistence metadata
+            persist: Whether to persist this change via state_manager
         """
         if not self.parsed_workflow:
             raise ValueError("No workflow loaded")
@@ -188,6 +199,12 @@ class WorkflowParser:
         for key in updates.keys():
             if key in missing:
                 missing.remove(key)
+
+        if persist and self.state_manager:
+            self.state_manager.save_parameters_checkpoint(
+                self.parsed_workflow.get("parameters", {}),
+                source=source,
+            )
     
     def validate_protein_id(self, protein_id: str) -> bool:
         """Validate PDB ID format (4 characters)."""

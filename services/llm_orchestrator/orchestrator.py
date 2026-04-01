@@ -158,13 +158,19 @@ class WorkflowOrchestrator:
             # Path is outside workspace, return as-is (with POSIX format)
             return abs_path.as_posix()
     
-    def execute_workflow(self, workflow: Dict[str, Any], job_id: str = None) -> Dict[str, Any]:
+    def execute_workflow(
+        self,
+        workflow: Dict[str, Any],
+        job_id: str = None,
+        state_manager: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """
         Execute a complete workflow.
         
         Args:
             workflow: Validated workflow dictionary
             job_id: Optional job identifier
+            state_manager: Optional persistence manager used for checkpointing
             
         Returns:
             Workflow execution results
@@ -180,6 +186,23 @@ class WorkflowOrchestrator:
         
         services = workflow.get("services", [])
         params = workflow.get("parameters", {})
+
+        def _reload_latest_from_disk() -> None:
+            nonlocal params
+            if not state_manager:
+                return
+
+            latest_params = state_manager.load_latest_parameters()
+            if isinstance(latest_params, dict):
+                params = latest_params
+
+            latest_state = state_manager.load_latest_state()
+            if isinstance(latest_state, dict):
+                self.workflow_state = latest_state.copy()
+
+        def _save_step_checkpoint(step: str) -> None:
+            if state_manager:
+                state_manager.save_execution_state_checkpoint(self.workflow_state, step=step)
         
         # Create job directory
         job_dir = self.output_base / self.current_job_id
@@ -198,6 +221,8 @@ class WorkflowOrchestrator:
         try:
             # Step 1: Download structures
             if "download" in services:
+                _reload_latest_from_disk()
+
                 if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
                     print("\n📥 STEP 1: Downloading structures...")
                 else:
@@ -234,6 +259,8 @@ class WorkflowOrchestrator:
                 else:
                     logger.info(f"✅ Downloaded protein: {self.workflow_state['protein_file']}")
                     logger.info(f"✅ Downloaded {len(self.workflow_state['ligand_files'])} ligands")
+
+                _save_step_checkpoint("download")
             
             # Step 2: Prepare ligands
             if "prepare_ligands" in services or "prepare_protein" in services:
@@ -241,6 +268,8 @@ class WorkflowOrchestrator:
                 prepared_dir.mkdir(exist_ok=True)
             
             if "prepare_ligands" in services:
+                _reload_latest_from_disk()
+
                 if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
                     print("\n🧪 STEP 2: Preparing ligands...")
                 else:
@@ -278,9 +307,13 @@ class WorkflowOrchestrator:
                     print(f"   ✅ Prepared {len(prepared_ligands)} ligand(s)")
                 else:
                     logger.info(f"✅ Prepared {len(prepared_ligands)} ligands")
+
+                _save_step_checkpoint("prepare_ligands")
             
             # Step 3: Prepare protein
             if "prepare_protein" in services:
+                _reload_latest_from_disk()
+
                 if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
                     print("\n🧬 STEP 3: Preparing protein...")
                 else:
@@ -314,9 +347,13 @@ class WorkflowOrchestrator:
                         print(f"   ✅ Protein prepared successfully")
                     else:
                         logger.info(f"✅ Prepared protein: {self.workflow_state['prepared_protein']}")
+
+                _save_step_checkpoint("prepare_protein")
             
             # Step 4: Run docking
             if "dock" in services:
+                _reload_latest_from_disk()
+
                 if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
                     print("\n⚛️  STEP 4: Running molecular docking...")
                 else:
@@ -365,9 +402,13 @@ class WorkflowOrchestrator:
                     print(f"   ✅ Docking completed: {docking_result.get('successful', 0)} successful")
                 else:
                     logger.info(f"✅ Docking completed: {docking_result.get('successful', 0)} successful")
+
+                _save_step_checkpoint("dock")
             
             # Step 5: Visualize
             if "visualize" in services:
+                _reload_latest_from_disk()
+
                 if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
                     print("\n🎨 STEP 5: Generating visualization...")
                 else:
@@ -425,6 +466,8 @@ class WorkflowOrchestrator:
                     logger.info(f"✅ Visualization created: {viz_result.get('script_path')}")
                     if viz_result.get("image_path"):
                         logger.info(f"✅ Image rendered: {viz_result.get('image_path')}")
+
+                _save_step_checkpoint("visualize")
             
             # Success
             results["status"] = "completed"

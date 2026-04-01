@@ -16,10 +16,12 @@ from .workflow_llm_parser import (
 	extract_box_source_choice_with_llm,
 )
 from .workflow_parser import WorkflowParser
+from .workflow_state_manager import WorkflowStateManager
 
 __all__ = [
 	'WorkflowOrchestrator',
 	'WorkflowParser',
+	'WorkflowStateManager',
 	'BaseLLMClient',
 	'OllamaAdapter',
 	'create_llm_client',

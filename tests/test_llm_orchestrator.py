@@ -12,6 +12,7 @@ from pathlib import Path
 from services.llm_orchestrator import (
     WorkflowOrchestrator,
     WorkflowParser,
+    WorkflowStateManager,
     create_llm_client,
     parse_workflow_with_llm,
     extract_box_source_choice_with_llm,
@@ -218,6 +219,24 @@ class TestWorkflowParser:
         
         assert parser.parsed_workflow["parameters"]["center"] == [10, 20, 30]
         assert "center" not in parser.get_missing_parameters()
+
+    def test_update_parameters_persists_when_state_manager_attached(self):
+        """Parameter updates should be checkpointed when persistence is configured."""
+        state_manager = Mock()
+        parser = WorkflowParser(state_manager=state_manager)
+
+        parser.parsed_workflow = {
+            "services": ["dock"],
+            "parameters": {"protein_id": "6lu7"},
+            "missing_required": ["ligand_ids"],
+        }
+
+        parser.update_parameters({"ligand_ids": ["ATP"]}, source="user_clarification")
+
+        state_manager.save_parameters_checkpoint.assert_called_once_with(
+            parser.parsed_workflow["parameters"],
+            source="user_clarification",
+        )
     
     def test_validate_protein_id(self):
         """Test PDB ID validation."""
@@ -342,6 +361,82 @@ class TestWorkflowOrchestrator:
                 "test_tool",
                 {"param": "value"}
             )
+
+    def test_execute_workflow_prefers_latest_disk_parameters(self, tmp_path):
+        """Before each step, orchestrator should reload latest parameters from disk."""
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        state_manager = WorkflowStateManager(tmp_path / "job_latest_params")
+
+        state_manager.save_parameters_checkpoint(
+            {
+                "protein_id": "1abc",
+                "ligand_ids": ["HEM"],
+                "formats": {"protein": "pdb", "ligand": "sdf"},
+            },
+            source="manual_override",
+        )
+
+        captured_arguments = {}
+
+        def _fake_call(service_url, tool_name, arguments):
+            captured_arguments.update(arguments)
+            return {
+                "protein_path": "/app/1abc.pdb",
+                "ligand_paths": ["/app/HEM.sdf"],
+            }
+
+        orchestrator.call_mcp_tool = Mock(side_effect=_fake_call)
+
+        workflow = {
+            "services": ["download"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_ids": ["ATP"],
+                "formats": {"protein": "pdb", "ligand": "sdf"},
+            },
+        }
+
+        results = orchestrator.execute_workflow(
+            workflow,
+            job_id="job_reload_params",
+            state_manager=state_manager,
+        )
+
+        assert results["status"] == "completed"
+        assert captured_arguments["protein_id"] == "1abc"
+        assert captured_arguments["ligand_ids"] == ["HEM"]
+
+
+class TestWorkflowStateManager:
+    """Tests for hybrid latest+revision checkpoint persistence."""
+
+    def test_saves_revisioned_checkpoints_and_latest_files(self, tmp_path):
+        manager = WorkflowStateManager(tmp_path / "job_state_manager")
+
+        rev1 = manager.save_parameters_checkpoint({"protein_id": "6lu7"}, source="initial_parse")
+        rev2 = manager.save_parameters_checkpoint(
+            {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+            source="user_clarification",
+        )
+        rev3 = manager.save_execution_state_checkpoint(
+            {"protein_file": "/app/6lu7.pdb", "ligand_files": ["/app/ATP.sdf"]},
+            step="download",
+        )
+
+        assert rev1 == 1
+        assert rev2 == 2
+        assert rev3 == 3
+        assert manager.get_current_revision() == 3
+
+        assert (manager.checkpoints_dir / "rev_000001_parameters.json").exists()
+        assert (manager.checkpoints_dir / "rev_000002_parameters.json").exists()
+        assert (manager.checkpoints_dir / "rev_000003_state.json").exists()
+
+        assert manager.load_latest_parameters() == {"protein_id": "6lu7", "ligand_ids": ["ATP"]}
+        assert manager.load_latest_state() == {
+            "protein_file": "/app/6lu7.pdb",
+            "ligand_files": ["/app/ATP.sdf"],
+        }
 
 
 class TestIntegration:

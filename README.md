@@ -223,6 +223,11 @@ python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 # Interactive mode with prompts
 python nlp_orchestrator.py --interactive
 
+# Phase-1 interactive commands:
+#   state                 -> show active job state from disk
+#   new <request>         -> start a fresh workflow in current session
+#   end / quit / exit     -> stop session
+
 # Example outputs:
 # 🤖 Parsing workflow...
 # 📋 Workflow Plan:

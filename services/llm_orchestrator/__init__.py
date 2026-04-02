@@ -17,11 +17,13 @@ from .workflow_llm_parser import (
 )
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
+from .interactive_session import InteractiveSession
 
 __all__ = [
 	'WorkflowOrchestrator',
 	'WorkflowParser',
 	'WorkflowStateManager',
+	'InteractiveSession',
 	'BaseLLMClient',
 	'OllamaAdapter',
 	'create_llm_client',

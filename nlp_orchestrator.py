@@ -17,6 +17,7 @@ from services.llm_orchestrator import (
     WorkflowOrchestrator,
     WorkflowParser,
     WorkflowStateManager,
+    InteractiveSession,
     create_llm_client,
     parse_workflow_with_llm,
     generate_llm_follow_up_question,
@@ -69,6 +70,96 @@ CLARIFICATION_MODE_LEGACY = "legacy"
 verbosity_filter = VerbosityFilter()
 for handler in logging.getLogger().handlers:
     handler.addFilter(verbosity_filter)
+
+
+def _print_interactive_help() -> None:
+    """Print supported interactive session commands."""
+    print("\nSupported commands:")
+    print("  - Natural language workflow request (first run in session)")
+    print("  - new <workflow request>  # Start a fresh workflow in current session")
+    print("  - state                   # Show active job state from disk")
+    print("  - help                    # Show this help")
+    print("  - end / quit / exit       # End session")
+
+
+def _run_interactive_loop(
+    llm_client: BaseLLMClient,
+    orchestrator: WorkflowOrchestrator,
+    parser_obj: WorkflowParser,
+    clarification_mode: str,
+) -> int:
+    """Run phase-1 interactive session loop with persistent active job context."""
+    session = InteractiveSession()
+
+    print("=" * 80)
+    print("LLM Workflow Orchestrator - Interactive Session")
+    print("=" * 80)
+    print("\nType your workflow request in natural language.")
+    print("Example: 'Download ligands ATP, HEM and protein 6lu7, prepare and dock'")
+    print("\nAfter first workflow completes, use 'state', 'new <request>', or 'end'.")
+    print("Type 'help' to see all commands.\n")
+
+    while session.session_active:
+        try:
+            user_input = input("🧬 > ").strip()
+
+            if not user_input:
+                continue
+
+            normalized = user_input.lower()
+
+            if normalized in ["quit", "exit", "q", "end"]:
+                session.session_active = False
+                print("Goodbye!")
+                break
+
+            if normalized in ["help", "h", "?"]:
+                _print_interactive_help()
+                continue
+
+            if normalized == "state":
+                print("\n" + session.format_state_summary())
+                continue
+
+            if normalized.startswith("new "):
+                new_request = user_input[4:].strip()
+                if not new_request:
+                    print("Please provide a workflow request after 'new'.")
+                    continue
+
+                process_workflow(
+                    new_request,
+                    llm_client,
+                    orchestrator,
+                    parser_obj,
+                    clarification_mode=clarification_mode,
+                    session=session,
+                )
+                continue
+
+            if session.has_active_job():
+                print(
+                    "Active job is already loaded. Use 'state', 'new <request>', 'help', or 'end'."
+                )
+                continue
+
+            process_workflow(
+                user_input,
+                llm_client,
+                orchestrator,
+                parser_obj,
+                clarification_mode=clarification_mode,
+                session=session,
+            )
+
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            print(f"❌ Error: {e}")
+
+    return 0
 
 
 def main():
@@ -215,48 +306,12 @@ Examples:
     
     # Interactive mode
     if args.interactive:
-        print("="*80)
-        print("LLM Workflow Orchestrator - Interactive Mode")
-        print("="*80)
-        print("\nType your workflow request in natural language.")
-        print("Example: 'Download ligands ATP, HEM and protein 6lu7, prepare and dock'")
-        print("\nType 'quit' or 'exit' to stop.\n")
-        
-        while True:
-            try:
-                user_input = input("🧬 > ").strip()
-                
-                if not user_input:
-                    continue
-                
-                if user_input.lower() in ['quit', 'exit', 'q']:
-                    print("Goodbye!")
-                    break
-                
-                if user_input.lower() in ['help', 'h', '?']:
-                    print("\nSupported commands:")
-                    print("  - Natural language workflow requests")
-                    print("  - 'help' - Show this help")
-                    print("  - 'quit' - Exit the program")
-                    continue
-                
-                # Process workflow
-                process_workflow(
-                    user_input,
-                    llm_client,
-                    orchestrator,
-                    parser_obj,
-                    clarification_mode=args.clarification_mode,
-                )
-                
-            except KeyboardInterrupt:
-                print("\nGoodbye!")
-                break
-            except Exception as e:
-                logger.error(f"Error: {e}")
-                print(f"❌ Error: {e}")
-        
-        return 0
+        return _run_interactive_loop(
+            llm_client=llm_client,
+            orchestrator=orchestrator,
+            parser_obj=parser_obj,
+            clarification_mode=args.clarification_mode,
+        )
     
     # Single command mode
     if args.command:
@@ -756,6 +811,7 @@ def process_workflow(
     orchestrator: WorkflowOrchestrator,
     parser_obj: WorkflowParser,
     clarification_mode: str = CLARIFICATION_MODE_HYBRID,
+    session: Optional[InteractiveSession] = None,
 ) -> int:
     """
     Process a workflow from natural language input.
@@ -861,6 +917,9 @@ def process_workflow(
         
         print("\n✅ Workflow completed successfully!")
         print(f"\nResults saved to: {orchestrator.output_base / results['job_id']}")
+
+        if session is not None:
+            session.activate(results["job_id"], state_manager, last_results=results)
 
         _integrate_with_pymol_interactive(results)
         

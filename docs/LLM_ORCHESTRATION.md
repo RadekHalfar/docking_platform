@@ -149,9 +149,18 @@ python nlp_orchestrator.py --interactive
 Then type commands interactively:
 ```
 🧬 > Download 6lu7 and ATP
-🧬 > Prepare them and dock with center 15,25,35 and box 30,30,30
-🧬 > quit
+🧬 > state
+🧬 > new Download 6lu7 and HEM, prepare and dock
+🧬 > end
 ```
+
+Phase-1 interactive session behavior:
+
+1. First natural-language request starts an active session job.
+2. After completion, the CLI waits for the next command instead of auto-starting a new workflow.
+3. Use `state` to inspect current active job (disk-backed parameters/state).
+4. Use `new <request>` to explicitly start a new workflow in the same interactive session.
+5. Use `end`/`quit`/`exit` to stop.
 
 ### Options
 

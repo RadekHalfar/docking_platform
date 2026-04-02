@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from services.llm_orchestrator import WorkflowParser
+from services.llm_orchestrator import WorkflowParser, InteractiveSession, WorkflowStateManager
 from services.llm_orchestrator.workflow_llm_parser import (
     extract_updates_with_llm,
     generate_llm_follow_up_question,
@@ -384,3 +384,79 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
 
     assert result == 0
     assert legacy_called["value"] is True
+
+
+def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypatch, tmp_path):
+    llm_client = Mock()
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+
+    calls = []
+
+    def fake_process_workflow(user_input, *_args, **kwargs):
+        calls.append(user_input)
+        session = kwargs.get("session")
+        if session is not None:
+            state_manager = WorkflowStateManager(Path(tmp_path) / "job_123")
+            state_manager.save_parameters_checkpoint(
+                {
+                    "protein_id": "6lu7",
+                    "ligand_ids": ["ATP"],
+                },
+                source="initial_parse",
+            )
+            session.activate("job_123", state_manager, last_results={"status": "completed"})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process_workflow)
+
+    answers = iter([
+        "Download 6lu7 and ATP, prepare and dock",
+        "change ligand to HEM",
+        "state",
+        "new Download 6lu7 and HEM, prepare and dock",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    result = cli._run_interactive_loop(
+        llm_client=llm_client,
+        orchestrator=orchestrator,
+        parser_obj=parser_obj,
+        clarification_mode=cli.CLARIFICATION_MODE_HYBRID,
+    )
+
+    assert result == 0
+    assert calls == [
+        "Download 6lu7 and ATP, prepare and dock",
+        "Download 6lu7 and HEM, prepare and dock",
+    ]
+
+
+def test_interactive_session_state_summary_reports_active_job(tmp_path):
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_state")
+    state_manager.save_parameters_checkpoint(
+        {
+            "protein_id": "6lu7",
+            "ligand_ids": ["ATP", "ATP"],
+            "center": [10.0, 20.0, 30.0],
+            "box_size": [25.0, 30.0, 35.0],
+        },
+        source="initial_parse",
+    )
+    state_manager.save_execution_state_checkpoint(
+        {
+            "prepared_protein": "/app/prepared/6lu7.pdbqt",
+            "prepared_ligands": ["/app/prepared/ATP.pdbqt", "/app/prepared/ATP_2.pdbqt"],
+        },
+        step="prepare",
+    )
+    session.activate("job_state", state_manager, last_results={"status": "completed"})
+
+    summary = session.format_state_summary()
+
+    assert "Session State" in summary
+    assert "job_state" in summary
+    assert "protein_id: 6lu7" in summary
+    assert "ligand_ids: ['ATP', 'ATP']" in summary

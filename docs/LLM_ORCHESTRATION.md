@@ -148,19 +148,53 @@ python nlp_orchestrator.py --interactive
 
 Then type commands interactively:
 ```
-🧬 > Download 6lu7 and ATP
+🧬 > Download 6lu7 and ATP, prepare and dock
 🧬 > state
-🧬 > new Download 6lu7 and HEM, prepare and dock
-🧬 > end
+🧬 > change ligand to HEM
+🧬 > set center to 10, 20, 30
+🧬 > save results as hem_box_a
+🧬 > show history
+🧬 > new Download 6lu7 and ADP, prepare and dock
+🧬 > end session
 ```
 
-Phase-1 interactive session behavior:
+#### Session behavior (Phase 1 + Phase 2)
 
-1. First natural-language request starts an active session job.
-2. After completion, the CLI waits for the next command instead of auto-starting a new workflow.
-3. Use `state` to inspect current active job (disk-backed parameters/state).
-4. Use `new <request>` to explicitly start a new workflow in the same interactive session.
-5. Use `end`/`quit`/`exit` to stop.
+1. First natural-language request starts the active session job.
+2. After completion the CLI blocks and waits for a follow-up command.
+3. Use `state` to inspect the active job (disk-backed parameters).
+4. Use `new <request>` to explicitly start a fresh workflow in the same session.
+5. Use `end`/`quit`/`exit` or "end session" to stop.
+
+#### Intent classification for follow-up commands (Phase 2)
+
+When a job is active, every command is classified into one of these intents before dispatch:
+
+| Intent | Example inputs | Behavior |
+|---|---|---|
+| `show_state` | `state`, `show state` | Print disk-backed parameters and status |
+| `show_history` | `history`, `show history` | *(Phase 4 — stub active)* |
+| `end_session` | `end`, `end session`, `quit session` | Exit the session cleanly |
+| `new_workflow` | `new <request>` | Start a fresh workflow |
+| `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk |
+| `save_results` | `save results as hem_box_a` | *(Phase 5 — stub active)* |
+| `undo_revision` | `undo 14` | *(Phase 4 — stub active)* |
+| `use_pymol_box` | `use pymol box` | *(Phase 6 — stub active)* |
+| `rerun_steps` | `rerun docking` | *(Phase 3 — stub active)* |
+| `help` | `help`, `?` | Print command reference |
+
+Common keywords (`state`, `history`, `end session`, `save results as <name>`, `undo N`, `new <request>`) are resolved deterministically without an LLM call.
+Ambiguous free-text commands (e.g. "change ligand to HEM") are sent to the LLM for classification.
+
+#### Update parameters
+
+After classifying `update_parameters`, the system:
+1. Calls the LLM to extract the concrete field → value mapping.
+2. Merges the changes with the current persisted parameters.
+3. Saves a new checkpoint revision to disk.
+4. Prints a confirmation.
+
+Automatic partial rerun will be added in Phase 3; until then use `new <request>` to rerun manually.
 
 ### Options
 

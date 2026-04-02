@@ -23,6 +23,8 @@ from services.llm_orchestrator import (
     generate_llm_follow_up_question,
     extract_updates_with_llm,
     extract_box_source_choice_with_llm,
+    classify_session_intent,
+    extract_updates_from_command_with_llm,
 )
 
 # Verbosity levels
@@ -75,11 +77,45 @@ for handler in logging.getLogger().handlers:
 def _print_interactive_help() -> None:
     """Print supported interactive session commands."""
     print("\nSupported commands:")
-    print("  - Natural language workflow request (first run in session)")
-    print("  - new <workflow request>  # Start a fresh workflow in current session")
-    print("  - state                   # Show active job state from disk")
-    print("  - help                    # Show this help")
-    print("  - end / quit / exit       # End session")
+    print("  - <request>                  # Start first workflow (no active job yet)")
+    print("  - new <request>              # Start a fresh workflow in current session")
+    print("  - change ligand to HEM       # Update parameters (natural language)")
+    print("  - set center to 10,20,30     # Update docking box center")
+    print("  - state                      # Show active job state from disk")
+    print("  - end / quit / exit          # End session")
+    print("  - help                       # Show this help")
+    print("\nComing soon (stubs active):")
+    print("  - save results as <name>     # Save named result bundle (Phase 5)")
+    print("  - history                    # Show revision history (Phase 4)")
+    print("  - undo <revision>            # Restore prior revision (Phase 4)")
+    print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
+    print("  - rerun docking              # Partial rerun (Phase 3)")
+
+
+def _handle_update_parameters(
+    user_input: str,
+    llm_client: "BaseLLMClient",
+    session: "InteractiveSession",
+) -> None:
+    """Extract parameter updates from a natural language command and persist them."""
+    updates = extract_updates_from_command_with_llm(llm_client, user_input)
+    if not updates:
+        print("Could not extract any parameter updates from that command.")
+        print("Examples: 'change ligand to HEM', 'set center to 10,20,30'")
+        return
+
+    print("Parameter updates:")
+    for key, value in updates.items():
+        print(f"  {key}: {value}")
+
+    if session.state_manager is not None:
+        current = session.state_manager.load_latest_parameters() or {}
+        current.update(updates)
+        session.state_manager.save_parameters_checkpoint(current, source="interactive_update")
+        print("\u2705 Parameters saved to disk.")
+        print("Note: use 'new <request>' to rerun now; automatic partial rerun coming in Phase 3.")
+    else:
+        print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
 
 
 def _run_interactive_loop(
@@ -138,9 +174,47 @@ def _run_interactive_loop(
                 continue
 
             if session.has_active_job():
-                print(
-                    "Active job is already loaded. Use 'state', 'new <request>', 'help', or 'end'."
-                )
+                intent_result = classify_session_intent(llm_client, user_input)
+                intent = intent_result.get("intent", "unknown")
+
+                if intent == "show_state":
+                    print("\n" + session.format_state_summary())
+                elif intent == "help":
+                    _print_interactive_help()
+                elif intent == "end_session":
+                    session.session_active = False
+                    print("Goodbye!")
+                    break
+                elif intent == "new_workflow":
+                    # strip explicit "new " prefix if present, otherwise use full input
+                    new_req = user_input[4:].strip() if user_input.lower().startswith("new ") else user_input.strip()
+                    if not new_req:
+                        print("Please provide a workflow request.")
+                    else:
+                        process_workflow(
+                            new_req,
+                            llm_client,
+                            orchestrator,
+                            parser_obj,
+                            clarification_mode=clarification_mode,
+                            session=session,
+                        )
+                elif intent == "update_parameters":
+                    _handle_update_parameters(user_input, llm_client, session)
+                elif intent == "save_results":
+                    name = intent_result.get("name")
+                    print(f"\U0001f4be 'save_results' recognized (target name: {name!r}). Coming in Phase 5.")
+                elif intent == "show_history":
+                    print("\U0001f4dc Revision history coming in Phase 4.")
+                elif intent == "undo_revision":
+                    rev = intent_result.get("name")
+                    print(f"\u21a9\ufe0f  Undo to revision {rev!r} coming in Phase 4.")
+                elif intent == "use_pymol_box":
+                    print("\U0001f52c PyMOL box selection coming in Phase 6.")
+                elif intent == "rerun_steps":
+                    print("\U0001f504 Partial rerun coming in Phase 3.")
+                else:  # unknown
+                    print("I didn't understand that command. Type 'help' to see supported commands.")
                 continue
 
             process_workflow(

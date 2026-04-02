@@ -3,6 +3,7 @@ Provider-neutral workflow parsing using an LLM client interface.
 """
 import json
 import logging
+import re
 from typing import Any, Dict, Optional
 
 from .llm_base import BaseLLMClient
@@ -284,3 +285,159 @@ def extract_box_source_choice_with_llm(
         return normalized
 
     return None
+
+_SESSION_INTENTS = frozenset({
+    "new_workflow",
+    "update_parameters",
+    "use_pymol_box",
+    "rerun_steps",
+    "show_state",
+    "show_history",
+    "undo_revision",
+    "save_results",
+    "end_session",
+    "help",
+    "unknown",
+})
+
+_INTENT_CLASSIFIER_SYSTEM = (
+    "You classify follow-up commands inside an active molecular docking session. "
+    "The session already has a running job. Classify the user's intent to exactly one of these values:\n"
+    "- new_workflow: user wants to start a completely new workflow or switch to a different protein/job\n"
+    "- update_parameters: user wants to change one or more docking parameters (ligand, center, box size, etc.)\n"
+    "- use_pymol_box: user wants to use interactive PyMOL to define the docking box\n"
+    "- rerun_steps: user explicitly asks to rerun a docking or preparation step\n"
+    "- show_state: user wants to inspect current active job parameters or status\n"
+    "- show_history: user wants to see the list of saved revisions or parameter history\n"
+    "- undo_revision: user wants to revert parameters/state to a prior revision\n"
+    "- save_results: user wants to save/copy current docking or visualization outputs under a name\n"
+    "- end_session: user wants to end or quit the session\n"
+    "- help: user wants to see available commands\n"
+    "- unknown: the intent does not match any of the above\n\n"
+    'Return JSON only with this exact shape: {"intent": "<intent_name>", "name": null}. '
+    "For save_results, set name to the save target name if the user provided one, else null. "
+    "For undo_revision, set name to the revision number string if provided, else null. "
+    "Never include markdown, explanations, or code fences."
+)
+
+_EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM = (
+    "You extract structured docking parameter updates from a natural language command. "
+    'Return JSON only with this exact shape: {"parameter_updates": {...}}. '
+    "Never include markdown, explanations, comments, or code fences. "
+    'Do not invent values. If the command is ambiguous or unrelated, return {"parameter_updates": {}}. '
+    "Allowed fields only: protein_id, ligand_ids, center, box_size, ph, exhaustiveness, cpu, population, num_modes, energy_range. "
+    "ligand_ids must be a JSON array of strings. "
+    "center and box_size must be JSON arrays of exactly 3 numbers. "
+    "Preserve multiplicity when counts are stated: 'two ATP' → [\"ATP\",\"ATP\"], 'three HEM' → [\"HEM\",\"HEM\",\"HEM\"]. "
+    "Examples:\n"
+    "Command: change ligand to HEM\n"
+    'Output: {"parameter_updates": {"ligand_ids": ["HEM"]}}\n\n'
+    "Command: set center to 10, 20, 30\n"
+    'Output: {"parameter_updates": {"center": [10.0, 20.0, 30.0]}}\n\n'
+    "Command: use two ATP ligands\n"
+    'Output: {"parameter_updates": {"ligand_ids": ["ATP", "ATP"]}}\n\n'
+    "Command: save results as hem_trial\n"
+    'Output: {"parameter_updates": {}}'
+)
+
+
+def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
+    """Return an intent result dict if *text* matches an unambiguous pattern, else None."""
+    t = text.strip().lower()
+
+    if t in ("state", "status", "show state", "show status"):
+        return {"intent": "show_state", "name": None}
+
+    if t in ("history", "show history", "revisions", "list revisions", "log"):
+        return {"intent": "show_history", "name": None}
+
+    if t in ("end", "quit", "exit", "q", "end session", "quit session", "exit session"):
+        return {"intent": "end_session", "name": None}
+
+    if t in ("help", "h", "?"):
+        return {"intent": "help", "name": None}
+
+    if re.match(r"^undo\b", t):
+        match = re.search(r"\d+", text)
+        return {"intent": "undo_revision", "name": match.group(0) if match else None}
+
+    _SAVE_PREFIXES = (
+        "save results",
+        "save docking",
+        "save visualization",
+        "save viz",
+        "save as",
+    )
+    if any(t.startswith(p) for p in _SAVE_PREFIXES):
+        match = re.search(r"\bas\s+(\S+)", text, re.IGNORECASE)
+        return {"intent": "save_results", "name": match.group(1) if match else None}
+
+    if re.match(r"^new\s+\S", text, re.IGNORECASE):
+        return {"intent": "new_workflow", "name": None}
+
+    return None
+
+
+def classify_session_intent(
+    llm_client: BaseLLMClient,
+    user_input: str,
+) -> Dict[str, Any]:
+    """Classify a follow-up command inside an active interactive session.
+
+    Runs deterministic pattern matching first; falls back to LLM for ambiguous inputs.
+
+    Returns a dict ``{"intent": str, "name": Optional[str]}`` where *name* carries
+    the save-bundle name (save_results) or revision number (undo_revision) when present.
+    """
+    det = _deterministic_intent(user_input)
+    if det is not None:
+        return det
+
+    prompt = f"Classify this session command:\n\n{user_input}"
+    try:
+        raw = llm_client.generate(prompt, system=_INTENT_CLASSIFIER_SYSTEM, temperature=0.1)
+    except Exception as exc:
+        logger.warning(f"Intent classification failed: {exc}")
+        return {"intent": "unknown", "name": None}
+
+    payload = _extract_json_object(raw)
+    if not payload or "intent" not in payload:
+        return {"intent": "unknown", "name": None}
+
+    intent = payload.get("intent", "unknown")
+    if intent not in _SESSION_INTENTS:
+        intent = "unknown"
+
+    return {"intent": intent, "name": payload.get("name")}
+
+
+def extract_updates_from_command_with_llm(
+    llm_client: BaseLLMClient,
+    user_input: str,
+) -> Dict[str, Any]:
+    """Extract all docking parameter updates from a free-form natural language command.
+
+    Unlike :func:`extract_updates_with_llm`, this does not require a target parameter name.
+    Returns a dict of parameter updates (may be empty if none could be extracted).
+    """
+    prompt = (
+        "Extract all workflow parameter updates from this command:\n\n"
+        f"{user_input}\n\n"
+        "Allowed fields: protein_id, ligand_ids, center, box_size, "
+        "ph, exhaustiveness, cpu, population, num_modes, energy_range."
+    )
+    try:
+        raw = llm_client.generate(prompt, system=_EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM, temperature=0.1)
+    except Exception as exc:
+        logger.warning(f"Parameter extraction from command failed: {exc}")
+        return {}
+
+    payload = _extract_json_object(raw)
+    if not payload:
+        return {}
+
+    updates = payload.get("parameter_updates", {})
+    if not isinstance(updates, dict):
+        return {}
+
+    return updates

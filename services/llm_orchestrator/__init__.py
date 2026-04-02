@@ -14,6 +14,8 @@ from .workflow_llm_parser import (
     generate_llm_follow_up_question,
     extract_updates_with_llm,
 	extract_box_source_choice_with_llm,
+    classify_session_intent,
+    extract_updates_from_command_with_llm,
 )
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
@@ -31,4 +33,6 @@ __all__ = [
 	'generate_llm_follow_up_question',
 	'extract_updates_with_llm',
 	'extract_box_source_choice_with_llm',
+    'classify_session_intent',
+    'extract_updates_from_command_with_llm',
 ]

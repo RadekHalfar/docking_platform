@@ -410,6 +410,16 @@ def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypat
 
     monkeypatch.setattr(cli, "process_workflow", fake_process_workflow)
 
+    # Phase-2: stub classifier and extractor so the loop works without a real LLM
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: {"intent": "update_parameters", "name": None},
+    )
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["HEM"]},
+    )
+
     answers = iter([
         "Download 6lu7 and ATP, prepare and dock",
         "change ligand to HEM",

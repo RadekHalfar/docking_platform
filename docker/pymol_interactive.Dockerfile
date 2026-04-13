@@ -50,6 +50,6 @@ RUN chmod +x /usr/local/bin/pymol_interactive_start.sh
 EXPOSE 6080 8090
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=50s --retries=3 \
-    CMD curl -f http://localhost:8090/health || exit 1
+    CMD ["/bin/sh", "-c", "curl -fsS http://localhost:8090/health | grep -Eq '\"pymol_rpc\":[[:space:]]*true'"]
 
 CMD ["/usr/local/bin/pymol_interactive_start.sh"]

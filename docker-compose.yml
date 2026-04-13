@@ -150,7 +150,7 @@ services:
       - ORCHESTRATOR_OUTPUT_DIR=/app/orchestrator_output
       - PYMOL_INTERACTIVE_PORT=8090
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health | grep -Eq '\"pymol_rpc\":[[:space:]]*true'"]
       interval: 30s
       timeout: 10s
       retries: 3

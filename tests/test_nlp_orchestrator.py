@@ -240,6 +240,36 @@ def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeyp
     assert params["box_size"] == [25.0, 30.0, 35.0]
 
 
+def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt(monkeypatch, tmp_path):
+    parser = WorkflowParser()
+    parser.validate_workflow(
+        {
+            "services": ["dock"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_ids": ["ATP"],
+            },
+        }
+    )
+
+    monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "manual")
+
+    llm_client = Mock()
+    llm_client.generate.side_effect = [
+        "Please provide docking box center as x,y,z.",
+        '{"parameter_updates": {"center": [11.0, 22.0, 33.0], "box_size": [24.0, 25.0, 26.0]}}',
+    ]
+
+    answers = iter(["show state", "manual please", "center 11,22,33 and box size 24,25,26"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
+
+    params = parser.parsed_workflow["parameters"]
+    assert params["center"] == [11.0, 22.0, 33.0]
+    assert params["box_size"] == [24.0, 25.0, 26.0]
+
+
 def test_extract_updates_with_llm_prompt_includes_strict_rules():
     parser = WorkflowParser()
     parser.validate_workflow(
@@ -384,6 +414,71 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
 
     assert result == 0
     assert legacy_called["value"] is True
+
+
+def test_create_box_via_live_pymol_requires_rpc_ready(monkeypatch, tmp_path, capsys):
+    orchestrator = Mock()
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_1",
+        "errors": [],
+    }
+
+    class _HealthResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"status": "ok", "service": "pymol_interactive", "pymol_rpc": False}
+
+    monkeypatch.setattr(cli.requests, "get", lambda *_args, **_kwargs: _HealthResponse())
+    monkeypatch.setattr(cli, "_is_running_in_container", lambda: True)
+
+    result = cli._create_box_via_live_pymol(
+        orchestrator=orchestrator,
+        workflow={"parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]}},
+        job_id="job_1",
+    )
+
+    assert result is None
+    assert orchestrator.execute_workflow.call_count == 0
+    output = capsys.readouterr().out
+    assert "pymol_interactive is not ready." in output
+    assert "PyMOL GUI/RPC backend is not available yet" in output
+
+
+def test_create_box_via_live_pymol_reports_load_job_error(monkeypatch, tmp_path, capsys):
+    orchestrator = Mock()
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_1",
+        "errors": [],
+    }
+
+    class _HealthResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"status": "ok", "service": "pymol_interactive", "pymol_rpc": True}
+
+    class _LoadResponse:
+        status_code = 500
+        text = '{"error":"Failed to load in PyMOL session: rpc refused"}'
+
+    monkeypatch.setattr(cli.requests, "get", lambda *_args, **_kwargs: _HealthResponse())
+    monkeypatch.setattr(cli.requests, "post", lambda *_args, **_kwargs: _LoadResponse())
+    monkeypatch.setattr(cli, "_is_running_in_container", lambda: True)
+    monkeypatch.setattr(cli.time, "sleep", lambda *_args, **_kwargs: None)
+
+    result = cli._create_box_via_live_pymol(
+        orchestrator=orchestrator,
+        workflow={"parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]}},
+        job_id="job_1",
+    )
+
+    assert result is None
+    output = capsys.readouterr().out
+    assert "Could not auto-load prepared structures into interactive PyMOL." in output
+    assert "Failed to load in PyMOL session: rpc refused" in output
 
 
 def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypatch, tmp_path):

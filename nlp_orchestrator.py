@@ -435,6 +435,17 @@ def _generate_job_id() -> str:
     return f"job_{int(time.time() * 1000)}"
 
 
+def _print_clarification_state(parser_obj: WorkflowParser) -> None:
+    """Print current workflow parameters while clarification is in progress."""
+    workflow = parser_obj.parsed_workflow or {"parameters": {}, "missing_required": []}
+    params = workflow.get("parameters", {})
+    missing = parser_obj.get_missing_parameters() if parser_obj.has_missing_parameters() else []
+
+    print("\nCurrent clarification state:")
+    print(f"  parameters: {params}")
+    print(f"  missing_required: {missing}\n")
+
+
 def _collect_missing_parameters_hybrid(
     parser_obj: WorkflowParser,
     output_base: str,
@@ -459,6 +470,12 @@ def _collect_missing_parameters_hybrid(
                 "How should we define docking box coordinates? "
                 "(manually define coordinates or interactive PyMOL): "
             ).strip()
+
+            if source_answer.lower() in {"state", "show state"}:
+                _print_clarification_state(parser_obj)
+                turn -= 1
+                continue
+
             box_source_choice = extract_box_source_choice_with_llm(llm_client, source_answer)
 
             if box_source_choice == "pymol":
@@ -536,6 +553,11 @@ def _collect_missing_parameters_hybrid(
         question = generate_llm_follow_up_question(llm_client, parser_obj, current_param)
         user_answer = input(f"{question.rstrip(':')} ").strip()
 
+        if user_answer.lower() in {"state", "show state"}:
+            _print_clarification_state(parser_obj)
+            turn -= 1
+            continue
+
         updates = extract_updates_with_llm(
             llm_client=llm_client,
             parser_obj=parser_obj,
@@ -576,7 +598,15 @@ def _create_box_via_live_pymol(
     def _service_healthy() -> bool:
         try:
             response = requests.get(f"{base_url}/health", timeout=5)
-            return response.status_code == 200
+            if response.status_code != 200:
+                return False
+
+            try:
+                payload = response.json()
+            except ValueError:
+                return False
+
+            return payload.get("pymol_rpc") is True
         except requests.RequestException:
             return False
 
@@ -591,7 +621,8 @@ def _create_box_via_live_pymol(
                 time.sleep(1)
 
     if not healthy:
-        print("pymol_interactive is not reachable.")
+        print("pymol_interactive is not ready.")
+        print("The helper API responded, but the PyMOL GUI/RPC backend is not available yet.")
         print("Start it with: docker compose --profile interactive up -d pymol-interactive")
         print(f"Then open: {no_vnc_url}")
         return None
@@ -613,6 +644,7 @@ def _create_box_via_live_pymol(
 
     # Load prepared assets into live PyMOL session.
     loaded = False
+    last_load_error = ""
     for _ in range(30):
         try:
             response = requests.post(
@@ -623,12 +655,15 @@ def _create_box_via_live_pymol(
             if response.status_code == 200:
                 loaded = True
                 break
+            last_load_error = response.text
         except requests.RequestException:
             pass
         time.sleep(1)
 
     if not loaded:
         print("Could not auto-load prepared structures into interactive PyMOL.")
+        if last_load_error:
+            print(f"API response: {last_load_error}")
         print(f"Open noVNC manually: {no_vnc_url}")
         return None
 

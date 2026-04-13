@@ -227,6 +227,12 @@ python nlp_orchestrator.py --interactive
 #   state                 -> show active job state from disk
 #   new <request>         -> start a fresh workflow in current session
 #   end / quit / exit     -> stop session
+#
+# Current limitation (Phase 2):
+#   Use one intent per input line.
+#   Good:  state
+#   Good:  save results as hem_box_a
+#   Avoid: state and save results as hem_box_a
 
 # Example outputs:
 # 🤖 Parsing workflow...

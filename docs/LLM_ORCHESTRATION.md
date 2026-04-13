@@ -166,6 +166,18 @@ Then type commands interactively:
 4. Use `new <request>` to explicitly start a fresh workflow in the same session.
 5. Use `end`/`quit`/`exit` or "end session" to stop.
 
+#### Current command granularity
+
+For now, pass one intent per user input line.
+
+Examples:
+- ✅ `state`
+- ✅ `save results as hem_box_a`
+- ❌ `state and save results as hem_box_a`
+
+When one input contains multiple intents, only one intent is dispatched in the current implementation.
+Planned improvement: Phase 8 adds ordered multi-intent command sequencing.
+
 #### Intent classification for follow-up commands (Phase 2)
 
 When a job is active, every command is classified into one of these intents before dispatch:

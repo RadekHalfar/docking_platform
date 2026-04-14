@@ -10,8 +10,6 @@ from typing import Optional
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.protein_preparer import ProteinPreparer
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -77,13 +75,9 @@ def main():
     parser.add_argument("--cache-dir", default="./cache", help="Cache directory (default: ./cache)")
     
     args = parser.parse_args()
-    
-    try:
-        server = ProteinPreparerServer(port=args.port, host=args.host, cache_dir=args.cache_dir)
-        server.run()
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}")
-        raise
+
+    server = ProteinPreparerServer(port=args.port, host=args.host, cache_dir=args.cache_dir)
+    server.run()
 
 
 if __name__ == "__main__":

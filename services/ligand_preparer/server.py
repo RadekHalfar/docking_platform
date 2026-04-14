@@ -8,8 +8,6 @@ import logging
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.ligand_preparer import LigandPreparer
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

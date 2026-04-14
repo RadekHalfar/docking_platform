@@ -10,8 +10,6 @@ import logging
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.moldina_runner import MoldinaRunner
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -125,19 +123,15 @@ def main():
     )
     
     args = parser.parse_args()
-    
-    try:
-        server = MoldinaRunnerServer(
-            port=args.port,
-            host=args.host,
-            cache_dir=args.cache_dir,
-            moldina_path=args.moldina_path,
-            wsl_distro=args.wsl_distro,
-        )
-        server.run()
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}")
-        raise
+
+    server = MoldinaRunnerServer(
+        port=args.port,
+        host=args.host,
+        cache_dir=args.cache_dir,
+        moldina_path=args.moldina_path,
+        wsl_distro=args.wsl_distro,
+    )
+    server.run()
 
 
 if __name__ == "__main__":

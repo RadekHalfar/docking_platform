@@ -4,13 +4,9 @@ RCSB Downloader MCP Server
 Exposes download_structures tool via JSON-RPC.
 """
 import os
-import logging
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.rcsb_downloader import RCSBDownloader
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class RCSBDownloaderServer(MCPServer):

@@ -199,14 +199,30 @@ python nlp_orchestrator.py --verbose mcp_demo --interactive
 - **Normal**: Standard Python logging with INFO level
 - **MCP Demo**: Enables DEBUG level logging + prints formatted JSON-RPC messages
 
+The three integer constants (`VERBOSITY_LOW = 0`, `VERBOSITY_NORMAL = 1`, `VERBOSITY_MCP_DEMO = 2`) are
+defined once in `services/llm_orchestrator/orchestrator.py` and imported by `nlp_orchestrator.py` —
+there is no duplication.
+
 ### Log Filtering
-The verbosity system uses a custom `VerbosityFilter` that:
+The verbosity system uses a custom `VerbosityFilter` in `nlp_orchestrator.py` that:
 - Filters messages by logger name
 - Controls log level dynamically
 - Preserves normal logging for CLI messages
 - Adds formatted JSON output for MCP demo mode
 
+### Service Logging
+Service `__init__` modules (`ligand_preparer`, `protein_preparer`, `moldina_runner`, `pymol_visualizer`,
+`rcsb_downloader`) do **not** call `logging.basicConfig()`. That call belongs only to application
+entry points (`nlp_orchestrator.py`, `*/server.py`). This prevents service libraries from silently
+overriding the logging configuration set by the caller.
+
 ### Environment Variables
 All verbosity levels respect standard Python logging environment variables:
 - `PYTHONUNBUFFERED=1` for real-time output
 - Standard logging configuration
+
+### Service Port Configuration
+Each MCP service reads its port from an environment variable defined in `common/config.py`
+(`SERVICE_PORT_ENV_VARS`). The shared helper `get_service_port(service_name)` encapsulates the
+env-var lookup with a fallback to `SERVICE_DEFAULT_PORTS`. The cache directory follows the same
+pattern via `get_cache_dir()` / `CACHE_DIR_ENV`.

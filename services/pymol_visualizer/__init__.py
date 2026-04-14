@@ -27,7 +27,6 @@ from typing import Dict, List, Optional, Any
 
 from common.utils import ensure_directory
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

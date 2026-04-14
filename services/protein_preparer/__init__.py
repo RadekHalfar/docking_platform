@@ -34,7 +34,6 @@ except ImportError:
 
 from common.utils import ensure_directory, compute_file_checksum
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

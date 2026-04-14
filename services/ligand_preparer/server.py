@@ -3,8 +3,8 @@ Ligand Preparer MCP Server
 
 Exposes prepare_ligands tool via JSON-RPC.
 """
-import os
 import logging
+from common.config import get_service_port, get_cache_dir
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.ligand_preparer import LigandPreparer
@@ -70,10 +70,10 @@ class LigandPreparerServer(MCPServer):
 
 def main():
     """Run the Ligand Preparer MCP server."""
-    port = int(os.getenv("LIGAND_PREPARER_PORT", "8002"))
-    cache_dir = os.getenv("CACHE_DIR", "./cache")
-    
-    server = LigandPreparerServer(port=port, cache_dir=cache_dir)
+    server = LigandPreparerServer(
+        port=get_service_port("ligand_preparer"),
+        cache_dir=get_cache_dir(),
+    )
     server.run()
 
 

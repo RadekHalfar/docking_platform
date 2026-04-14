@@ -4,6 +4,7 @@ Unit tests for RCSB Downloader service.
 import pytest
 import os
 import json
+import requests
 from unittest.mock import patch, Mock
 from services.rcsb_downloader import RCSBDownloader
 
@@ -192,7 +193,7 @@ def test_download_structures_partial_ligand_failure(downloader, tmp_path, sample
             mock_resp.raise_for_status = Mock()
         else:
             # Simulate failure for second ligand
-            mock_resp.raise_for_status = Mock(side_effect=Exception("Not found"))
+            mock_resp.raise_for_status = Mock(side_effect=requests.HTTPError("Not found"))
         
         return mock_resp
     

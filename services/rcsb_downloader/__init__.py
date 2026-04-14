@@ -257,7 +257,7 @@ class RCSBDownloader:
                     ligand_id, save_dir, ligand_format
                 )
                 ligand_results.append(ligand_result)
-            except Exception as e:
+            except (requests.RequestException, RuntimeError) as e:
                 logger.error(f"Failed to download ligand {ligand_id}: {e}")
                 # Continue with other ligands
         

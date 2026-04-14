@@ -4,6 +4,7 @@ PyMOL Visualizer MCP Server
 Provides PyMOL visualization capabilities as an MCP service.
 """
 import argparse
+from common.config import CACHE_DIR_DEFAULT
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.pymol_visualizer import PyMOLVisualizer

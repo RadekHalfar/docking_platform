@@ -314,7 +314,7 @@ def _run_interactive_loop(
             print("\nGoodbye!")
             break
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Error: {e}", exc_info=True)
             print(f"❌ Error: {e}")
 
     return 0
@@ -937,7 +937,7 @@ def _try_start_pymol_interactive_service() -> bool:
             check=False,
         )
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 

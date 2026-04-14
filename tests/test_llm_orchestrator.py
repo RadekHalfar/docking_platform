@@ -17,6 +17,11 @@ from services.llm_orchestrator import (
     parse_workflow_with_llm,
     extract_box_source_choice_with_llm,
 )
+from services.llm_orchestrator.workflow_definition import (
+    DEFAULT_PARAMETERS,
+    REQUIRED_PARAMETERS_BY_STEP,
+    get_service_urls_from_env,
+)
 
 
 class TestLLMArchitecture:
@@ -281,6 +286,40 @@ class TestWorkflowParser:
         assert "ATP" in summary
         assert "[10, 20, 30]" in summary
 
+    def test_parser_uses_central_required_parameter_contract(self):
+        """Missing dock parameters should follow centralized requirements."""
+        parser = WorkflowParser()
+
+        result = parser.validate_workflow(
+            {
+                "services": ["dock"],
+                "parameters": {
+                    "protein_id": "6lu7",
+                    "ligand_ids": ["ATP"],
+                },
+            }
+        )
+
+        expected_missing = {
+            p
+            for p in REQUIRED_PARAMETERS_BY_STEP["dock"]
+            if p not in {"protein_id", "ligand_ids"}
+        }
+        assert expected_missing.issubset(set(result["missing_required"]))
+
+    def test_parser_applies_central_default_parameters(self):
+        """Parser defaults should stay aligned with centralized defaults."""
+        parser = WorkflowParser()
+        result = parser.validate_workflow(
+            {
+                "services": ["download"],
+                "parameters": {"protein_id": "6lu7"},
+            }
+        )
+
+        assert result["parameters"]["ph"] == DEFAULT_PARAMETERS["ph"]
+        assert result["parameters"]["cpu"] == DEFAULT_PARAMETERS["cpu"]
+
 
 class TestWorkflowOrchestrator:
     """Test workflow orchestrator."""
@@ -292,6 +331,17 @@ class TestWorkflowOrchestrator:
         assert orchestrator.output_base == Path("./test_output").resolve()
         assert "rcsb_downloader" in orchestrator.services
         assert "moldina_runner" in orchestrator.services
+
+    def test_orchestrator_default_service_urls_match_workflow_definition(self):
+        """Orchestrator should source service URLs from centralized metadata."""
+        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        assert orchestrator.services == get_service_urls_from_env()
+
+    def test_orchestrator_service_urls_allow_env_override(self, monkeypatch):
+        """Service URL env variables should override centralized defaults."""
+        monkeypatch.setenv("MCP_RCSB_DOWNLOADER_URL", "http://example.local:9001")
+        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        assert orchestrator.services["rcsb_downloader"] == "http://example.local:9001"
     
     @patch('services.llm_orchestrator.orchestrator.requests.get')
     def test_check_services_health(self, mock_get):

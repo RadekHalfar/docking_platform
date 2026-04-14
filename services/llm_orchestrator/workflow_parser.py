@@ -6,35 +6,16 @@ Validates and processes parsed workflow from LLM.
 import logging
 from typing import Dict, Any, List, Optional
 
+from services.llm_orchestrator.workflow_definition import (
+    REQUIRED_PARAMETERS_BY_STEP,
+    get_default_parameters,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class WorkflowParser:
     """Validates and enriches parsed workflow data."""
-    
-    # Default parameters
-    DEFAULTS = {
-        "ph": 7.4,
-        "exhaustiveness": 8,
-        "cpu": 4,
-        "population": 500,
-        "num_modes": 15,
-        "energy_range": 100.0,
-        "add_hydrogens": True,
-        "remove_waters": True,
-        "generate_3d": True,
-        "optimize": True,
-        "formats": {"protein": "pdb", "ligand": "sdf"}
-    }
-    
-    # Required parameters for each service
-    REQUIRED = {
-        "download": ["protein_id"],
-        "prepare_ligands": ["ligand_ids"],
-        "prepare_protein": ["protein_id"],
-        "dock": ["protein_id", "ligand_ids", "center", "box_size"],
-        "visualize": ["protein_id", "ligand_ids"]
-    }
     
     def __init__(self, state_manager: Optional[Any] = None):
         self.parsed_workflow = None
@@ -108,15 +89,16 @@ class WorkflowParser:
         parameters = parsed.get("parameters", {})
         
         # Apply defaults
-        for key, default_value in self.DEFAULTS.items():
+        defaults = get_default_parameters()
+        for key, default_value in defaults.items():
             if key not in parameters:
                 parameters[key] = default_value
         
         # Check for missing required parameters
         missing = []
         for service in services:
-            if service in self.REQUIRED:
-                for param in self.REQUIRED[service]:
+            if service in REQUIRED_PARAMETERS_BY_STEP:
+                for param in REQUIRED_PARAMETERS_BY_STEP[service]:
                     if self._is_missing_required_param(param, parameters.get(param)):
                         missing.append(param)
         

@@ -58,6 +58,19 @@ This system lets you control the full molecular docking pipeline with plain-lang
     Down   Prep   Prep   Docking Visual
 ```
 
+  ### Centralized Workflow Metadata (Phase 2)
+
+  Workflow structure is now defined in one place: [services/llm_orchestrator/workflow_definition.py](../services/llm_orchestrator/workflow_definition.py).
+
+  This shared module provides:
+  1. Canonical step order
+  2. Required parameters per step
+  3. Default workflow parameters
+  4. Parameter invalidation map for partial reruns
+  5. MCP service endpoint defaults and env-var overrides
+
+  `WorkflowParser`, `rerun_planner`, and `WorkflowOrchestrator` now consume this metadata directly.
+
 ---
 
 ## Quick Start

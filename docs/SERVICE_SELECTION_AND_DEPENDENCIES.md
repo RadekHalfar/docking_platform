@@ -9,6 +9,10 @@ The docking platform uses an LLM-driven approach to understand natural language 
 3. **Service dependencies** - order and data flow between services
 4. **Required parameters** - what must be asked from the user
 
+Canonical source of workflow metadata:
+- Step order, defaults, required parameters, and rerun invalidation rules are centrally defined in [services/llm_orchestrator/workflow_definition.py](../services/llm_orchestrator/workflow_definition.py).
+- Parser and rerun planner consume this module directly to avoid drift.
+
 ---
 
 ## Part 1: Service Selection (LLM Decision Making)

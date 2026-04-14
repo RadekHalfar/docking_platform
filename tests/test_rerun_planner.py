@@ -4,6 +4,10 @@ from services.llm_orchestrator.rerun_planner import (
     compute_rerun_steps,
     describe_rerun_plan,
 )
+from services.llm_orchestrator.workflow_definition import (
+    PARAM_INVALIDATION_MAP,
+    WORKFLOW_STEPS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +91,18 @@ def test_protein_unchanged_not_in_rerun_for_ligand_change():
 def test_full_workflow_rerun_when_all_key_params_change():
     steps = compute_rerun_steps({"protein_id", "ligand_ids", "center", "box_size"})
     assert steps == STEP_ORDER
+
+
+def test_step_order_matches_canonical_workflow_definition():
+    """Planner ordering must match centralized workflow definition."""
+    assert STEP_ORDER == WORKFLOW_STEPS
+
+
+def test_all_invalidation_targets_are_known_steps():
+    """Central invalidation map should only reference canonical steps."""
+    known_steps = set(WORKFLOW_STEPS)
+    for invalidated_steps in PARAM_INVALIDATION_MAP.values():
+        assert set(invalidated_steps).issubset(known_steps)
 
 
 # ---------------------------------------------------------------------------

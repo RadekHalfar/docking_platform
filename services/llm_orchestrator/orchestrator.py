@@ -3,12 +3,13 @@ Workflow Orchestrator
 
 Coordinates execution of molecular docking workflow across MCP services.
 """
-import os
 import json
 import logging
 import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+
+from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +40,7 @@ class WorkflowOrchestrator:
         self.verbosity = verbosity
         
         # MCP service URLs (env-overridable for Docker/container usage)
-        self.services = {
-            "rcsb_downloader": os.getenv("MCP_RCSB_DOWNLOADER_URL", "http://localhost:8001"),
-            "ligand_preparer": os.getenv("MCP_LIGAND_PREPARER_URL", "http://localhost:8002"),
-            "protein_preparer": os.getenv("MCP_PROTEIN_PREPARER_URL", "http://localhost:8003"),
-            "moldina_runner": os.getenv("MCP_MOLDINA_RUNNER_URL", "http://localhost:8004"),
-            "pymol_visualizer": os.getenv("MCP_PYMOL_VISUALIZER_URL", "http://localhost:8005")
-        }
+        self.services = get_service_urls_from_env()
         
         # Workflow state
         self.workflow_state = {}

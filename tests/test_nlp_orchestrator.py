@@ -506,10 +506,21 @@ def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypat
     monkeypatch.setattr(cli, "process_workflow", fake_process_workflow)
 
     # Phase-2: stub classifier and extractor so the loop works without a real LLM
-    monkeypatch.setattr(
-        cli, "classify_session_intent",
-        lambda _llm, text: {"intent": "update_parameters", "name": None},
-    )
+    _PASSTHROUGH_INTENTS = {
+        "end": "end_session", "quit": "end_session", "exit": "end_session", "q": "end_session",
+        "state": "show_state", "show state": "show_state", "status": "show_state",
+        "help": "help", "h": "help", "?": "help",
+    }
+
+    def _fake_classify(_llm, text):
+        t = text.strip().lower()
+        if t in _PASSTHROUGH_INTENTS:
+            return {"intent": _PASSTHROUGH_INTENTS[t], "name": None}
+        if t.startswith("new "):
+            return {"intent": "new_workflow", "name": None}
+        return {"intent": "update_parameters", "name": None}
+
+    monkeypatch.setattr(cli, "classify_session_intent", _fake_classify)
     monkeypatch.setattr(
         cli, "extract_updates_from_command_with_llm",
         lambda _llm, _text: {"ligand_ids": ["HEM"]},
@@ -565,3 +576,163 @@ def test_interactive_session_state_summary_reports_active_job(tmp_path):
     assert "job_state" in summary
     assert "protein_id: 6lu7" in summary
     assert "ligand_ids: ['ATP', 'ATP']" in summary
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Partial rerun integration tests
+# ---------------------------------------------------------------------------
+
+def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path):
+    """_handle_update_parameters should return the set of actually-changed keys."""
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_rerun")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+        source="initial_parse",
+    )
+    session.activate("job_rerun", state_manager, last_results={"status": "completed", "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock"]})
+
+    llm_client = Mock()
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["HEM", "HEM"]},
+    )
+
+    changed = cli._handle_update_parameters("use two HEM ligands", llm_client, session)
+    assert changed == {"ligand_ids"}
+
+    # Parameters should be persisted to disk.
+    params = state_manager.load_latest_parameters()
+    assert params["ligand_ids"] == ["HEM", "HEM"]
+    # Unchanged params kept.
+    assert params["protein_id"] == "6lu7"
+
+
+def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path):
+    """If the extracted update is the same as current value, changed set is empty."""
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_nochange")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+        source="initial_parse",
+    )
+    session.activate("job_nochange", state_manager)
+
+    llm_client = Mock()
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["ATP"]},
+    )
+
+    changed = cli._handle_update_parameters("change ligand to ATP", llm_client, session)
+    assert changed == set()
+
+
+def test_execute_partial_rerun_calls_orchestrator(monkeypatch, tmp_path):
+    """_execute_partial_rerun should invoke orchestrator.execute_workflow with the right subset."""
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_partial")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["HEM"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+        source="test",
+    )
+    session.activate(
+        "job_partial",
+        state_manager,
+        last_results={
+            "status": "completed",
+            "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+            "results": {},
+        },
+    )
+
+    orchestrator = Mock()
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_partial",
+        "status": "completed",
+        "services_executed": ["dock", "visualize"],
+        "results": {},
+        "errors": [],
+    }
+
+    # Auto-confirm rerun.
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    result = cli._execute_partial_rerun(session, orchestrator, changed_params={"center"})
+
+    assert result is not None
+    assert result["status"] == "completed"
+
+    # Orchestrator must have been called with dock + visualize only.
+    call_args = orchestrator.execute_workflow.call_args
+    workflow_arg = call_args.args[0]
+    assert workflow_arg["services"] == ["dock", "visualize"]
+    assert workflow_arg["parameters"]["ligand_ids"] == ["HEM"]
+
+
+def test_execute_partial_rerun_no_active_job(monkeypatch, tmp_path):
+    session = InteractiveSession()
+    orchestrator = Mock()
+
+    result = cli._execute_partial_rerun(session, orchestrator, changed_params={"center"})
+    assert result is None
+    orchestrator.execute_workflow.assert_not_called()
+
+
+def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys):
+    """In the interactive loop, update_parameters should automatically trigger partial rerun."""
+    llm_client = Mock()
+    orchestrator = Mock()
+    orchestrator.output_base = Path(tmp_path)
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_loop",
+        "status": "completed",
+        "services_executed": ["dock", "visualize"],
+        "results": {},
+        "errors": [],
+    }
+    parser_obj = WorkflowParser()
+
+    # Set up a pre-existing session via fake process_workflow.
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(Path(tmp_path) / "job_loop")
+            sm.save_parameters_checkpoint(
+                {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+                source="initial_parse",
+            )
+            sess.activate("job_loop", sm, last_results={
+                "status": "completed",
+                "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+                "results": {},
+            })
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: (
+            {"intent": "end_session", "name": None}
+            if text.strip().lower() in ("end", "quit", "exit", "q")
+            else {"intent": "update_parameters", "name": None}
+        ),
+    )
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"center": [1, 2, 3]},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP dock",   # triggers fake_process
+        "set center to 1,2,3",           # triggers update (no auto-rerun)
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    output = capsys.readouterr().out
+    assert "Parameters updated" in output
+    assert "rerun" in output.lower() or "dock" in output.lower()
+

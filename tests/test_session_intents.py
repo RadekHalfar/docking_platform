@@ -66,6 +66,22 @@ def test_classify_new_workflow_deterministic():
     llm_client.generate.assert_not_called()
 
 
+def test_classify_rerun_deterministic():
+    """'rerun' must resolve deterministically as rerun_steps."""
+    llm_client = Mock()
+    result = classify_session_intent(llm_client, "rerun")
+    assert result["intent"] == "rerun_steps"
+    llm_client.generate.assert_not_called()
+
+
+def test_classify_rerun_docking_deterministic():
+    """'rerun docking' must resolve deterministically as rerun_steps."""
+    llm_client = Mock()
+    result = classify_session_intent(llm_client, "rerun docking")
+    assert result["intent"] == "rerun_steps"
+    llm_client.generate.assert_not_called()
+
+
 def test_classify_history_alias_deterministic():
     llm_client = Mock()
     result = classify_session_intent(llm_client, "history")
@@ -84,20 +100,20 @@ def test_classify_quit_session_deterministic():
 # LLM-based classification (deterministic fallback returns None)
 # ---------------------------------------------------------------------------
 
-def test_llm_classify_change_ligand_to_hem():
-    """'change ligand to HEM' must classify as update_parameters via LLM."""
+def test_deterministic_classify_change_ligand_to_hem():
+    """'change ligand to HEM' must classify as update_parameters deterministically (no LLM call)."""
     llm_client = Mock()
-    llm_client.generate.return_value = '{"intent": "update_parameters", "name": null}'
     result = classify_session_intent(llm_client, "change ligand to HEM")
     assert result["intent"] == "update_parameters"
-    llm_client.generate.assert_called_once()
+    llm_client.generate.assert_not_called()
 
 
-def test_llm_classify_use_pymol_box():
+def test_deterministic_classify_use_pymol_box():
+    """'use pymol selection sele' must classify as use_pymol_box deterministically."""
     llm_client = Mock()
-    llm_client.generate.return_value = '{"intent": "use_pymol_box", "name": null}'
     result = classify_session_intent(llm_client, "use pymol selection sele")
     assert result["intent"] == "use_pymol_box"
+    llm_client.generate.assert_not_called()
 
 
 def test_llm_classify_unknown_on_bad_json():

@@ -20,12 +20,15 @@ from .workflow_llm_parser import (
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
 from .interactive_session import InteractiveSession
+from .rerun_planner import compute_rerun_steps, describe_rerun_plan
 
 __all__ = [
 	'WorkflowOrchestrator',
 	'WorkflowParser',
 	'WorkflowStateManager',
 	'InteractiveSession',
+	'compute_rerun_steps',
+	'describe_rerun_plan',
 	'BaseLLMClient',
 	'OllamaAdapter',
 	'create_llm_client',

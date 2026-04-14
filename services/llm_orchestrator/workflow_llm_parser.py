@@ -375,6 +375,16 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     if re.match(r"^new\s+\S", text, re.IGNORECASE):
         return {"intent": "new_workflow", "name": None}
 
+    if re.match(r"^(rerun|run|dock|execute)\b", t):
+        return {"intent": "rerun_steps", "name": None}
+
+    if re.match(r"^use\s+pymol\b", t):
+        return {"intent": "use_pymol_box", "name": None}
+
+    # Common parameter-update prefixes — avoid LLM intent classification.
+    if re.match(r"^(change|set|use|update|switch)\s+", t):
+        return {"intent": "update_parameters", "name": None}
+
     return None
 
 

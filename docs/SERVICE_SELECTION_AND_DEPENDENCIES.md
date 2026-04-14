@@ -396,7 +396,39 @@ These are **CRITICAL** and determine if docking can proceed:
 
 ---
 
-## Part 6: Example Workflow
+## Part 6: Partial Rerun Invalidation Matrix
+
+When a parameter changes in an interactive session, only the directly affected
+steps are re-executed. The rerun planner lives in
+[rerun_planner.py](../services/llm_orchestrator/rerun_planner.py).
+
+### Parameter → invalidated steps
+
+| Changed Parameter | download | prepare_ligands | prepare_protein | dock | visualize |
+|---|---|---|---|---|---|
+| `protein_id` | ✅ | | ✅ | ✅ | ✅ |
+| `ligand_ids` | ✅ | ✅ | | ✅ | ✅ |
+| `center` | | | | ✅ | ✅ |
+| `box_size` | | | | ✅ | ✅ |
+| `ph` | | ✅ | ✅ | ✅ | ✅ |
+| `exhaustiveness` | | | | ✅ | ✅ |
+| `cpu` | | | | ✅ | ✅ |
+| `population` | | | | ✅ | ✅ |
+| `num_modes` | | | | ✅ | ✅ |
+| `energy_range` | | | | ✅ | ✅ |
+
+### Examples
+
+- **Change ligand**: reruns download → prepare_ligands → dock → visualize (protein preparation reused)
+- **Change center/box_size**: reruns dock → visualize only (prepared molecules reused)
+- **Change exhaustiveness**: reruns dock → visualize only
+
+The planned steps are additionally intersected with the services from the
+original workflow, so a step the user never requested will not be included.
+
+---
+
+## Part 7: Example Workflow
 
 ### Example: User says "Download 6lu7 and ATP, prepare, dock at 10,20,30 with box 25,30,35, and show results"
 

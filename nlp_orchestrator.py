@@ -10,7 +10,7 @@ import argparse
 import subprocess
 import time
 import requests
-from typing import Optional, List, Callable, Dict, Any
+from typing import Optional, List, Callable, Dict, Any, Set
 
 from services.llm_orchestrator import (
     BaseLLMClient,
@@ -18,6 +18,8 @@ from services.llm_orchestrator import (
     WorkflowParser,
     WorkflowStateManager,
     InteractiveSession,
+    compute_rerun_steps,
+    describe_rerun_plan,
     create_llm_client,
     parse_workflow_with_llm,
     generate_llm_follow_up_question,
@@ -26,6 +28,7 @@ from services.llm_orchestrator import (
     classify_session_intent,
     extract_updates_from_command_with_llm,
 )
+from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 
 # Verbosity levels
 VERBOSITY_LOW = 0       # Minimal output (step summaries only)
@@ -81,28 +84,31 @@ def _print_interactive_help() -> None:
     print("  - new <request>              # Start a fresh workflow in current session")
     print("  - change ligand to HEM       # Update parameters (natural language)")
     print("  - set center to 10,20,30     # Update docking box center")
-    print("  - state                      # Show active job state from disk")
+    print("  - state / show state         # Show active job state from disk")
     print("  - end / quit / exit          # End session")
     print("  - help                       # Show this help")
+    print("  - run / dock / rerun         # Execute (or re-execute) workflow steps")
     print("\nComing soon (stubs active):")
     print("  - save results as <name>     # Save named result bundle (Phase 5)")
     print("  - history                    # Show revision history (Phase 4)")
     print("  - undo <revision>            # Restore prior revision (Phase 4)")
     print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
-    print("  - rerun docking              # Partial rerun (Phase 3)")
 
 
 def _handle_update_parameters(
     user_input: str,
     llm_client: "BaseLLMClient",
     session: "InteractiveSession",
-) -> None:
-    """Extract parameter updates from a natural language command and persist them."""
+) -> Set[str]:
+    """Extract parameter updates from a natural language command and persist them.
+
+    Returns the set of changed parameter keys (empty if nothing changed).
+    """
     updates = extract_updates_from_command_with_llm(llm_client, user_input)
     if not updates:
         print("Could not extract any parameter updates from that command.")
         print("Examples: 'change ligand to HEM', 'set center to 10,20,30'")
-        return
+        return set()
 
     print("Parameter updates:")
     for key, value in updates.items():
@@ -110,12 +116,85 @@ def _handle_update_parameters(
 
     if session.state_manager is not None:
         current = session.state_manager.load_latest_parameters() or {}
+        old_params = dict(current)
         current.update(updates)
         session.state_manager.save_parameters_checkpoint(current, source="interactive_update")
         print("\u2705 Parameters saved to disk.")
-        print("Note: use 'new <request>' to rerun now; automatic partial rerun coming in Phase 3.")
+
+        # Compute what changed and offer partial rerun.
+        changed_keys = {k for k in updates if old_params.get(k) != updates[k]}
+        return changed_keys
     else:
         print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
+        return set()
+
+
+def _execute_partial_rerun(
+    session: "InteractiveSession",
+    orchestrator: WorkflowOrchestrator,
+    changed_params: Set[str],
+) -> Optional[Dict[str, Any]]:
+    """Compute and execute a dependency-aware partial rerun.
+
+    Returns the execution results dict, or None if the user cancelled or
+    no steps needed re-execution.
+    """
+    if not session.has_active_job() or session.state_manager is None:
+        print("No active job to rerun.")
+        return None
+
+    # Determine which services were originally executed.
+    original_services = (session.last_results or {}).get("services_executed", [])
+    if not original_services:
+        print("Cannot determine original services; use 'new <request>' instead.")
+        return None
+
+    steps = compute_rerun_steps(changed_params, original_services=original_services)
+    if not steps:
+        print("No steps need to be re-executed for the changed parameters.")
+        return None
+
+    print(f"\n{describe_rerun_plan(steps)}")
+
+    confirm = input("Execute partial rerun? [Y/n]: ").strip().lower()
+    if confirm and confirm not in ("y", "yes"):
+        print("Partial rerun cancelled.")
+        return None
+
+    # Build a workflow containing only the steps to rerun.
+    latest_params = session.state_manager.load_latest_parameters() or {}
+    rerun_workflow: Dict[str, Any] = {
+        "services": steps,
+        "parameters": latest_params,
+    }
+
+    print("\n" + "=" * 80)
+    print("Executing partial rerun...")
+    print("=" * 80 + "\n")
+
+    results = orchestrator.execute_workflow(
+        rerun_workflow,
+        job_id=session.job_id,
+        state_manager=session.state_manager,
+    )
+
+    # Update session with new results.
+    merged_results = dict(session.last_results or {})
+    merged_results["services_executed"] = original_services  # keep full list
+    merged_results["status"] = results.get("status", "failed")
+    merged_results["errors"] = results.get("errors", [])
+    for key, value in results.get("results", {}).items():
+        merged_results.setdefault("results", {})[key] = value
+    session.last_results = merged_results
+
+    print(f"\nPartial rerun status: {results.get('status', 'unknown')}")
+    if results.get("errors"):
+        for err in results["errors"]:
+            print(f"  ❌ {err}")
+    else:
+        print("✅ Partial rerun completed successfully!")
+
+    return results
 
 
 def _run_interactive_loop(
@@ -142,89 +221,97 @@ def _run_interactive_loop(
             if not user_input:
                 continue
 
-            normalized = user_input.lower()
+            # Unified intent dispatch — deterministic patterns checked first,
+            # LLM fallback only when an active job exists and pattern didn't match.
+            intent_result = classify_session_intent(llm_client, user_input) if session.has_active_job() else None
+            # When no active job, still honour deterministic commands.
+            if intent_result is None:
+                intent_result = _deterministic_intent(user_input)
+            intent = (intent_result or {}).get("intent")
 
-            if normalized in ["quit", "exit", "q", "end"]:
+            if intent == "end_session":
                 session.session_active = False
                 print("Goodbye!")
                 break
 
-            if normalized in ["help", "h", "?"]:
+            if intent == "help":
                 _print_interactive_help()
                 continue
 
-            if normalized == "state":
+            if intent == "show_state":
                 print("\n" + session.format_state_summary())
                 continue
 
-            if normalized.startswith("new "):
-                new_request = user_input[4:].strip()
-                if not new_request:
-                    print("Please provide a workflow request after 'new'.")
-                    continue
+            if intent == "show_history":
+                print("\U0001f4dc Revision history coming in Phase 4.")
+                continue
 
+            if intent == "new_workflow":
+                new_req = user_input[4:].strip() if user_input.lower().startswith("new ") else user_input.strip()
+                if not new_req:
+                    print("Please provide a workflow request.")
+                else:
+                    process_workflow(
+                        new_req,
+                        llm_client,
+                        orchestrator,
+                        parser_obj,
+                        clarification_mode=clarification_mode,
+                        session=session,
+                    )
+                continue
+
+            # Intents below require an active job.
+            if intent and intent != "unknown" and not session.has_active_job():
+                print("No active job yet. Start a workflow first.")
+                continue
+
+            if intent == "update_parameters":
+                changed = _handle_update_parameters(user_input, llm_client, session)
+                if changed:
+                    session.pending_changed_params |= changed
+                    print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
+                continue
+
+            if intent == "rerun_steps":
+                original = (session.last_results or {}).get("services_executed", [])
+                if original:
+                    rerun_params = session.pending_changed_params if session.pending_changed_params else {"protein_id", "ligand_ids", "center", "box_size"}
+                    _execute_partial_rerun(
+                        session, orchestrator, changed_params=rerun_params,
+                    )
+                    session.pending_changed_params = set()
+                else:
+                    print("No previous workflow execution to rerun. Use 'new <request>' instead.")
+                continue
+
+            if intent == "save_results":
+                name = (intent_result or {}).get("name")
+                print(f"\U0001f4be 'save_results' recognized (target name: {name!r}). Coming in Phase 5.")
+                continue
+
+            if intent == "undo_revision":
+                rev = (intent_result or {}).get("name")
+                print(f"\u21a9\ufe0f  Undo to revision {rev!r} coming in Phase 4.")
+                continue
+
+            if intent == "use_pymol_box":
+                print("\U0001f52c PyMOL box selection coming in Phase 6.")
+                continue
+
+            # No recognised intent — if there's an active job, we don't know
+            # what the user meant; otherwise treat as a new workflow request.
+            if session.has_active_job():
+                print("I didn't understand that command. Type 'help' to see supported commands.")
+            else:
                 process_workflow(
-                    new_request,
+                    user_input,
                     llm_client,
                     orchestrator,
                     parser_obj,
                     clarification_mode=clarification_mode,
                     session=session,
                 )
-                continue
-
-            if session.has_active_job():
-                intent_result = classify_session_intent(llm_client, user_input)
-                intent = intent_result.get("intent", "unknown")
-
-                if intent == "show_state":
-                    print("\n" + session.format_state_summary())
-                elif intent == "help":
-                    _print_interactive_help()
-                elif intent == "end_session":
-                    session.session_active = False
-                    print("Goodbye!")
-                    break
-                elif intent == "new_workflow":
-                    # strip explicit "new " prefix if present, otherwise use full input
-                    new_req = user_input[4:].strip() if user_input.lower().startswith("new ") else user_input.strip()
-                    if not new_req:
-                        print("Please provide a workflow request.")
-                    else:
-                        process_workflow(
-                            new_req,
-                            llm_client,
-                            orchestrator,
-                            parser_obj,
-                            clarification_mode=clarification_mode,
-                            session=session,
-                        )
-                elif intent == "update_parameters":
-                    _handle_update_parameters(user_input, llm_client, session)
-                elif intent == "save_results":
-                    name = intent_result.get("name")
-                    print(f"\U0001f4be 'save_results' recognized (target name: {name!r}). Coming in Phase 5.")
-                elif intent == "show_history":
-                    print("\U0001f4dc Revision history coming in Phase 4.")
-                elif intent == "undo_revision":
-                    rev = intent_result.get("name")
-                    print(f"\u21a9\ufe0f  Undo to revision {rev!r} coming in Phase 4.")
-                elif intent == "use_pymol_box":
-                    print("\U0001f52c PyMOL box selection coming in Phase 6.")
-                elif intent == "rerun_steps":
-                    print("\U0001f504 Partial rerun coming in Phase 3.")
-                else:  # unknown
-                    print("I didn't understand that command. Type 'help' to see supported commands.")
-                continue
-
-            process_workflow(
-                user_input,
-                llm_client,
-                orchestrator,
-                parser_obj,
-                clarification_mode=clarification_mode,
-                session=session,
-            )
 
         except KeyboardInterrupt:
             print("\nGoodbye!")
@@ -993,6 +1080,17 @@ def process_workflow(
         confirm = input("Execute this workflow? [Y/n]: ").strip().lower()
         if confirm and confirm not in ['y', 'yes']:
             print("Workflow cancelled.")
+            # Activate session so parameter-update commands retain context.
+            if session is not None:
+                session.activate(
+                    shared_job_id,
+                    state_manager,
+                    last_results={
+                        "status": "cancelled",
+                        "services_executed": workflow.get("services", []),
+                        "results": {},
+                    },
+                )
             return 0
         
         # Execute workflow

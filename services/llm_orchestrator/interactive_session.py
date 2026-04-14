@@ -1,8 +1,8 @@
 """Interactive workflow session helpers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Set
 
 from .workflow_state_manager import WorkflowStateManager
 
@@ -15,6 +15,7 @@ class InteractiveSession:
     state_manager: Optional[WorkflowStateManager] = None
     last_results: Optional[Dict[str, Any]] = None
     session_active: bool = True
+    pending_changed_params: Set[str] = field(default_factory=set)
 
     def has_active_job(self) -> bool:
         """Return True when a job is currently attached to this session."""
@@ -31,6 +32,7 @@ class InteractiveSession:
         self.job_id = None
         self.state_manager = None
         self.last_results = None
+        self.pending_changed_params = set()
 
     def state_snapshot(self) -> Dict[str, Any]:
         """Return disk-backed current snapshot for active job."""

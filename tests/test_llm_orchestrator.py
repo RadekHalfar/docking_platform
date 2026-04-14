@@ -372,14 +372,9 @@ class TestWorkflowOrchestrator:
             assert result == "/home/test/file.txt"
     
     @patch('services.llm_orchestrator.orchestrator.requests.post')
-    def test_call_mcp_tool(self, mock_post):
+    def test_call_mcp_tool(self, mock_post, make_mcp_response):
         """Test MCP tool calling."""
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": "test",
-            "result": {"success": True}
-        }
+        mock_post.return_value = make_mcp_response(result={"success": True})
         
         orchestrator = WorkflowOrchestrator()
         orchestrator.current_job_id = "test_job"
@@ -393,14 +388,11 @@ class TestWorkflowOrchestrator:
         assert result["success"] is True
     
     @patch('services.llm_orchestrator.orchestrator.requests.post')
-    def test_call_mcp_tool_error(self, mock_post):
+    def test_call_mcp_tool_error(self, mock_post, make_mcp_response):
         """Test MCP tool error handling."""
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": "test",
-            "error": {"code": -32000, "message": "Tool failed"}
-        }
+        mock_post.return_value = make_mcp_response(
+            error={"code": -32000, "message": "Tool failed"}
+        )
         
         orchestrator = WorkflowOrchestrator()
         orchestrator.current_job_id = "test_job"
@@ -493,7 +485,7 @@ class TestIntegration:
     """Integration tests for full workflow."""
     
     @patch('services.llm_orchestrator.orchestrator.requests.post')
-    def test_full_workflow_mock(self, mock_mcp_post):
+    def test_full_workflow_mock(self, mock_mcp_post, make_mcp_response):
         """Test full workflow with mocked services."""
         workflow_json = {
             "services": ["download"],
@@ -504,20 +496,13 @@ class TestIntegration:
             "missing_required": []
         }
         
-        # Mock MCP responses
-        mock_mcp_response = Mock()
-        mock_mcp_response.status_code = 200
-        mock_mcp_response.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": "test",
-            "result": {
+        mock_mcp_post.return_value = make_mcp_response(
+            result={
                 "protein_path": "/app/6lu7.pdb",
                 "ligand_paths": ["/app/ATP.sdf"],
-                "status": "success"
+                "status": "success",
             }
-        }
-        mock_mcp_response.raise_for_status = Mock()
-        mock_mcp_post.return_value = mock_mcp_response
+        )
         
         llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
         with patch.object(llm_client, "generate", return_value=json.dumps(workflow_json)):

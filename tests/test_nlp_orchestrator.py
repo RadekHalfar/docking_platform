@@ -88,7 +88,7 @@ def test_collect_missing_parameters_falls_back_to_manual_when_live_pymol_fails(m
     assert params["box_size"] == [25.0, 30.0, 35.0]
 
 
-def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -99,7 +99,6 @@ def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_pat
         }
     )
 
-    llm_client = Mock()
     llm_client.generate.side_effect = [
         "Please provide a valid protein PDB ID (4 characters).",
         '{"parameter_updates": {"protein_id": "6lu7"}}',
@@ -114,7 +113,7 @@ def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_pat
     assert not parser.has_missing_parameters()
 
 
-def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -125,7 +124,6 @@ def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tm
         }
     )
 
-    llm_client = Mock()
     llm_client.generate.side_effect = [
         "Please provide protein id.",
         '{"parameter_updates": {}}',
@@ -145,7 +143,7 @@ def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tm
     assert "protein_id" in parser.get_missing_parameters()
 
 
-def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -159,7 +157,6 @@ def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatc
 
     monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "manual")
 
-    llm_client = Mock()
     llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
         '{"parameter_updates": {"center": [11.0, 22.0, 33.0], "box_size": [24.0, 25.0, 26.0]}}',
@@ -175,7 +172,7 @@ def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatc
     assert params["box_size"] == [24.0, 25.0, 26.0]
 
 
-def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -198,7 +195,6 @@ def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch
     answers = iter(["please use pymol"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    llm_client = Mock()
     cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
 
     params = parser.parsed_workflow["parameters"]
@@ -206,7 +202,7 @@ def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch
     assert params["box_size"] == [30.0, 31.0, 32.0]
 
 
-def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -220,7 +216,6 @@ def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeyp
 
     monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: None)
 
-    llm_client = Mock()
     llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
         '{"parameter_updates": {"center": [10.0, 20.0, 30.0], "box_size": [25.0, 30.0, 35.0]}}',
@@ -240,7 +235,7 @@ def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeyp
     assert params["box_size"] == [25.0, 30.0, 35.0]
 
 
-def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt(monkeypatch, tmp_path):
+def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -254,7 +249,6 @@ def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt
 
     monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "manual")
 
-    llm_client = Mock()
     llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
         '{"parameter_updates": {"center": [11.0, 22.0, 33.0], "box_size": [24.0, 25.0, 26.0]}}',
@@ -270,7 +264,7 @@ def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt
     assert params["box_size"] == [24.0, 25.0, 26.0]
 
 
-def test_extract_updates_with_llm_prompt_includes_strict_rules():
+def test_extract_updates_with_llm_prompt_includes_strict_rules(llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -281,7 +275,6 @@ def test_extract_updates_with_llm_prompt_includes_strict_rules():
         }
     )
 
-    llm_client = Mock()
     llm_client.generate.return_value = '{"parameter_updates": {}}'
 
     extract_updates_with_llm(
@@ -303,7 +296,7 @@ def test_extract_updates_with_llm_prompt_includes_strict_rules():
     assert "use ATP and two HEM ligands" in prompt
 
 
-def test_process_workflow_uses_hybrid_mode_by_default(monkeypatch, tmp_path):
+def test_process_workflow_uses_hybrid_mode_by_default(monkeypatch, tmp_path, llm_client):
     parsed = {
         "services": ["dock"],
         "parameters": {
@@ -339,7 +332,6 @@ def test_process_workflow_uses_hybrid_mode_by_default(monkeypatch, tmp_path):
 
     monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
-    llm_client = Mock()
     orchestrator = Mock()
     orchestrator.output_base = Path(tmp_path)
     orchestrator.execute_workflow.return_value = {
@@ -356,7 +348,7 @@ def test_process_workflow_uses_hybrid_mode_by_default(monkeypatch, tmp_path):
     assert hybrid_called["value"] is True
 
 
-def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_path):
+def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_path, llm_client):
     parsed = {
         "services": ["dock"],
         "parameters": {
@@ -393,7 +385,6 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
 
     monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
-    llm_client = Mock()
     orchestrator = Mock()
     orchestrator.output_base = Path(tmp_path)
     orchestrator.execute_workflow.return_value = {
@@ -481,8 +472,7 @@ def test_create_box_via_live_pymol_reports_load_job_error(monkeypatch, tmp_path,
     assert "Failed to load in PyMOL session: rpc refused" in output
 
 
-def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypatch, tmp_path):
-    llm_client = Mock()
+def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypatch, tmp_path, llm_client):
     orchestrator = Mock()
     parser_obj = WorkflowParser()
 
@@ -582,7 +572,7 @@ def test_interactive_session_state_summary_reports_active_job(tmp_path):
 # Phase 3: Partial rerun integration tests
 # ---------------------------------------------------------------------------
 
-def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path):
+def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path, llm_client):
     """_handle_update_parameters should return the set of actually-changed keys."""
     session = InteractiveSession()
     state_manager = WorkflowStateManager(Path(tmp_path) / "job_rerun")
@@ -592,7 +582,6 @@ def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path):
     )
     session.activate("job_rerun", state_manager, last_results={"status": "completed", "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock"]})
 
-    llm_client = Mock()
     monkeypatch.setattr(
         cli, "extract_updates_from_command_with_llm",
         lambda _llm, _text: {"ligand_ids": ["HEM", "HEM"]},
@@ -608,7 +597,7 @@ def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path):
     assert params["protein_id"] == "6lu7"
 
 
-def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path):
+def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path, llm_client):
     """If the extracted update is the same as current value, changed set is empty."""
     session = InteractiveSession()
     state_manager = WorkflowStateManager(Path(tmp_path) / "job_nochange")
@@ -618,7 +607,6 @@ def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path)
     )
     session.activate("job_nochange", state_manager)
 
-    llm_client = Mock()
     monkeypatch.setattr(
         cli, "extract_updates_from_command_with_llm",
         lambda _llm, _text: {"ligand_ids": ["ATP"]},
@@ -679,9 +667,8 @@ def test_execute_partial_rerun_no_active_job(monkeypatch, tmp_path):
     orchestrator.execute_workflow.assert_not_called()
 
 
-def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys):
+def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys, llm_client):
     """In the interactive loop, update_parameters should automatically trigger partial rerun."""
-    llm_client = Mock()
     orchestrator = Mock()
     orchestrator.output_base = Path(tmp_path)
     orchestrator.execute_workflow.return_value = {

@@ -1,4 +1,5 @@
 """Tests for the dependency-aware partial rerun planner (Phase 3)."""
+import pytest
 from services.llm_orchestrator.rerun_planner import (
     STEP_ORDER,
     compute_rerun_steps,
@@ -14,33 +15,21 @@ from services.llm_orchestrator.workflow_definition import (
 # compute_rerun_steps — invalidation map tests
 # ---------------------------------------------------------------------------
 
-def test_no_changes_yields_empty_plan():
-    assert compute_rerun_steps(set()) == []
-
-
-def test_ligand_change_invalidates_download_prep_dock_viz():
-    steps = compute_rerun_steps({"ligand_ids"})
-    assert steps == ["download", "prepare_ligands", "dock", "visualize"]
-
-
-def test_center_change_invalidates_dock_and_viz_only():
-    steps = compute_rerun_steps({"center"})
-    assert steps == ["dock", "visualize"]
-
-
-def test_box_size_change_invalidates_dock_and_viz_only():
-    steps = compute_rerun_steps({"box_size"})
-    assert steps == ["dock", "visualize"]
-
-
-def test_protein_change_invalidates_download_prep_protein_dock_viz():
-    steps = compute_rerun_steps({"protein_id"})
-    assert steps == ["download", "prepare_protein", "dock", "visualize"]
-
-
-def test_exhaustiveness_change_invalidates_dock_and_viz():
-    steps = compute_rerun_steps({"exhaustiveness"})
-    assert steps == ["dock", "visualize"]
+@pytest.mark.parametrize(
+    "changed_params,expected_steps",
+    [
+        (set(), []),
+        ({"ligand_ids"}, ["download", "prepare_ligands", "dock", "visualize"]),
+        ({"center"}, ["dock", "visualize"]),
+        ({"box_size"}, ["dock", "visualize"]),
+        ({"protein_id"}, ["download", "prepare_protein", "dock", "visualize"]),
+        ({"exhaustiveness"}, ["dock", "visualize"]),
+    ],
+)
+def test_compute_rerun_steps_map(changed_params, expected_steps):
+    """Test parameter-to-steps invalidation mapping."""
+    steps = compute_rerun_steps(changed_params)
+    assert steps == expected_steps
 
 
 def test_cpu_change_invalidates_dock_and_visualize():

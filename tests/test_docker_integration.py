@@ -69,37 +69,19 @@ def wait_for_services():
 class TestDockerHealthChecks:
     """Test that all Docker services are running and healthy"""
     
-    def test_rcsb_downloader_health(self, wait_for_services):
-        """Test RCSB Downloader service health endpoint"""
-        response = requests.get(f"{SERVICES['rcsb_downloader']}/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-    
-    def test_ligand_preparer_health(self, wait_for_services):
-        """Test Ligand Preparer service health endpoint"""
-        response = requests.get(f"{SERVICES['ligand_preparer']}/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-    
-    def test_protein_preparer_health(self, wait_for_services):
-        """Test Protein Preparer service health endpoint"""
-        response = requests.get(f"{SERVICES['protein_preparer']}/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-    
-    def test_moldina_runner_health(self, wait_for_services):
-        """Test Moldina Runner service health endpoint"""
-        response = requests.get(f"{SERVICES['moldina_runner']}/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-    
-    def test_pymol_visualizer_health(self, wait_for_services):
-        """Test PyMOL Visualizer service health endpoint"""
-        response = requests.get(f"{SERVICES['pymol_visualizer']}/health")
+    @pytest.mark.parametrize(
+        "service_key",
+        [
+            "rcsb_downloader",
+            "ligand_preparer",
+            "protein_preparer",
+            "moldina_runner",
+            "pymol_visualizer",
+        ],
+    )
+    def test_service_health(self, service_key, wait_for_services):
+        """Test health endpoint for all services."""
+        response = requests.get(f"{SERVICES[service_key]}/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"

@@ -5,8 +5,9 @@ This example shows how to:
 1. Download a ligand from PubChem or RCSB
 2. Prepare it for AutoDock Vina docking
 """
-import requests
 import json
+
+from common.mcp_client import call_mcp_tool
 
 # Server URLs
 RCSB_SERVER = "http://localhost:8001/mcp"
@@ -14,24 +15,13 @@ LIGAND_SERVER = "http://localhost:8002/mcp"
 
 def call_mcp(server_url, tool_name, arguments):
     """Helper function to call an MCP tool."""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "tool_call",
-        "params": {
-            "name": tool_name,
-            "arguments": arguments
-        }
-    }
-    
-    response = requests.post(server_url, json=payload)
-    result = response.json()
-    
-    if "error" in result:
-        print(f"Error: {result['error']['message']}")
+    try:
+        result = call_mcp_tool(server_url, tool_name, arguments)
+    except Exception as exc:
+        print(f"Error: {exc}")
         return None
     
-    return result.get("result")
+    return result
 
 
 def example_1_download_and_prepare_ligand():

@@ -34,9 +34,10 @@ except ImportError:
     Chem = None  # type: ignore
 
 from common.utils import (
-    ensure_directory, compute_file_checksum, save_metadata,
+    ensure_directory, compute_file_checksum,
     sanitize_filename
 )
+from common.file_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +480,6 @@ class LigandPreparer:
         
         # Save metadata
         metadata_path = os.path.join(output_dir, "preparation_meta.json")
-        save_metadata(response, metadata_path)
+        atomic_write_json(metadata_path, response)
         
         return response

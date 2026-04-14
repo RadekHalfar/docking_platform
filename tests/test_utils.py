@@ -1,15 +1,12 @@
 """
 Unit tests for common utilities.
 """
-import pytest
-import os
-import tempfile
-from pathlib import Path
 from common.utils import (
-    ensure_directory, compute_file_checksum, save_metadata,
-    load_metadata, create_job_directory, generate_job_id,
-    validate_pdb_id, sanitize_filename, JobLogger
+    ensure_directory, compute_file_checksum,
+    create_job_directory, generate_job_id,
+    validate_pdb_id, sanitize_filename
 )
+from common.file_io import atomic_write_json, load_json_dict
 
 
 def test_ensure_directory(tmp_path):
@@ -35,16 +32,16 @@ def test_save_and_load_metadata(tmp_path):
     metadata = {"test": "value", "number": 42}
     meta_file = tmp_path / "metadata.json"
     
-    save_metadata(metadata, str(meta_file))
+    atomic_write_json(str(meta_file), metadata)
     assert meta_file.exists()
     
-    loaded = load_metadata(str(meta_file))
+    loaded = load_json_dict(str(meta_file))
     assert loaded == metadata
 
 
 def test_load_metadata_nonexistent():
     """Test loading metadata from nonexistent file."""
-    result = load_metadata("nonexistent_file.json")
+    result = load_json_dict("nonexistent_file.json")
     assert result is None
 
 
@@ -95,21 +92,3 @@ def test_sanitize_filename():
     assert sanitize_filename("../../../etc/passwd") == "______etc_passwd"
     assert sanitize_filename("file|with&special<chars>") == "file_with_special_chars_"
     assert sanitize_filename("file;rm -rf /") == "file_rm -rf _"
-
-
-def test_job_logger(tmp_path):
-    """Test JobLogger creation."""
-    job_id = "test_job_logger"
-    logger = JobLogger(job_id, log_dir=str(tmp_path))
-    
-    logger.info("Test info message")
-    logger.warning("Test warning message")
-    logger.error("Test error message")
-    
-    log_file = tmp_path / f"{job_id}.log"
-    assert log_file.exists()
-    
-    log_content = log_file.read_text()
-    assert "Test info message" in log_content
-    assert "Test warning message" in log_content
-    assert "Test error message" in log_content

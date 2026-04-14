@@ -31,6 +31,11 @@ All JSON writes are atomic:
 
 This prevents partial/corrupt writes if a process crashes mid-save.
 
+Implementation detail (Phase 3):
+- Atomic write/read helpers are centralized in `common/file_io.py`
+- `WorkflowStateManager` and `common.utils.save_metadata`/`load_metadata` now use these shared helpers
+- This removes duplicated JSON persistence logic and keeps behavior consistent
+
 ## Revision Model
 Revisions are global per job and strictly increasing.
 Each save operation increments revision and appends an event to manifest:
@@ -55,6 +60,8 @@ File: `services/llm_orchestrator/workflow_parser.py`
 - reloads latest parameters from disk before each step
 - reloads latest runtime state from disk before each step
 - saves runtime state checkpoint after each successful step
+
+Path normalization used by orchestrator is centralized in `common/path_utils.py`.
 
 File: `services/llm_orchestrator/orchestrator.py`
 

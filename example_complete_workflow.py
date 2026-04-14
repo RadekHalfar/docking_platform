@@ -22,44 +22,18 @@ Prerequisites:
 - Moldina installed in WSL (Windows) or natively (Linux)
 - PyMOL (optional, for rendering images)
 """
-import json
 import os
 import requests
 from pathlib import Path
 
-
-def normalize_path_for_docker(path):
-    """Convert Windows paths to Unix-style paths for Docker containers"""
-    return str(path).replace("\\", "/")
+from common.mcp_client import call_mcp_tool as _call_mcp_tool
+from common.path_utils import normalize_path_for_docker
 
 
 def call_mcp_tool(service_url, tool_name, arguments, request_id="1"):
-    """Call an MCP tool via JSON-RPC 2.0"""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "tool_call",
-        "params": {
-            "name": tool_name,
-            "arguments": arguments
-        }
-    }
-    
+    """Call an MCP tool and print request context."""
     print(f"\n📡 Calling {tool_name} on {service_url}")
-    print(f"   Arguments: {json.dumps(arguments, indent=2)}")
-    
-    response = requests.post(f"{service_url}/mcp", json=payload)
-    response.raise_for_status()
-    
-    data = response.json()
-    if "error" in data:
-        raise Exception(f"MCP Error: {data['error']['message']}")
-    
-    # The result is the dictionary returned by the tool handler
-    result = data["result"]
-    
-    # Convert to JSON string for consistent handling
-    return json.dumps(result)
+    return _call_mcp_tool(service_url, tool_name, arguments, request_id=request_id)
 
 
 def main():
@@ -103,7 +77,7 @@ def main():
         }
     )
     
-    download_data = json.loads(download_result)
+    download_data = download_result
     protein_pdb = download_data["protein_path"]
     ligand_sdfs = download_data["ligand_paths"]
     
@@ -130,7 +104,7 @@ def main():
         }
     )
     
-    protein_data = json.loads(protein_prep_result)
+    protein_data = protein_prep_result
     receptor_pdbqt = protein_data["prepared_proteins"][0]["pdbqt_path"]
     
     print(f"\n✅ Prepared protein: {receptor_pdbqt}")
@@ -156,7 +130,7 @@ def main():
         }
     )
     
-    ligand_data = json.loads(ligand_prep_result)
+    ligand_data = ligand_prep_result
     ligand_pdbqts = [lig["pdbqt_path"] for lig in ligand_data["prepared_ligands"]]
     
     print(f"\n✅ Prepared {len(ligand_pdbqts)} ligands:")
@@ -197,7 +171,7 @@ def main():
         }
     )
     
-    docking_data = json.loads(docking_result)
+    docking_data = docking_result
     
     print(f"\n✅ Docking completed!")
     print(f"   Total ligands: {docking_data['total']}")
@@ -241,7 +215,7 @@ def main():
                 }
             )
             
-            viz_data = json.loads(visualization_result)
+            viz_data = visualization_result
             
             print(f"\n✅ Visualization created!")
             print(f"   Script: {viz_data['script_path']}")

@@ -5,12 +5,12 @@ Hybrid model:
 - "latest" files for fast runtime loads
 - immutable revision checkpoints for audit/recovery
 """
-import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from common.file_io import atomic_write_json, load_json_dict
 
 logger = logging.getLogger(__name__)
 
@@ -35,25 +35,20 @@ class WorkflowStateManager:
     def _timestamp() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _atomic_write_json(self, path: Path, payload: Dict[str, Any]) -> None:
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-        os.replace(tmp_path, path)
+    @staticmethod
+    def _normalize_manifest(manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Normalize manifest payload shape with required defaults."""
+        if not isinstance(manifest, dict):
+            return {"current_revision": 0, "events": []}
+        manifest.setdefault("current_revision", 0)
+        manifest.setdefault("events", [])
+        return manifest
 
     def _read_manifest(self) -> Dict[str, Any]:
-        if not self.manifest_file.exists():
-            return {"current_revision": 0, "events": []}
-        with open(self.manifest_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return {"current_revision": 0, "events": []}
-        data.setdefault("current_revision", 0)
-        data.setdefault("events", [])
-        return data
+        return self._normalize_manifest(load_json_dict(self.manifest_file))
 
     def _write_manifest(self, manifest: Dict[str, Any]) -> None:
-        self._atomic_write_json(self.manifest_file, manifest)
+        atomic_write_json(self.manifest_file, self._normalize_manifest(manifest))
 
     def _next_revision(self, event_type: str, details: Dict[str, Any]) -> int:
         manifest = self._read_manifest()
@@ -85,9 +80,9 @@ class WorkflowStateManager:
             "parameters": parameters,
         }
 
-        self._atomic_write_json(self.parameters_file, payload)
+        atomic_write_json(self.parameters_file, payload)
         checkpoint = self.checkpoints_dir / f"rev_{revision:06d}_parameters.json"
-        self._atomic_write_json(checkpoint, payload)
+        atomic_write_json(checkpoint, payload)
         logger.info(f"Saved parameter checkpoint revision={revision} source={source}")
         return revision
 
@@ -101,23 +96,17 @@ class WorkflowStateManager:
             "state": runtime_state,
         }
 
-        self._atomic_write_json(self.state_file, payload)
+        atomic_write_json(self.state_file, payload)
         checkpoint = self.checkpoints_dir / f"rev_{revision:06d}_state.json"
-        self._atomic_write_json(checkpoint, payload)
+        atomic_write_json(checkpoint, payload)
         logger.info(f"Saved state checkpoint revision={revision} step={step}")
         return revision
 
     def _load_json_file(self, path: Path) -> Optional[Dict[str, Any]]:
-        if not path.exists():
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(f"Failed to load JSON file {path}: {exc}")
-        return None
+        data = load_json_dict(path)
+        if data is None and path.exists():
+            logger.warning(f"Failed to load JSON file {path}")
+        return data
 
     def load_latest_parameters(self) -> Optional[Dict[str, Any]]:
         """Load latest parameters (disk is source-of-truth when present)."""

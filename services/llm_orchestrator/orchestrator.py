@@ -9,6 +9,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from common.path_utils import to_container_path
 from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
 logger = logging.getLogger(__name__)
@@ -134,24 +135,7 @@ class WorkflowOrchestrator:
         - C:/Users/.../docking-system/orchestrator_output/... -> /app/orchestrator_output/...
         - C:/Users/.../docking-system/demo_output/... -> /app/demo_output/...
         """
-        # Normalize Windows path separators first
-        path_str = str(path).replace("\\", "/")
-
-        # Windows absolute path (e.g. C:/Users/...) — return with forward slashes
-        if len(path_str) >= 3 and path_str[1] == ":" and path_str[2] == "/":
-            return path_str
-
-        abs_path = Path(path_str).resolve()
-
-        # Convert to relative path from workspace root
-        try:
-            rel_path = abs_path.relative_to(self.workspace_root)
-            # Convert to container mount path
-            container_path = Path("/app") / rel_path
-            return container_path.as_posix()
-        except ValueError:
-            # Path is outside workspace, return as-is (with POSIX format)
-            return abs_path.as_posix()
+        return to_container_path(path=path, workspace_root=self.workspace_root, container_root="/app")
     
     def execute_workflow(
         self,

@@ -15,9 +15,10 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from common.utils import (
-    ensure_directory, compute_file_checksum, save_metadata,
+    ensure_directory, compute_file_checksum,
     validate_pdb_id, sanitize_filename
 )
+from common.file_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,6 @@ class RCSBDownloader:
         
         # Save metadata
         metadata_path = os.path.join(save_dir, f"{protein_id}_download_meta.json")
-        save_metadata(result, metadata_path)
+        atomic_write_json(metadata_path, result)
         
         return result

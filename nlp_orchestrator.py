@@ -29,11 +29,8 @@ from services.llm_orchestrator import (
     extract_updates_from_command_with_llm,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
-
-# Verbosity levels
-VERBOSITY_LOW = 0       # Minimal output (step summaries only)
-VERBOSITY_NORMAL = 1    # Normal output (current behavior)
-VERBOSITY_MCP_DEMO = 2  # Full MCP demonstration mode (show JSON-RPC messages)
+from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
+from common.utils import generate_job_id
 
 # Global verbosity setting
 current_verbosity = VERBOSITY_NORMAL
@@ -515,11 +512,6 @@ def _parse_coordinate_triplet(value: str) -> Optional[List[float]]:
         return [float(p) for p in parts]
     except ValueError:
         return None
-
-
-def _generate_job_id() -> str:
-    """Generate a job id to keep all workflow artifacts under one folder."""
-    return f"job_{int(time.time() * 1000)}"
 
 
 def _print_clarification_state(parser_obj: WorkflowParser) -> None:
@@ -1030,7 +1022,7 @@ def process_workflow(
         workflow = parser_obj.validate_workflow(parsed)
 
         # Persist workflow parameters immediately after parsing/validation.
-        shared_job_id = _generate_job_id()
+        shared_job_id = generate_job_id()
         state_manager = WorkflowStateManager(orchestrator.output_base / shared_job_id)
         parser_obj.set_state_manager(state_manager)
         state_manager.save_parameters_checkpoint(workflow.get("parameters", {}), source="initial_parse")

@@ -1,12 +1,10 @@
 """
 Common utilities for the docking system.
 """
-import os
 import hashlib
-import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -43,37 +41,6 @@ def compute_file_checksum(file_path: str, algorithm: str = "md5") -> str:
         for chunk in iter(lambda: f.read(4096), b""):
             hash_obj.update(chunk)
     return hash_obj.hexdigest()
-
-
-def save_metadata(metadata: Dict[str, Any], file_path: str):
-    """
-    Save metadata to JSON file.
-    
-    Args:
-        metadata: Dictionary to save
-        file_path: Path to save JSON
-    """
-    ensure_directory(os.path.dirname(file_path))
-    with open(file_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    logger.info(f"Saved metadata to {file_path}")
-
-
-def load_metadata(file_path: str) -> Optional[Dict[str, Any]]:
-    """
-    Load metadata from JSON file.
-    
-    Args:
-        file_path: Path to JSON file
-        
-    Returns:
-        Metadata dictionary or None if file doesn't exist
-    """
-    if not os.path.exists(file_path):
-        return None
-    
-    with open(file_path, 'r') as f:
-        return json.load(f)
 
 
 def create_job_directory(base_dir: str, job_id: str) -> Dict[str, Path]:
@@ -156,31 +123,3 @@ def sanitize_filename(filename: str) -> str:
     for char in unsafe_chars:
         sanitized = sanitized.replace(char, '_')
     return sanitized
-
-
-class JobLogger:
-    """Logger for job-specific operations."""
-    
-    def __init__(self, job_id: str, log_dir: Optional[str] = None):
-        self.job_id = job_id
-        self.logger = logging.getLogger(f"job.{job_id}")
-        self.logger.setLevel(logging.INFO)  # Ensure INFO level is logged
-        
-        if log_dir:
-            log_file = Path(log_dir) / f"{job_id}.log"
-            ensure_directory(log_dir)
-            handler = logging.FileHandler(log_file)
-            handler.setLevel(logging.INFO)
-            handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
-            self.logger.addHandler(handler)
-    
-    def info(self, message: str):
-        self.logger.info(f"[{self.job_id}] {message}")
-    
-    def error(self, message: str):
-        self.logger.error(f"[{self.job_id}] {message}")
-    
-    def warning(self, message: str):
-        self.logger.warning(f"[{self.job_id}] {message}")

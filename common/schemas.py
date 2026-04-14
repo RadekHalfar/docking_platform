@@ -96,29 +96,6 @@ class MCPToolDefinition(BaseModel):
     returns: Dict[str, Any]
 
 
-class MCPToolCallRequest(BaseModel):
-    """JSON-RPC request for tool_call."""
-    jsonrpc: str = "2.0"
-    id: str
-    method: str = "tool_call"
-    params: Dict[str, Any]  # Contains 'name' and 'arguments'
-
-
-class MCPToolCallResponse(BaseModel):
-    """JSON-RPC response for tool_call."""
-    jsonrpc: str = "2.0"
-    id: str
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[Dict[str, Any]] = None
-
-
-class MCPError(BaseModel):
-    """JSON-RPC error object."""
-    code: int
-    message: str
-    data: Optional[Any] = None
-
-
 # Export job spec schema as JSON Schema
 def get_job_spec_json_schema() -> Dict[str, Any]:
     """Get JobSpec as JSON Schema for documentation."""

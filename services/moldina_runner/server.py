@@ -5,11 +5,10 @@ This server provides Moldina molecular docking capabilities through MCP.
 It handles PSO-based docking with WSL support on Windows.
 """
 import os
-import json
 import logging
-from typing import Any, Dict, List, Optional
 
-from common.mcp_base import MCPServer, MCPTool, MCPToolParameter
+from common.mcp_base import MCPServer
+from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.moldina_runner import MoldinaRunner
 
 logging.basicConfig(level=logging.INFO)
@@ -84,76 +83,24 @@ class MoldinaRunnerServer(MCPServer):
             
             return results
         
-        # Define tool
-        docking_tool = MCPTool(
+        register_mcp_tool(
+            self,
             name="run_docking",
             description="Run Moldina molecular docking with PSO optimization",
             handler=run_docking_handler,
-            parameters=[
-                MCPToolParameter(
-                    name="receptor_path",
-                    type="string",
-                    description="Path to receptor PDBQT file",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="ligand_paths",
-                    type="array",
-                    description="List of paths to ligand PDBQT files",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="output_dir",
-                    type="string",
-                    description="Directory for output files",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="center",
-                    type="array",
-                    description="Search box center coordinates [x, y, z]",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="box_size",
-                    type="array",
-                    description="Search box dimensions [x, y, z] in Angstroms",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="cpu",
-                    type="number",
-                    description="Number of CPUs to use (default: 1)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="population",
-                    type="number",
-                    description="Population size for PSO (default: 500, min: 5)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="exhaustiveness",
-                    type="number",
-                    description="Search exhaustiveness (default: 8)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="num_modes",
-                    type="number",
-                    description="Maximum number of binding modes (default: 15)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="energy_range",
-                    type="number",
-                    description="Maximum energy difference for modes in kcal/mol (default: 100.0)",
-                    required=False
-                )
-            ]
+            parameters=build_tool_parameters([
+                ("receptor_path", "string", "Path to receptor PDBQT file", True),
+                ("ligand_paths", "array", "List of paths to ligand PDBQT files", True),
+                ("output_dir", "string", "Directory for output files", True),
+                ("center", "array", "Search box center coordinates [x, y, z]", True),
+                ("box_size", "array", "Search box dimensions [x, y, z] in Angstroms", True),
+                ("cpu", "number", "Number of CPUs to use (default: 1)"),
+                ("population", "number", "Population size for PSO (default: 500, min: 5)"),
+                ("exhaustiveness", "number", "Search exhaustiveness (default: 8)"),
+                ("num_modes", "number", "Maximum number of binding modes (default: 15)"),
+                ("energy_range", "number", "Maximum energy difference for modes in kcal/mol (default: 100.0)"),
+            ]),
         )
-        
-        self.register_tool(docking_tool)
 
 
 def main():

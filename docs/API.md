@@ -10,6 +10,9 @@ All communication uses JSON-RPC 2.0 protocol over HTTP POST to `/mcp` endpoint.
 
 All services implement these standard endpoints:
 
+Implementation note:
+Service MCP tool declarations are now built via shared helpers in `common/mcp_tooling.py` to keep parameter schemas consistent across services. This does not change the wire API.
+
 ### Health Check
 ```
 GET /health

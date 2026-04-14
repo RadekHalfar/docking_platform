@@ -5,7 +5,8 @@ Exposes download_structures tool via JSON-RPC.
 """
 import os
 import logging
-from common.mcp_base import MCPServer, MCPTool, MCPToolParameter
+from common.mcp_base import MCPServer
+from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.rcsb_downloader import RCSBDownloader
 
 logging.basicConfig(level=logging.INFO)
@@ -36,47 +37,25 @@ class RCSBDownloaderServer(MCPServer):
                 save_dir=save_dir
             )
         
-        # Define tool
-        download_tool = MCPTool(
+        register_mcp_tool(
+            self,
             name="download_structures",
             description="Download protein structures and ligands from RCSB PDB",
-            parameters=[
-                MCPToolParameter(
-                    name="protein_id",
-                    type="string",
-                    description="PDB identifier (4 characters, e.g., '1ABC')",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="ligand_ids",
-                    type="array",
-                    description="List of ligand identifiers (e.g., ['ATP', 'HEM'])",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="formats",
-                    type="object",
-                    description="File formats: {'protein': 'pdb'|'cif', 'ligand': 'sdf'|'mol'}",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="save_dir",
-                    type="string",
-                    description="Directory to save downloaded files",
-                    required=False
-                )
-            ],
             handler=download_structures_handler,
+            parameters=build_tool_parameters([
+                ("protein_id", "string", "PDB identifier (4 characters, e.g., '1ABC')", True),
+                ("ligand_ids", "array", "List of ligand identifiers (e.g., ['ATP', 'HEM'])"),
+                ("formats", "object", "File formats: {'protein': 'pdb'|'cif', 'ligand': 'sdf'|'mol'}"),
+                ("save_dir", "string", "Directory to save downloaded files"),
+            ]),
             returns={
                 "protein_path": "string",
                 "ligand_paths": "array",
                 "sources": "object",
                 "checksums": "object",
                 "status": "string"
-            }
+            },
         )
-        
-        self.register_tool(download_tool)
 
 
 def main():

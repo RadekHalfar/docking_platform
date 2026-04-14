@@ -4,7 +4,8 @@ PyMOL Visualizer MCP Server
 Provides PyMOL visualization capabilities as an MCP service.
 """
 import argparse
-from common.mcp_base import MCPServer, MCPTool, MCPToolParameter
+from common.mcp_base import MCPServer
+from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.pymol_visualizer import PyMOLVisualizer
 
 
@@ -55,88 +56,26 @@ class PyMOLVisualizerServer(MCPServer):
             
             return result
         
-        # Define tool
-        visualize_tool = MCPTool(
+        register_mcp_tool(
+            self,
             name="visualize_docking",
             description="Create PyMOL visualization of docking results (generates .pml script and optionally renders image)",
-            parameters=[
-                MCPToolParameter(
-                    name="receptor_path",
-                    type="string",
-                    description="Path to receptor file (PDBQT or PDB)",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="ligand_paths",
-                    type="array",
-                    description="List of paths to docked ligand files (PDBQT)",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="output_dir",
-                    type="string",
-                    description="Directory for output files",
-                    required=True
-                ),
-                MCPToolParameter(
-                    name="affinities",
-                    type="array",
-                    description="Optional list of binding affinities for color coding (best=green, worst=red)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="show_surface",
-                    type="boolean",
-                    description="Show protein surface (default: true)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="show_binding_site",
-                    type="boolean",
-                    description="Highlight binding site residues (default: true)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="binding_site_radius",
-                    type="number",
-                    description="Radius around ligand for binding site in Angstroms (default: 5.0)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="render_image",
-                    type="boolean",
-                    description="Render PNG image if PyMOL is available (default: true)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="image_width",
-                    type="number",
-                    description="Image width in pixels (default: 1920)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="image_height",
-                    type="number",
-                    description="Image height in pixels (default: 1080)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="image_dpi",
-                    type="number",
-                    description="Image DPI for publication quality (default: 300)",
-                    required=False
-                ),
-                MCPToolParameter(
-                    name="ray_trace",
-                    type="boolean",
-                    description="Use ray tracing for high-quality rendering (default: true)",
-                    required=False
-                )
-            ],
-            handler=visualize_docking_handler
+            handler=visualize_docking_handler,
+            parameters=build_tool_parameters([
+                ("receptor_path", "string", "Path to receptor file (PDBQT or PDB)", True),
+                ("ligand_paths", "array", "List of paths to docked ligand files (PDBQT)", True),
+                ("output_dir", "string", "Directory for output files", True),
+                ("affinities", "array", "Optional list of binding affinities for color coding (best=green, worst=red)"),
+                ("show_surface", "boolean", "Show protein surface (default: true)"),
+                ("show_binding_site", "boolean", "Highlight binding site residues (default: true)"),
+                ("binding_site_radius", "number", "Radius around ligand for binding site in Angstroms (default: 5.0)"),
+                ("render_image", "boolean", "Render PNG image if PyMOL is available (default: true)"),
+                ("image_width", "number", "Image width in pixels (default: 1920)"),
+                ("image_height", "number", "Image height in pixels (default: 1080)"),
+                ("image_dpi", "number", "Image DPI for publication quality (default: 300)"),
+                ("ray_trace", "boolean", "Use ray tracing for high-quality rendering (default: true)"),
+            ]),
         )
-        
-        self.register_tool(visualize_tool)
 
 
 def main():

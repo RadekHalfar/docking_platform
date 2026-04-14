@@ -4,6 +4,7 @@ Unit tests for MCP base server.
 import pytest
 import json
 from common.mcp_base import MCPServer, MCPTool, MCPToolParameter, JSONRPCErrorCodes
+from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 
 
 class MockMCPServer(MCPServer):
@@ -205,3 +206,40 @@ def test_mcp_tool_validation():
     valid, error = tool.validate_arguments({"optional_param": 42})
     assert valid is False
     assert "required_param" in error
+
+
+def test_build_tool_parameters_short_and_long_specs():
+    """Test compact MCP parameter tuple formats."""
+    parameters = build_tool_parameters([
+        ("required_value", "string", "Required input", True),
+        ("optional_value", "number", "Optional input"),
+    ])
+
+    assert len(parameters) == 2
+    assert parameters[0].name == "required_value"
+    assert parameters[0].required is True
+    assert parameters[1].name == "optional_value"
+    assert parameters[1].required is False
+
+
+def test_register_mcp_tool_helper_registers_tool(test_server):
+    """Test register_mcp_tool helper integrates with MCPServer."""
+
+    def passthrough_handler(value: str) -> dict:
+        return {"value": value}
+
+    register_mcp_tool(
+        test_server,
+        name="passthrough",
+        description="Simple passthrough tool",
+        handler=passthrough_handler,
+        parameters=build_tool_parameters([
+            ("value", "string", "Value to return", True),
+        ]),
+        returns={"value": "string"},
+    )
+
+    assert "passthrough" in test_server.tools
+    valid, error = test_server.tools["passthrough"].validate_arguments({"value": "x"})
+    assert valid is True
+    assert error is None

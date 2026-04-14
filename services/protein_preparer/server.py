@@ -5,9 +5,10 @@ This server provides an MCP tool to prepare proteins for AutoDock Vina docking.
 """
 import os
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Optional
 
-from common.mcp_base import MCPServer, MCPTool, MCPToolParameter
+from common.mcp_base import MCPServer
+from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.protein_preparer import ProteinPreparer
 
 logging.basicConfig(level=logging.INFO)
@@ -49,56 +50,20 @@ class ProteinPreparerServer(MCPServer):
                 keep_residues=keep_residues
             )
         
-        self.register_tool(
-            MCPTool(
-                name="prepare_proteins",
-                description="Prepare protein structures for AutoDock Vina docking",
-                handler=prepare_proteins_handler,
-                parameters=[
-                    MCPToolParameter(
-                        name="protein_paths",
-                        type="array",
-                        description="List of paths to protein PDB files to prepare",
-                        required=True
-                    ),
-                    MCPToolParameter(
-                        name="output_dir",
-                        type="string",
-                        description="Directory where prepared PDBQT files will be saved",
-                        required=True
-                    ),
-                    MCPToolParameter(
-                        name="ph",
-                        type="number",
-                        description="pH for protonation state (default: 7.4)",
-                        required=False
-                    ),
-                    MCPToolParameter(
-                        name="add_hydrogens",
-                        type="boolean",
-                        description="Add explicit hydrogens (default: true)",
-                        required=False
-                    ),
-                    MCPToolParameter(
-                        name="remove_waters",
-                        type="boolean",
-                        description="Remove water molecules (default: true)",
-                        required=False
-                    ),
-                    MCPToolParameter(
-                        name="remove_heteroatoms",
-                        type="boolean",
-                        description="Remove all heteroatoms/ligands (default: false)",
-                        required=False
-                    ),
-                    MCPToolParameter(
-                        name="keep_residues",
-                        type="array",
-                        description="List of residue names to keep even if heteroatoms (e.g., ['HEM', 'NAD'])",
-                        required=False
-                    )
-                ]
-            )
+        register_mcp_tool(
+            self,
+            name="prepare_proteins",
+            description="Prepare protein structures for AutoDock Vina docking",
+            handler=prepare_proteins_handler,
+            parameters=build_tool_parameters([
+                ("protein_paths", "array", "List of paths to protein PDB files to prepare", True),
+                ("output_dir", "string", "Directory where prepared PDBQT files will be saved", True),
+                ("ph", "number", "pH for protonation state (default: 7.4)"),
+                ("add_hydrogens", "boolean", "Add explicit hydrogens (default: true)"),
+                ("remove_waters", "boolean", "Remove water molecules (default: true)"),
+                ("remove_heteroatoms", "boolean", "Remove all heteroatoms/ligands (default: false)"),
+                ("keep_residues", "array", "List of residue names to keep even if heteroatoms (e.g., ['HEM', 'NAD'])"),
+            ]),
         )
 
 

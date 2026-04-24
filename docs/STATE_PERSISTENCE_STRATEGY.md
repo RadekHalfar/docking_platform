@@ -167,9 +167,9 @@ Returns the same dict as `load_checkpoint`.
 | Command | Behavior |
 |---|---|
 | `history` | Calls `list_revisions()` and prints a table of all events |
-| `undo <revision>` | Calls `restore_revision(n)`, updates latest files, marks params as changed |
+| `undo <revision>` | Calls `restore_revision(n)`, updates latest files, marks all params as changed |
 
-After `undo`, `session.pending_changed_params` is populated so `rerun` will execute the correct downstream steps.
+After `undo`, `session.pending_changed_params` is populated with all parameter keys so `rerun` will execute all affected downstream steps.
 
 ### Undo/Restore Flow
 
@@ -177,9 +177,9 @@ After `undo`, `session.pending_changed_params` is populated so `rerun` will exec
 user: undo 3
   → load_checkpoint(3)           # validate revision exists
   → restore_revision(3)          # overwrite latest files, record undo event
-  → session.pending_changed_params |= all param keys
+  → session.pending_changed_params |= {protein_id, ligand_ids, center, box_size}
 user: rerun
-  → compute_rerun_steps(changed_params, original_services)
+  → compute_rerun_steps(pending_changed_params, original_services)
   → _execute_partial_rerun(...)
 ```
 
@@ -206,3 +206,37 @@ user: rerun
 - `test_restore_revision_invalid_revision_raises`
 - `test_restore_revision_does_not_resurrect_stale_values`
 - `test_available_revisions_returns_sorted`
+
+---
+
+## Post-Phase 4 Interactive Guardrails
+
+### `last_status` reflects pending parameter changes
+
+`InteractiveSession.state_snapshot()` returns `"parameters_changed"` as `last_status` whenever `pending_changed_params` is non-empty, overriding the last run status. Once a successful rerun clears `pending_changed_params`, the actual run status (e.g. `"completed"`) is shown again.
+
+This means `show state` always reflects whether the current parameters match the last docked result.
+
+### Save blocked when parameters are pending
+
+`save results as <name>` is refused when `pending_changed_params` is non-empty:
+
+```
+❌ Cannot save: parameters changed since last docking (center, box_size).
+   Run 'rerun' first, or 'undo' to revert parameters.
+```
+
+This prevents saving a bundle where the metadata parameters do not match the docking results on disk.
+
+### Pre-flight parameter validation before rerun
+
+Before showing the rerun plan or asking for confirmation, all required parameters for the planned steps are checked against `REQUIRED_PARAMETERS_BY_STEP`. If any are missing or empty:
+
+```
+❌ Cannot rerun — required parameters are missing:
+   • center (required by 'dock')
+   • box_size (required by 'dock')
+   Update them with a command like 'set protein to 6lu7' or restore a complete revision.
+```
+
+This prevents a `KeyError` crash inside the orchestrator and gives the user a clear remediation path.

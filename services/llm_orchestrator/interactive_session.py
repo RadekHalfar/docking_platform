@@ -213,7 +213,7 @@ class InteractiveSession:
             "revision": self.state_manager.get_current_revision(),
             "parameters": self.state_manager.load_latest_parameters() or {},
             "runtime_state": self.state_manager.load_latest_state() or {},
-            "last_status": (self.last_results or {}).get("status"),
+            "last_status": "parameters_changed" if self.pending_changed_params else (self.last_results or {}).get("status"),
         }
 
     def format_state_summary(self) -> str:

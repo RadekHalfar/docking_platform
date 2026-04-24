@@ -1,10 +1,169 @@
 """Interactive workflow session helpers."""
 from __future__ import annotations
 
+import logging
+import re
+import shutil
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
+from common.file_io import atomic_write_json
 from .workflow_state_manager import WorkflowStateManager
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Bundle name validation
+# ---------------------------------------------------------------------------
+
+_VALID_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_RESERVED_NAMES: frozenset = frozenset(
+    {"checkpoints", "latest", "downloads", "prepared", "docking_results", "visualization"}
+)
+
+
+def validate_bundle_name(name: str) -> Optional[str]:
+    """Return a human-readable error string if *name* is invalid, else ``None``."""
+    if not name or not name.strip():
+        return "Bundle name cannot be empty."
+    if ".." in name or "/" in name or "\\" in name:
+        return "Bundle name must not contain path separators or '..'."
+    if not _VALID_BUNDLE_NAME_RE.match(name):
+        return (
+            "Bundle name must start with a letter or digit and contain only "
+            "letters, digits, '.', '-', '_' (max 64 characters)."
+        )
+    if name.lower() in _RESERVED_NAMES:
+        return f"'{name}' is a reserved directory name. Please choose another name."
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Bundle materialisation
+# ---------------------------------------------------------------------------
+
+def save_results_bundle(
+    job_dir: Path,
+    name: str,
+    scope: str,
+    revision: int,
+    parameters: Dict[str, Any],
+    *,
+    overwrite: bool = False,
+) -> Dict[str, Any]:
+    """Copy current docking/visualization artifacts into a named saved-results bundle.
+
+    Args:
+        job_dir:    The active job directory (e.g. ``orchestrator_output/job_<id>``).
+        name:       User-supplied bundle name (validated before use).
+        scope:      One of ``"docking"``, ``"visualization"``, or ``"all"``.
+        revision:   Current parameter revision number (captured in metadata).
+        parameters: Active workflow parameters snapshot.
+        overwrite:  When *True*, silently replace an existing bundle with the same name.
+
+    Returns:
+        A dict with keys:
+
+        * ``success`` (bool)
+        * ``bundle_path`` (str | None)
+        * ``artifacts`` (list[str]) — names of sub-directories/files copied
+        * ``error`` (str | None) — human-readable reason when ``success`` is False
+    """
+    err = validate_bundle_name(name)
+    if err:
+        return {"success": False, "bundle_path": None, "artifacts": [], "error": err}
+
+    job_dir = Path(job_dir)
+    bundle_dir = job_dir / "saved_results" / name
+
+    if bundle_dir.exists() and not overwrite:
+        return {
+            "success": False,
+            "bundle_path": str(bundle_dir),
+            "artifacts": [],
+            "error": "exists",
+        }
+
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    included: List[str] = []
+    include_docking = scope in ("docking", "all")
+    include_viz = scope in ("visualization", "all")
+
+    if include_docking:
+        src = job_dir / "docking_results"
+        if src.exists() and any(src.iterdir()):
+            dst = bundle_dir / "docking_results"
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            included.append("docking_results")
+        else:
+            logger.warning("save_results_bundle: no docking results found in %s", src)
+
+    if include_viz:
+        src = job_dir / "visualization"
+        if src.exists() and any(src.iterdir()):
+            dst = bundle_dir / "visualization"
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            included.append("visualization")
+        else:
+            logger.warning("save_results_bundle: no visualization artifacts found in %s", src)
+
+    # Write docking_box.json from current parameters — always authoritative.
+    # This guarantees the bundle reflects the box that was actually used for
+    # docking, even when the user changed center/box_size via a text command
+    # after the last PyMOL-generated docking_box.json was written to disk.
+    _center = parameters.get("center")
+    _box_size = parameters.get("box_size")
+    if _center and _box_size:
+        box_payload: Dict[str, Any] = {
+            "job_id": job_dir.name,
+            "center": _center,
+            "box_size": _box_size,
+            "source": "parameters_snapshot",
+        }
+        # Preserve original source tag if the disk file is present and both
+        # center/box_size values match (i.e. nothing was changed manually).
+        _disk_box_file = job_dir / "docking_box.json"
+        if _disk_box_file.exists():
+            try:
+                import json as _json
+                _disk = _json.loads(_disk_box_file.read_text(encoding="utf-8"))
+                if _disk.get("center") == list(_center) and _disk.get("box_size") == list(_box_size):
+                    box_payload["source"] = _disk.get("source", "parameters_snapshot")
+            except Exception:
+                pass
+        atomic_write_json(bundle_dir / "docking_box.json", box_payload)
+        included.append("docking_box.json")
+    else:
+        # No box params in current parameters — fall back to copying from disk.
+        _disk_box_file = job_dir / "docking_box.json"
+        if _disk_box_file.exists():
+            shutil.copy2(_disk_box_file, bundle_dir / "docking_box.json")
+            included.append("docking_box.json")
+
+    metadata: Dict[str, Any] = {
+        "name": name,
+        "job_id": job_dir.name,
+        "source_revision": revision,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "scope": scope,
+        "artifacts": included,
+        "parameters": parameters,
+    }
+    atomic_write_json(bundle_dir / "metadata.json", metadata)
+
+    return {
+        "success": True,
+        "bundle_path": str(bundle_dir),
+        "artifacts": included,
+        "error": None,
+    }
 
 
 @dataclass

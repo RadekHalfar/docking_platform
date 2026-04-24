@@ -10,6 +10,7 @@ import argparse
 import subprocess
 import time
 import requests
+from datetime import datetime, timezone
 from typing import Optional, List, Callable, Dict, Any, Set
 
 from services.llm_orchestrator import (
@@ -27,6 +28,8 @@ from services.llm_orchestrator import (
     extract_box_source_choice_with_llm,
     classify_session_intent,
     extract_updates_from_command_with_llm,
+    save_results_bundle,
+    validate_bundle_name,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
@@ -85,8 +88,10 @@ def _print_interactive_help() -> None:
     print("  - end / quit / exit          # End session")
     print("  - help                       # Show this help")
     print("  - run / dock / rerun         # Execute (or re-execute) workflow steps")
+    print("  - save results as <name>     # Save named result bundle")
+    print("  - save docking as <name>     # Save docking-only bundle")
+    print("  - save visualization as <name>  # Save visualization-only bundle")
     print("\nComing soon (stubs active):")
-    print("  - save results as <name>     # Save named result bundle (Phase 5)")
     print("  - history                    # Show revision history (Phase 4)")
     print("  - undo <revision>            # Restore prior revision (Phase 4)")
     print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
@@ -120,6 +125,22 @@ def _handle_update_parameters(
 
         # Compute what changed and offer partial rerun.
         changed_keys = {k for k in updates if old_params.get(k) != updates[k]}
+
+        # Keep docking_box.json on disk in sync whenever box coordinates change
+        # so that every subsequent read of docking_box.json reflects the current
+        # state (e.g. save_results_bundle, PyMOL reload, debug inspection).
+        _BOX_PARAMS = {"center", "box_size"}
+        if changed_keys & _BOX_PARAMS and current.get("center") and current.get("box_size"):
+            from common.file_io import atomic_write_json as _write_json
+            _box_payload: Dict[str, Any] = {
+                "job_id": session.state_manager.job_dir.name,
+                "center": current["center"],
+                "box_size": current["box_size"],
+                "source": "interactive_update",
+            }
+            _write_json(session.state_manager.job_dir / "docking_box.json", _box_payload)
+            logger.debug("Updated docking_box.json from interactive parameter change.")
+
         return changed_keys
     else:
         print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
@@ -192,6 +213,74 @@ def _execute_partial_rerun(
         print("✅ Partial rerun completed successfully!")
 
     return results
+
+
+def _handle_save_results(
+    intent_result: Dict[str, Any],
+    session: "InteractiveSession",
+) -> None:
+    """Execute the save_results intent: resolve name/scope, copy artifacts, write metadata."""
+    if session.state_manager is None:
+        print("No active job state manager — cannot save results.")
+        return
+
+    job_dir = session.state_manager.job_dir
+    scope: str = (intent_result or {}).get("scope") or "all"
+    name: Optional[str] = (intent_result or {}).get("name")
+
+    # Prompt for name when not supplied in the command.
+    if not name:
+        try:
+            name = input("Enter a name for this result bundle: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nSave cancelled.")
+            return
+        if not name:
+            print("No name provided. Save cancelled.")
+            return
+
+    # Validate before any filesystem work.
+    err = validate_bundle_name(name)
+    if err:
+        print(f"❌ Invalid bundle name: {err}")
+        return
+
+    revision = session.state_manager.get_current_revision()
+    parameters = session.state_manager.load_latest_parameters() or {}
+
+    # First attempt without overwrite.
+    result = save_results_bundle(job_dir, name, scope, revision, parameters, overwrite=False)
+
+    if not result["success"] and result["error"] == "exists":
+        print(f"A bundle named '{name}' already exists.")
+        try:
+            choice = input("Overwrite? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nSave cancelled.")
+            return
+        if choice not in ("y", "yes"):
+            # Offer auto-suffix fallback.
+            suffix = datetime.now(timezone.utc).strftime("%H%M%S")
+            new_name = f"{name}_{suffix}"
+            print(f"Saving as '{new_name}' instead.")
+            result = save_results_bundle(
+                job_dir, new_name, scope, revision, parameters, overwrite=False
+            )
+        else:
+            result = save_results_bundle(
+                job_dir, name, scope, revision, parameters, overwrite=True
+            )
+
+    if result["success"]:
+        arts = result["artifacts"]
+        print(f"\n✅ Saved bundle '{name}' (scope: {scope})")
+        print(f"   Path: {result['bundle_path']}")
+        if arts:
+            print(f"   Artifacts: {', '.join(arts)}")
+        else:
+            print("   ⚠️  No artifacts were available to copy into the bundle.")
+    else:
+        print(f"❌ Save failed: {result['error']}")
 
 
 def _run_interactive_loop(
@@ -283,8 +372,7 @@ def _run_interactive_loop(
                 continue
 
             if intent == "save_results":
-                name = (intent_result or {}).get("name")
-                print(f"\U0001f4be 'save_results' recognized (target name: {name!r}). Coming in Phase 5.")
+                _handle_save_results(intent_result or {}, session)
                 continue
 
             if intent == "undo_revision":

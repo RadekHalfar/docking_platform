@@ -19,7 +19,7 @@ from .workflow_llm_parser import (
 )
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
-from .interactive_session import InteractiveSession
+from .interactive_session import InteractiveSession, save_results_bundle, validate_bundle_name
 from .rerun_planner import compute_rerun_steps, describe_rerun_plan
 
 __all__ = [
@@ -27,6 +27,8 @@ __all__ = [
 	'WorkflowParser',
 	'WorkflowStateManager',
 	'InteractiveSession',
+	'save_results_bundle',
+	'validate_bundle_name',
 	'compute_rerun_steps',
 	'describe_rerun_plan',
 	'BaseLLMClient',

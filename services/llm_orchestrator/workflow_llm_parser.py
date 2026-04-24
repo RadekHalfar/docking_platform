@@ -314,8 +314,10 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "- end_session: user wants to end or quit the session\n"
     "- help: user wants to see available commands\n"
     "- unknown: the intent does not match any of the above\n\n"
-    'Return JSON only with this exact shape: {"intent": "<intent_name>", "name": null}. '
+    'Return JSON only with this exact shape: {"intent": "<intent_name>", "name": null, "scope": "all"}. '
     "For save_results, set name to the save target name if the user provided one, else null. "
+    "For save_results, set scope to 'docking' when only docking results are requested, "
+    "'visualization' when only visualization is requested, else 'all'. "
     "For undo_revision, set name to the revision number string if provided, else null. "
     "Never include markdown, explanations, or code fences."
 )
@@ -370,7 +372,13 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     )
     if any(t.startswith(p) for p in _SAVE_PREFIXES):
         match = re.search(r"\bas\s+(\S+)", text, re.IGNORECASE)
-        return {"intent": "save_results", "name": match.group(1) if match else None}
+        if any(t.startswith(p) for p in ("save visualization", "save viz")):
+            scope = "visualization"
+        elif t.startswith("save docking"):
+            scope = "docking"
+        else:
+            scope = "all"
+        return {"intent": "save_results", "name": match.group(1) if match else None, "scope": scope}
 
     if re.match(r"^new\s+\S", text, re.IGNORECASE):
         return {"intent": "new_workflow", "name": None}
@@ -418,7 +426,10 @@ def classify_session_intent(
     if intent not in _SESSION_INTENTS:
         intent = "unknown"
 
-    return {"intent": intent, "name": payload.get("name")}
+    scope = payload.get("scope", "all")
+    if scope not in ("docking", "visualization", "all"):
+        scope = "all"
+    return {"intent": intent, "name": payload.get("name"), "scope": scope}
 
 
 def extract_updates_from_command_with_llm(

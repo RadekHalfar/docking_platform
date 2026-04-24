@@ -91,9 +91,9 @@ def _print_interactive_help() -> None:
     print("  - save results as <name>     # Save named result bundle")
     print("  - save docking as <name>     # Save docking-only bundle")
     print("  - save visualization as <name>  # Save visualization-only bundle")
+    print("  - history                    # Show revision history")
+    print("  - undo <revision>            # Restore parameters/state to a prior revision")
     print("\nComing soon (stubs active):")
-    print("  - history                    # Show revision history (Phase 4)")
-    print("  - undo <revision>            # Restore prior revision (Phase 4)")
     print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
 
 
@@ -215,6 +215,91 @@ def _execute_partial_rerun(
     return results
 
 
+def _handle_show_history(session: "InteractiveSession") -> None:
+    """Print the revision history for the active job."""
+    if session.state_manager is None:
+        print("No active job — no history available.")
+        return
+
+    revisions = session.state_manager.list_revisions()
+    if not revisions:
+        print("No revisions recorded yet.")
+        return
+
+    print(f"\nRevision history for job {session.job_id}:")
+    print(f"  {'Rev':>5}  {'Timestamp':26}  {'Type':22}  {'Details'}")
+    print("  " + "-" * 80)
+    for r in revisions:
+        ts = r["timestamp"][:26] if r["timestamp"] else ""
+        etype = r["event_type"]
+        details = r["details"]
+        detail_str = ", ".join(f"{k}={v}" for k, v in details.items())
+        flags = []
+        if r["has_parameters"]:
+            flags.append("params")
+        if r["has_state"]:
+            flags.append("state")
+        flag_str = f"  [{', '.join(flags)}]" if flags else ""
+        print(f"  {r['revision']:>5}  {ts}  {etype:<22}  {detail_str}{flag_str}")
+    print(f"\n  Current revision: {session.state_manager.get_current_revision()}")
+    print("  Use 'undo <revision>' to restore any prior revision.")
+
+
+def _handle_undo_revision(
+    rev_str: Optional[str],
+    session: "InteractiveSession",
+) -> None:
+    """Restore a prior revision and suggest a follow-up rerun."""
+    if session.state_manager is None:
+        print("No active job — cannot undo.")
+        return
+
+    # Resolve revision number.
+    revision: Optional[int] = None
+    if rev_str:
+        try:
+            revision = int(rev_str)
+        except ValueError:
+            pass
+
+    if revision is None:
+        try:
+            raw = input("Revision number to restore: ").strip()
+            revision = int(raw)
+        except (ValueError, EOFError, KeyboardInterrupt):
+            print("Invalid or no revision number provided. Undo cancelled.")
+            return
+
+    try:
+        data = session.state_manager.restore_revision(revision)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return
+
+    print(f"\n✅ Revision {revision} restored.")
+
+    # Report what was restored.
+    if data["parameters"] is not None:
+        params = data["parameters"]
+        print("  Parameters restored:")
+        for k in ("protein_id", "ligand_ids", "center", "box_size"):
+            if k in params:
+                print(f"    {k}: {params[k]}")
+    else:
+        print("  No parameter checkpoint at that revision — parameters unchanged.")
+
+    if data["runtime_state"] is not None:
+        keys = sorted(data["runtime_state"].keys())
+        print(f"  Runtime state restored ({', '.join(keys)}).")
+    else:
+        print("  No state checkpoint at that revision — runtime state unchanged.")
+
+    # Mark all params as changed so 'rerun' will execute the full necessary set.
+    if data["parameters"] is not None:
+        session.pending_changed_params |= {"protein_id", "ligand_ids", "center", "box_size"}
+        print("\n  ⚠️  Parameters changed. Type 'rerun' to re-execute affected steps.")
+
+
 def _handle_save_results(
     intent_result: Dict[str, Any],
     session: "InteractiveSession",
@@ -222,6 +307,12 @@ def _handle_save_results(
     """Execute the save_results intent: resolve name/scope, copy artifacts, write metadata."""
     if session.state_manager is None:
         print("No active job state manager — cannot save results.")
+        return
+
+    if session.pending_changed_params:
+        changed = ", ".join(sorted(session.pending_changed_params))
+        print(f"❌ Cannot save: parameters changed since last docking ({changed}).")
+        print("   Run 'rerun' first, or 'undo' to revert parameters.")
         return
 
     job_dir = session.state_manager.job_dir
@@ -329,7 +420,7 @@ def _run_interactive_loop(
                 continue
 
             if intent == "show_history":
-                print("\U0001f4dc Revision history coming in Phase 4.")
+                _handle_show_history(session)
                 continue
 
             if intent == "new_workflow":
@@ -377,7 +468,7 @@ def _run_interactive_loop(
 
             if intent == "undo_revision":
                 rev = (intent_result or {}).get("name")
-                print(f"\u21a9\ufe0f  Undo to revision {rev!r} coming in Phase 4.")
+                _handle_undo_revision(rev, session)
                 continue
 
             if intent == "use_pymol_box":

@@ -8,7 +8,7 @@ Hybrid model:
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from common.file_io import atomic_write_json, load_json_dict
 
@@ -127,3 +127,127 @@ class WorkflowStateManager:
         if isinstance(state, dict):
             return state
         return None
+
+    # ------------------------------------------------------------------
+    # Phase 4: revision history and undo/restore
+    # ------------------------------------------------------------------
+
+    def list_revisions(self) -> List[Dict[str, Any]]:
+        """Return a list of all recorded revision events, oldest first.
+
+        Each entry is a dict with keys:
+          ``revision`` (int), ``timestamp`` (str), ``event_type`` (str),
+          ``details`` (dict), ``has_parameters`` (bool), ``has_state`` (bool).
+        """
+        manifest = self._read_manifest()
+        events: List[Dict[str, Any]] = manifest.get("events", [])
+
+        enriched = []
+        for event in events:
+            rev = int(event.get("revision", 0))
+            enriched.append(
+                {
+                    "revision": rev,
+                    "timestamp": event.get("timestamp", ""),
+                    "event_type": event.get("event_type", ""),
+                    "details": event.get("details", {}),
+                    "has_parameters": (
+                        self.checkpoints_dir / f"rev_{rev:06d}_parameters.json"
+                    ).exists(),
+                    "has_state": (
+                        self.checkpoints_dir / f"rev_{rev:06d}_state.json"
+                    ).exists(),
+                }
+            )
+        return enriched
+
+    def load_checkpoint(self, revision: int) -> Dict[str, Any]:
+        """Load both the parameters and state checkpoint for *revision*.
+
+        Returns a dict with keys:
+          ``revision`` (int), ``parameters`` (dict or None),
+          ``runtime_state`` (dict or None).
+
+        Raises ``ValueError`` when no checkpoint files exist for that revision.
+        """
+        params_file = self.checkpoints_dir / f"rev_{revision:06d}_parameters.json"
+        state_file = self.checkpoints_dir / f"rev_{revision:06d}_state.json"
+
+        if not params_file.exists() and not state_file.exists():
+            raise ValueError(
+                f"No checkpoint files found for revision {revision}. "
+                f"Available revisions: {self._available_revisions()}"
+            )
+
+        parameters: Optional[Dict[str, Any]] = None
+        if params_file.exists():
+            payload = self._load_json_file(params_file)
+            if payload:
+                parameters = payload.get("parameters")
+
+        runtime_state: Optional[Dict[str, Any]] = None
+        if state_file.exists():
+            payload = self._load_json_file(state_file)
+            if payload:
+                runtime_state = payload.get("state")
+
+        return {
+            "revision": revision,
+            "parameters": parameters,
+            "runtime_state": runtime_state,
+        }
+
+    def restore_revision(self, revision: int) -> Dict[str, Any]:
+        """Promote checkpoint *revision* to the "latest" files and record an undo event.
+
+        Only components that have a checkpoint at *revision* are restored:
+        - if a parameters checkpoint exists, it overwrites ``workflow_parameters.json``
+        - if a state checkpoint exists, it overwrites ``workflow_state.json``
+
+        A new revision is recorded so the restore itself is auditable.
+
+        Returns the same dict as :meth:`load_checkpoint`.
+        """
+        data = self.load_checkpoint(revision)  # raises ValueError for invalid revision
+
+        new_revision = self._next_revision(
+            "undo_restore",
+            {"restored_from_revision": revision},
+        )
+
+        if data["parameters"] is not None:
+            payload = {
+                "revision": new_revision,
+                "timestamp": self._timestamp(),
+                "source": f"undo_restore_from_rev_{revision}",
+                "parameters": data["parameters"],
+            }
+            atomic_write_json(self.parameters_file, payload)
+            checkpoint = self.checkpoints_dir / f"rev_{new_revision:06d}_parameters.json"
+            atomic_write_json(checkpoint, payload)
+
+        if data["runtime_state"] is not None:
+            payload = {
+                "revision": new_revision,
+                "timestamp": self._timestamp(),
+                "step": f"undo_restore_from_rev_{revision}",
+                "state": data["runtime_state"],
+            }
+            atomic_write_json(self.state_file, payload)
+            checkpoint = self.checkpoints_dir / f"rev_{new_revision:06d}_state.json"
+            atomic_write_json(checkpoint, payload)
+
+        logger.info(
+            f"Restored revision={revision} → promoted to new revision={new_revision}"
+        )
+        return data
+
+    def _available_revisions(self) -> List[int]:
+        """Return sorted list of revision numbers that have at least one checkpoint file."""
+        revisions: set = set()
+        for f in self.checkpoints_dir.glob("rev_*_*.json"):
+            try:
+                revisions.add(int(f.stem.split("_")[1]))
+            except (IndexError, ValueError):
+                pass
+        return sorted(revisions)

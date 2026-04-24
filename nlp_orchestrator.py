@@ -32,6 +32,7 @@ from services.llm_orchestrator import (
     validate_bundle_name,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
+from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
 from common.utils import generate_job_id
 
@@ -172,6 +173,20 @@ def _execute_partial_rerun(
         print("No steps need to be re-executed for the changed parameters.")
         return None
 
+    # Pre-flight: verify all required parameters for the planned steps are present.
+    latest_params = session.state_manager.load_latest_parameters() or {}
+    missing: List[str] = []
+    for step in steps:
+        for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
+            if not latest_params.get(param):
+                missing.append(f"{param} (required by '{step}')")
+    if missing:
+        print("\n❌ Cannot rerun — required parameters are missing:")
+        for m in sorted(set(missing)):
+            print(f"   • {m}")
+        print("   Update them with a command like 'set protein to 6lu7' or restore a complete revision.")
+        return None
+
     print(f"\n{describe_rerun_plan(steps)}")
 
     confirm = input("Execute partial rerun? [Y/n]: ").strip().lower()
@@ -179,8 +194,6 @@ def _execute_partial_rerun(
         print("Partial rerun cancelled.")
         return None
 
-    # Build a workflow containing only the steps to rerun.
-    latest_params = session.state_manager.load_latest_parameters() or {}
     rerun_workflow: Dict[str, Any] = {
         "services": steps,
         "parameters": latest_params,

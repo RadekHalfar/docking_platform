@@ -198,14 +198,14 @@ When a job is active, every command is classified into one of these intents befo
 | Intent | Example inputs | Behavior |
 |---|---|---|
 | `show_state` | `state`, `show state` | Print disk-backed parameters and status |
-| `show_history` | `history`, `show history` | *(Phase 4 — stub active)* |
+| `show_history` | `history`, `show history` | Print revision history table |
 | `end_session` | `end`, `end session`, `quit session` | Exit the session cleanly |
 | `new_workflow` | `new <request>` | Start a fresh workflow |
-| `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk |
-| `save_results` | `save results as hem_box_a` | *(Phase 5 — stub active)* |
-| `undo_revision` | `undo 14` | *(Phase 4 — stub active)* |
+| `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk, invalidate affected services |
+| `save_results` | `save results as hem_box_a` | Save named result bundle from current docking/visualization outputs |
+| `undo_revision` | `undo 14` | Restore parameters/state to a prior revision |
+| `rerun_steps` | `rerun`, `dock`, `rerun docking` | Re-execute invalidated steps with pre-flight validation |
 | `use_pymol_box` | `use pymol box` | *(Phase 6 — stub active)* |
-| `rerun_steps` | `rerun docking` | *(Phase 3 — stub active)* |
 | `help` | `help`, `?` | Print command reference |
 
 Common keywords (`state`, `history`, `end session`, `save results as <name>`, `undo N`, `new <request>`) are resolved deterministically without an LLM call.
@@ -217,9 +217,63 @@ After classifying `update_parameters`, the system:
 1. Calls the LLM to extract the concrete field → value mapping.
 2. Merges the changes with the current persisted parameters.
 3. Saves a new checkpoint revision to disk.
-4. Prints a confirmation.
+4. Immediately removes invalidated services from the executed set (e.g. changing `center` invalidates `dock` and `visualize`).
+5. Prints a confirmation with a hint to `rerun`.
 
-Automatic partial rerun will be added in Phase 3; until then use `new <request>` to rerun manually.
+#### Rerun steps
+
+`rerun`, `dock`, or `rerun docking` triggers a partial re-execution:
+
+1. Required parameters for all planned steps are validated before the plan is shown.
+2. Only steps not yet successfully executed (or invalidated by a parameter change) are included.
+3. User confirms the plan before execution starts.
+4. On success the executed set is updated; `last_status` returns to `completed`.
+
+`last_status` shows `parameters_changed` whenever parameters have been updated but not yet re-executed.
+
+#### Revision history and undo
+
+`history` prints a table of all checkpoint events for the active job:
+
+```
+Revision history for job job_abc123:
+    Rev  Timestamp                   Type                    Details
+  -------------------------------------------------------------------------------
+      1  2026-04-24T10:00:00.000...  parameters_update       source=initial_parse  [params]
+      2  2026-04-24T10:05:00.000...  state_update            step=dock  [state]
+      3  2026-04-24T10:10:00.000...  parameters_update       source=interactive_update  [params]
+
+  Current revision: 3
+  Use 'undo <revision>' to restore any prior revision.
+```
+
+`undo <revision>` restores that revision's parameters/state to the latest files and creates a new `undo_restore` revision so the action is auditable. After undo all services are marked as needing re-execution; use `rerun` to apply.
+
+#### Save named result bundles
+
+`save results as <name>`, `save docking as <name>`, or `save visualization as <name>` copies the current job artifacts into a named bundle:
+
+```
+orchestrator_output/job_<id>/saved_results/<name>/
+  metadata.json
+  docking_results/        ← scope: docking or all
+  visualization/          ← scope: visualization or all
+  docking_box.json        ← generated from current parameters
+```
+
+**Save is blocked** when parameters have been changed but not yet re-executed (`last_status = parameters_changed`). This prevents saving results that don't match the current parameter state. Run `rerun` first, or `undo` to revert.
+
+Save scope keywords:
+
+| Command | Scope |
+|---|---|
+| `save results as <name>` | docking + visualization (all) |
+| `save docking as <name>` | docking results only |
+| `save visualization as <name>` | visualization only |
+
+If the bundle name already exists, the system asks for overwrite confirmation or offers an auto-suffixed name.
+
+Valid bundle names: `[A-Za-z0-9][A-Za-z0-9._-]{0,64}` — no path separators, no `..`, no reserved names.
 
 ### Options
 
@@ -403,6 +457,15 @@ orchestrator_output/
     │   ├── visualization.pml
     │   ├── visualization.pse
     │   └── docking_visualization.png
+    ├── saved_results/
+    │   ├── atp_box1/
+    │   │   ├── metadata.json
+    │   │   ├── docking_results/
+    │   │   ├── visualization/
+    │   │   └── docking_box.json
+    │   └── hem_trial_b/
+    │       ├── metadata.json
+    │       └── docking_results/
     └── workflow_results.json
 ```
 

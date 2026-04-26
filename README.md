@@ -223,16 +223,34 @@ python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 # Interactive mode with prompts
 python nlp_orchestrator.py --interactive
 
-# Phase-1 interactive commands:
-#   state                 -> show active job state from disk
-#   new <request>         -> start a fresh workflow in current session
-#   end / quit / exit     -> stop session
+# Interactive commands:
+#   state                          -> show active job, parameters, last status
+#   history                        -> show revision history table
+#   change ligand to HEM           -> update parameters (LLM-extracted)
+#   set center to 10,20,30         -> update docking box center
+#   rerun / dock                   -> re-execute invalidated steps only
+#   save results as <name>         -> save named result bundle (docking + visualization)
+#   save docking as <name>         -> save docking-only bundle
+#   save visualization as <name>   -> save visualization-only bundle
+#   undo <revision>                -> restore parameters/state to a prior revision
+#   new <request>                  -> start a fresh workflow in current session
+#   end / quit / exit              -> stop session
 #
-# Current limitation (Phase 2):
-#   Use one intent per input line.
-#   Good:  state
-#   Good:  save results as hem_box_a
-#   Avoid: state and save results as hem_box_a
+# Example multi-variant session:
+#   🧬 > Download 6lu7 and ATP, prepare and dock with center 10,20,30 and box 25,25,25
+#   🧬 > save results as atp_box1
+#   🧬 > change ligand to HEM
+#   🧬 > rerun
+#   🧬 > save results as hem_box1
+#   🧬 > set center to 15,18,7
+#   🧬 > rerun
+#   🧬 > save docking as hem_box2
+#   🧬 > history
+#   🧬 > undo 3
+#   🧬 > end
+#
+# Note: save is blocked when parameters have been changed but not yet re-executed.
+# Run 'rerun' first to sync results with the current parameters.
 
 # Example outputs:
 # 🤖 Parsing workflow...

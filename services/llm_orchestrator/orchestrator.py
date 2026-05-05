@@ -5,6 +5,8 @@ Coordinates execution of molecular docking workflow across MCP services.
 """
 import json
 import logging
+import time
+import uuid
 import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -39,13 +41,20 @@ class WorkflowOrchestrator:
         
         # Verbosity level
         self.verbosity = verbosity
-        
+
         # MCP service URLs (env-overridable for Docker/container usage)
         self.services = get_service_urls_from_env()
-        
+
         # Workflow state
         self.workflow_state = {}
         self.current_job_id = None
+
+    def _step_print(self, message: str) -> None:
+        """Print a step-level message in low/mcp_demo verbosity; log in normal mode."""
+        if self.verbosity in (VERBOSITY_LOW, VERBOSITY_MCP_DEMO):
+            print(message)
+        else:
+            logger.info(message)
     
     def check_services_health(self) -> Dict[str, bool]:
         """Check health of all MCP services."""
@@ -70,8 +79,6 @@ class WorkflowOrchestrator:
         Returns:
             Tool result
         """
-        import uuid
-        
         # Generate unique ID for each request (required by JSON-RPC 2.0)
         request_id = f"orchestrator_{self.current_job_id}_{str(uuid.uuid4())[:8]}"
         
@@ -160,7 +167,6 @@ class WorkflowOrchestrator:
         if job_id:
             self.current_job_id = job_id
         else:
-            import time
             self.current_job_id = f"job_{int(time.time())}"
         
         services = workflow.get("services", [])
@@ -202,9 +208,8 @@ class WorkflowOrchestrator:
             if "download" in services:
                 _reload_latest_from_disk()
 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print("\n📥 STEP 1: Downloading structures...")
-                else:
+                self._step_print("\n\U0001f4e5 STEP 1: Downloading structures...")
+                if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
                     logger.info("STEP 1: Downloading structures")
                     logger.info("="*80)
@@ -233,11 +238,10 @@ class WorkflowOrchestrator:
                 self.workflow_state["protein_file"] = protein_path
                 self.workflow_state["ligand_files"] = ligand_paths
                 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print(f"   ✅ Downloaded protein and {len(self.workflow_state['ligand_files'])} ligand(s)")
-                else:
-                    logger.info(f"✅ Downloaded protein: {self.workflow_state['protein_file']}")
-                    logger.info(f"✅ Downloaded {len(self.workflow_state['ligand_files'])} ligands")
+                self._step_print(f"   \u2705 Downloaded protein and {len(self.workflow_state['ligand_files'])} ligand(s)")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Downloaded protein: {self.workflow_state['protein_file']}")
+                    logger.info(f"\u2705 Downloaded {len(self.workflow_state['ligand_files'])} ligands")
 
                 _save_step_checkpoint("download")
             
@@ -249,9 +253,8 @@ class WorkflowOrchestrator:
             if "prepare_ligands" in services:
                 _reload_latest_from_disk()
 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print("\n🧪 STEP 2: Preparing ligands...")
-                else:
+                self._step_print("\n\U0001f9ea STEP 2: Preparing ligands...")
+                if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
                     logger.info("STEP 2: Preparing ligands")
                     logger.info("="*80)
@@ -282,10 +285,9 @@ class WorkflowOrchestrator:
                         prepared_ligands.append(result["pdbqt_path"])
                 
                 self.workflow_state["prepared_ligands"] = prepared_ligands
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print(f"   ✅ Prepared {len(prepared_ligands)} ligand(s)")
-                else:
-                    logger.info(f"✅ Prepared {len(prepared_ligands)} ligands")
+                self._step_print(f"   \u2705 Prepared {len(prepared_ligands)} ligand(s)")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Prepared {len(prepared_ligands)} ligands")
 
                 _save_step_checkpoint("prepare_ligands")
             
@@ -293,9 +295,8 @@ class WorkflowOrchestrator:
             if "prepare_protein" in services:
                 _reload_latest_from_disk()
 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print("\n🧬 STEP 3: Preparing protein...")
-                else:
+                self._step_print("\n\U0001f9ec STEP 3: Preparing protein...")
+                if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
                     logger.info("STEP 3: Preparing protein")
                     logger.info("="*80)
@@ -322,10 +323,9 @@ class WorkflowOrchestrator:
                 protein_results = prepare_protein_result.get("prepared_proteins", [])
                 if protein_results and protein_results[0].get("pdbqt_path"):
                     self.workflow_state["prepared_protein"] = protein_results[0].get("pdbqt_path")
-                    if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                        print(f"   ✅ Protein prepared successfully")
-                    else:
-                        logger.info(f"✅ Prepared protein: {self.workflow_state['prepared_protein']}")
+                    self._step_print("   \u2705 Protein prepared successfully")
+                    if self.verbosity == VERBOSITY_NORMAL:
+                        logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
 
                 _save_step_checkpoint("prepare_protein")
             
@@ -333,9 +333,8 @@ class WorkflowOrchestrator:
             if "dock" in services:
                 _reload_latest_from_disk()
 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print("\n⚛️  STEP 4: Running molecular docking...")
-                else:
+                self._step_print("\n\u26db\ufe0f  STEP 4: Running molecular docking...")
+                if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
                     logger.info("STEP 4: Running molecular docking")
                     logger.info("="*80)
@@ -377,10 +376,9 @@ class WorkflowOrchestrator:
                 
                 # Store docking results
                 self.workflow_state["docking_results"] = docking_result
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print(f"   ✅ Docking completed: {docking_result.get('successful', 0)} successful")
-                else:
-                    logger.info(f"✅ Docking completed: {docking_result.get('successful', 0)} successful")
+                self._step_print(f"   \u2705 Docking completed: {docking_result.get('successful', 0)} successful")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Docking completed: {docking_result.get('successful', 0)} successful")
 
                 _save_step_checkpoint("dock")
             
@@ -388,9 +386,8 @@ class WorkflowOrchestrator:
             if "visualize" in services:
                 _reload_latest_from_disk()
 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print("\n🎨 STEP 5: Generating visualization...")
-                else:
+                self._step_print("\n\U0001f3a8 STEP 5: Generating visualization...")
+                if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
                     logger.info("STEP 5: Generating visualization")
                     logger.info("="*80)
@@ -439,22 +436,20 @@ class WorkflowOrchestrator:
                 results["results"]["visualize"] = viz_result
                 results["services_executed"].append("visualize")
                 
-                if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                    print(f"   ✅ Visualization created")
-                else:
-                    logger.info(f"✅ Visualization created: {viz_result.get('script_path')}")
+                self._step_print("   \u2705 Visualization created")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Visualization created: {viz_result.get('script_path')}")
                     if viz_result.get("image_path"):
-                        logger.info(f"✅ Image rendered: {viz_result.get('image_path')}")
+                        logger.info(f"\u2705 Image rendered: {viz_result.get('image_path')}")
 
                 _save_step_checkpoint("visualize")
             
             # Success
             results["status"] = "completed"
-            if self.verbosity == VERBOSITY_LOW or self.verbosity == VERBOSITY_MCP_DEMO:
-                print("\n✅ WORKFLOW COMPLETED SUCCESSFULLY\n")
-            else:
+            self._step_print("\n\u2705 WORKFLOW COMPLETED SUCCESSFULLY\n")
+            if self.verbosity == VERBOSITY_NORMAL:
                 logger.info("\n" + "="*80)
-                logger.info("✅ WORKFLOW COMPLETED SUCCESSFULLY")
+                logger.info("\u2705 WORKFLOW COMPLETED SUCCESSFULLY")
                 logger.info("="*80)
             
         except Exception as e:

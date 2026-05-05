@@ -50,6 +50,10 @@ class WorkflowStateManager:
     def _write_manifest(self, manifest: Dict[str, Any]) -> None:
         atomic_write_json(self.manifest_file, self._normalize_manifest(manifest))
 
+    def _checkpoint_path(self, revision: int, suffix: str) -> Path:
+        """Return the canonical checkpoint file path for a given revision and type suffix."""
+        return self.checkpoints_dir / f"rev_{revision:06d}_{suffix}.json"
+
     def _next_revision(self, event_type: str, details: Dict[str, Any]) -> int:
         manifest = self._read_manifest()
         revision = int(manifest.get("current_revision", 0)) + 1
@@ -81,8 +85,7 @@ class WorkflowStateManager:
         }
 
         atomic_write_json(self.parameters_file, payload)
-        checkpoint = self.checkpoints_dir / f"rev_{revision:06d}_parameters.json"
-        atomic_write_json(checkpoint, payload)
+        atomic_write_json(self._checkpoint_path(revision, "parameters"), payload)
         logger.info(f"Saved parameter checkpoint revision={revision} source={source}")
         return revision
 
@@ -97,8 +100,7 @@ class WorkflowStateManager:
         }
 
         atomic_write_json(self.state_file, payload)
-        checkpoint = self.checkpoints_dir / f"rev_{revision:06d}_state.json"
-        atomic_write_json(checkpoint, payload)
+        atomic_write_json(self._checkpoint_path(revision, "state"), payload)
         logger.info(f"Saved state checkpoint revision={revision} step={step}")
         return revision
 
@@ -151,12 +153,8 @@ class WorkflowStateManager:
                     "timestamp": event.get("timestamp", ""),
                     "event_type": event.get("event_type", ""),
                     "details": event.get("details", {}),
-                    "has_parameters": (
-                        self.checkpoints_dir / f"rev_{rev:06d}_parameters.json"
-                    ).exists(),
-                    "has_state": (
-                        self.checkpoints_dir / f"rev_{rev:06d}_state.json"
-                    ).exists(),
+                    "has_parameters": self._checkpoint_path(rev, "parameters").exists(),
+                    "has_state": self._checkpoint_path(rev, "state").exists(),
                 }
             )
         return enriched
@@ -170,8 +168,8 @@ class WorkflowStateManager:
 
         Raises ``ValueError`` when no checkpoint files exist for that revision.
         """
-        params_file = self.checkpoints_dir / f"rev_{revision:06d}_parameters.json"
-        state_file = self.checkpoints_dir / f"rev_{revision:06d}_state.json"
+        params_file = self._checkpoint_path(revision, "parameters")
+        state_file = self._checkpoint_path(revision, "state")
 
         if not params_file.exists() and not state_file.exists():
             raise ValueError(
@@ -223,8 +221,7 @@ class WorkflowStateManager:
                 "parameters": data["parameters"],
             }
             atomic_write_json(self.parameters_file, payload)
-            checkpoint = self.checkpoints_dir / f"rev_{new_revision:06d}_parameters.json"
-            atomic_write_json(checkpoint, payload)
+            atomic_write_json(self._checkpoint_path(new_revision, "parameters"), payload)
 
         if data["runtime_state"] is not None:
             payload = {
@@ -234,8 +231,7 @@ class WorkflowStateManager:
                 "state": data["runtime_state"],
             }
             atomic_write_json(self.state_file, payload)
-            checkpoint = self.checkpoints_dir / f"rev_{new_revision:06d}_state.json"
-            atomic_write_json(checkpoint, payload)
+            atomic_write_json(self._checkpoint_path(new_revision, "state"), payload)
 
         logger.info(
             f"Restored revision={revision} → promoted to new revision={new_revision}"

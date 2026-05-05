@@ -3,6 +3,7 @@ Common utilities for the docking system.
 """
 import hashlib
 import logging
+import secrets
 from pathlib import Path
 from typing import Dict
 from datetime import datetime
@@ -81,12 +82,12 @@ def create_job_directory(base_dir: str, job_id: str) -> Dict[str, Path]:
 def generate_job_id() -> str:
     """
     Generate a unique job ID.
-    
+
     Returns:
         Job ID string (format: job_YYYYMMDD_HHMMSS_<random>)
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    random_suffix = hashlib.md5(str(datetime.now().timestamp()).encode()).hexdigest()[:6]
+    random_suffix = secrets.token_hex(3)
     return f"job_{timestamp}_{random_suffix}"
 
 

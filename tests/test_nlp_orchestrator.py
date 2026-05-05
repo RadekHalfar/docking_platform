@@ -723,3 +723,80 @@ def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys, l
     assert "Parameters updated" in output
     assert "rerun" in output.lower() or "dock" in output.lower()
 
+
+# ---------------------------------------------------------------------------
+# Phase 7: Session UX tests
+# ---------------------------------------------------------------------------
+
+def test_interactive_loop_prompt_shows_job_id_when_active(monkeypatch, tmp_path, llm_client):
+    """After a job is activated the interactive prompt must include the job ID."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    prompts_seen: list = []
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(Path(tmp_path) / "job_prompt")
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="test")
+            sess.activate("job_prompt", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    # No deterministic pattern should fire before the job is active.
+    monkeypatch.setattr(cli, "_deterministic_intent", lambda _text: None)
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: {"intent": "end_session"} if text.strip().lower() == "end" else {"intent": "show_state"},
+    )
+
+    call_n = [0]
+
+    def fake_input(prompt):
+        prompts_seen.append(prompt)
+        call_n[0] += 1
+        if call_n[0] == 1:
+            return "dock 6lu7 with ATP"   # triggers fake_process → activates job
+        if call_n[0] == 2:
+            return "state"                # one turn with active job
+        return "end"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    # At least one prompt after job activation must contain the job ID.
+    assert any("job_prompt" in p for p in prompts_seen[1:])
+
+
+def test_interactive_loop_invalid_command_does_not_terminate(monkeypatch, tmp_path, capsys, llm_client):
+    """An unrecognised command must print a guidance message and keep the session alive."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(Path(tmp_path) / "job_invalid")
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="test")
+            sess.activate("job_invalid", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    # Classify as "unknown" for everything except the final "end".
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: (
+            {"intent": "end_session"} if text.strip().lower() == "end"
+            else {"intent": "unknown"}
+        ),
+    )
+
+    answers = iter(["dock 6lu7 with ATP", "xyzzy nonsense command", "end"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    result = cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    assert result == 0  # session ended cleanly
+    output = capsys.readouterr().out
+    assert "help" in output.lower()  # guidance must be printed
+

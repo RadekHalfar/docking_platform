@@ -35,6 +35,7 @@ from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
 from common.utils import generate_job_id
+from common.file_io import atomic_write_json
 
 # Global verbosity setting
 current_verbosity = VERBOSITY_NORMAL
@@ -76,6 +77,24 @@ CLARIFICATION_MODE_LEGACY = "legacy"
 verbosity_filter = VerbosityFilter()
 for handler in logging.getLogger().handlers:
     handler.addFilter(verbosity_filter)
+
+# Parameters that, when changed, require docking_box.json to be refreshed on disk.
+_BOX_PARAMS: frozenset = frozenset({"center", "box_size"})
+
+
+def _pymol_rpc_healthy(base_url: str) -> bool:
+    """Return True when pymol_interactive is up and the PyMOL RPC backend is ready."""
+    try:
+        response = requests.get(f"{base_url}/health", timeout=5)
+        if response.status_code != 200:
+            return False
+        try:
+            payload = response.json()
+        except ValueError:
+            return False
+        return payload.get("pymol_rpc") is True
+    except requests.RequestException:
+        return False
 
 
 def _print_interactive_help() -> None:
@@ -130,16 +149,14 @@ def _handle_update_parameters(
         # Keep docking_box.json on disk in sync whenever box coordinates change
         # so that every subsequent read of docking_box.json reflects the current
         # state (e.g. save_results_bundle, PyMOL reload, debug inspection).
-        _BOX_PARAMS = {"center", "box_size"}
         if changed_keys & _BOX_PARAMS and current.get("center") and current.get("box_size"):
-            from common.file_io import atomic_write_json as _write_json
             _box_payload: Dict[str, Any] = {
                 "job_id": session.state_manager.job_dir.name,
                 "center": current["center"],
                 "box_size": current["box_size"],
                 "source": "interactive_update",
             }
-            _write_json(session.state_manager.job_dir / "docking_box.json", _box_payload)
+            atomic_write_json(session.state_manager.job_dir / "docking_box.json", _box_payload)
             logger.debug("Updated docking_box.json from interactive parameter change.")
 
         return changed_keys
@@ -406,7 +423,8 @@ def _run_interactive_loop(
 
     while session.session_active:
         try:
-            user_input = input("🧬 > ").strip()
+            _prompt = f"🧬 [{session.job_id}] > " if session.has_active_job() else "🧬 > "
+            user_input = input(_prompt).strip()
 
             if not user_input:
                 continue
@@ -485,7 +503,17 @@ def _run_interactive_loop(
                 continue
 
             if intent == "use_pymol_box":
-                print("\U0001f52c PyMOL box selection coming in Phase 6.")
+                print("PyMOL box selection is not available (Phase 6 was skipped).")
+                print("Set coordinates manually: 'set center to x,y,z' and 'set box size to x,y,z'.")
+                continue
+
+            if intent == "visualize_in_pymol":
+                if session.last_results and "visualize" in (session.last_results.get("services_executed") or []):
+                    _integrate_with_pymol_interactive(session.last_results)
+                elif session.last_results:
+                    print("Visualization was not part of this workflow. Include 'visualize' in your next request.")
+                else:
+                    print("No workflow results available to load into PyMOL.")
                 continue
 
             # No recognised intent — if there's an active job, we don't know
@@ -866,27 +894,12 @@ def _create_box_via_live_pymol(
     base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
     no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
 
-    def _service_healthy() -> bool:
-        try:
-            response = requests.get(f"{base_url}/health", timeout=5)
-            if response.status_code != 200:
-                return False
-
-            try:
-                payload = response.json()
-            except ValueError:
-                return False
-
-            return payload.get("pymol_rpc") is True
-        except requests.RequestException:
-            return False
-
     # Ensure PyMOL Interactive is available.
-    healthy = _service_healthy()
+    healthy = _pymol_rpc_healthy(base_url)
     if not healthy and not _is_running_in_container():
         if _try_start_pymol_interactive_service():
             for _ in range(30):
-                if _service_healthy():
+                if _pymol_rpc_healthy(base_url):
                     healthy = True
                     break
                 time.sleep(1)
@@ -1142,20 +1155,13 @@ def _integrate_with_pymol_interactive(results: dict) -> None:
     no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
     job_id = results.get("job_id")
 
-    def _service_healthy() -> bool:
-        try:
-            response = requests.get(f"{base_url}/health", timeout=5)
-            return response.status_code == 200
-        except requests.RequestException:
-            return False
-
-    healthy = _service_healthy()
+    healthy = _pymol_rpc_healthy(base_url)
     if not healthy:
         started = False
         if not _is_running_in_container():
             started = _try_start_pymol_interactive_service()
             if started:
-                healthy = _service_healthy()
+                healthy = _pymol_rpc_healthy(base_url)
 
         if not healthy:
             print("\nℹ️  Visualization is ready, but pymol_interactive is not reachable.")

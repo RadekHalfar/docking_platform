@@ -251,41 +251,21 @@ class MoldinaRunner:
             ligands_wsl = [os.path.abspath(lig) for lig in ligand_paths]
             output_dir_wsl = os.path.abspath(output_dir)
         
-        # Create ligands list file (one ligand per line)
-        ligands_list_path = os.path.join(output_dir, "ligands.txt")
-        with open(ligands_list_path, 'w') as f:
-            for ligand_wsl in ligands_wsl:
-                f.write(f"{ligand_wsl}\n")
-        
-        if self.is_windows:
-            ligands_list_wsl = self._windows_path_to_wsl(ligands_list_path)
-        else:
-            ligands_list_wsl = os.path.abspath(ligands_list_path)
-        
-        # Prepare output path prefix (Moldina will append "_ligandname_out.pdbqt")
-        # The out parameter should be a path prefix, e.g., "/path/to/dir/result"
-        # Moldina will create files like: "/path/to/dir/result_ATP_out.pdbqt"
+        # Prepare output path
         output_prefix = os.path.join(output_dir, "docking_output.pdbqt")
-        
         if self.is_windows:
             output_prefix_wsl = self._windows_path_to_wsl(output_prefix)
         else:
             output_prefix_wsl = os.path.abspath(output_prefix)
         
-        # Create config file with ligands parameter
-        config_path = os.path.join(output_dir, "moldina_config.txt")
-        config_content = f"""receptor = {receptor_wsl}
-ligands = {ligands_list_wsl}
-out = {output_prefix_wsl}
-center_x = {center[0]}
+        # Config file contains only box/center parameters (new Moldina interface)
+        config_path = os.path.join(output_dir, "center.txt")
+        config_content = f"""center_x = {center[0]}
 center_y = {center[1]}
 center_z = {center[2]}
 size_x = {box_size[0]}
 size_y = {box_size[1]}
 size_z = {box_size[2]}
-energy_range = {energy_range}
-num_modes = {num_modes}
-search_alg_PSO = 1
 """
         
         with open(config_path, 'w') as f:
@@ -294,18 +274,40 @@ search_alg_PSO = 1
         if self.is_windows:
             config_wsl = self._windows_path_to_wsl(config_path)
         else:
-            # Convert to absolute path for Linux/Docker
             config_wsl = os.path.abspath(config_path)
         
         logger.info(f"Running Moldina docking for {len(ligand_paths)} ligands")
         
-        # Build Moldina command - run once with config file that includes all ligands
+        # Build Moldina command — all parameters passed as flags, ligands via repeated --ligand args
         moldina_cmd = [
             self.moldina_path,
+            '--receptor', receptor_wsl,
+            '--ligand', *ligands_wsl,
             '--config', config_wsl,
+            '--out', output_prefix_wsl,
             '--cpu', str(cpu),
-            '--population', str(population)
+            '--population', str(population),
+            '--exhaustiveness', str(exhaustiveness),
+            '--num_modes', str(num_modes),
+            '--energy_range', str(energy_range),
+            '--search_alg_PSO',
         ]
+        
+        # Save parameters summary
+        params_path = os.path.join(output_dir, "parameters.txt")
+        with open(params_path, 'w') as f:
+            f.write("# Moldina run parameters\n")
+            f.write(f"receptor = {receptor_wsl}\n")
+            for lig in ligands_wsl:
+                f.write(f"ligand = {lig}\n")
+            f.write(f"config = {config_wsl}\n")
+            f.write(f"out = {output_prefix_wsl}\n")
+            f.write(f"cpu = {cpu}\n")
+            f.write(f"population = {population}\n")
+            f.write(f"exhaustiveness = {exhaustiveness}\n")
+            f.write(f"num_modes = {num_modes}\n")
+            f.write(f"energy_range = {energy_range}\n")
+            f.write(f"search_alg_PSO\n")
         
         try:
             # Run Moldina
@@ -344,6 +346,7 @@ search_alg_PSO = 1
                 "failed": len(ligand_paths) - len(results),
                 "results": results,
                 "config_file": config_path,
+                "parameters_file": params_path,
                 "output_dir": output_dir,
                 "log_file": log_file
             }

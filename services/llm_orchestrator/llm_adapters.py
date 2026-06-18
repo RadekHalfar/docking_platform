@@ -4,6 +4,7 @@ LLM adapters.
 Contains provider-specific implementations of the shared LLM interface.
 """
 import logging
+import json
 from typing import Optional
 
 import requests
@@ -20,6 +21,7 @@ class OllamaAdapter(BaseLLMClient):
         super().__init__(endpoint=endpoint, model=model, api_key=api_key)
         self.generate_url = f"{self.endpoint}/api/generate"
         self.tags_url = f"{self.endpoint}/api/tags"
+        self.pull_url = f"{self.endpoint}/api/pull"
 
     def check_health(self) -> bool:
         """Check if Ollama endpoint is reachable."""
@@ -50,6 +52,17 @@ class OllamaAdapter(BaseLLMClient):
             response.raise_for_status()
             result = response.json()
             return result.get("response", "")
+        except requests.HTTPError as e:
+            response = getattr(e, "response", None)
+            if response is not None and response.status_code == 404 and not self._model_available():
+                logger.info(f"Model {self.model} not found in Ollama; pulling it now")
+                self._pull_model()
+                retry_response = requests.post(self.generate_url, json=payload, timeout=120)
+                retry_response.raise_for_status()
+                result = retry_response.json()
+                return result.get("response", "")
+            logger.error(f"Ollama API error: {e}")
+            raise RuntimeError(f"Failed to generate response: {e}")
         except requests.RequestException as e:
             logger.error(f"Ollama API error: {e}")
             raise RuntimeError(f"Failed to generate response: {e}")
@@ -64,3 +77,20 @@ class OllamaAdapter(BaseLLMClient):
         except requests.RequestException as e:
             logger.error(f"Failed to list models: {e}")
             return []
+
+    def _model_available(self) -> bool:
+        return self.model in self.list_models()
+
+    def _pull_model(self) -> None:
+        """Pull the configured model into the Ollama instance."""
+        payload = {"name": self.model, "stream": True}
+        try:
+            response = requests.post(self.pull_url, json=payload, stream=True, timeout=600)
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                json.loads(line)
+        except requests.RequestException as e:
+            logger.error(f"Failed to pull Ollama model {self.model}: {e}")
+            raise RuntimeError(f"Failed to pull Ollama model {self.model}: {e}")

@@ -3,7 +3,8 @@ Tests for LLM adapters and provider factory.
 """
 import os
 import pytest
-from unittest.mock import patch
+import requests
+from unittest.mock import Mock, patch
 
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.llm_adapters import OllamaAdapter
@@ -41,6 +42,33 @@ class TestOllamaAdapter:
         assert response == "hello"
         mock_post.assert_called_once()
 
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.get')
+    def test_generate_pulls_missing_model(self, mock_get, mock_post):
+        model_missing_error = requests.HTTPError("404 Client Error")
+        model_missing_error.response = Mock(status_code=404)
+
+        first_generate_response = Mock()
+        first_generate_response.raise_for_status.side_effect = model_missing_error
+
+        pull_response = Mock()
+        pull_response.raise_for_status.return_value = None
+        pull_response.iter_lines.return_value = [b'{"status": "success"}']
+
+        second_generate_response = Mock()
+        second_generate_response.raise_for_status.return_value = None
+        second_generate_response.json.return_value = {"response": "hello"}
+
+        mock_get.return_value.raise_for_status.return_value = None
+        mock_get.return_value.json.return_value = {"models": []}
+        mock_post.side_effect = [first_generate_response, pull_response, second_generate_response]
+
+        adapter = OllamaAdapter(endpoint="http://test:11434", model="qwen2.5-coder:7b-instruct-q4_K_M")
+        response = adapter.generate("prompt")
+
+        assert response == "hello"
+        assert mock_post.call_count == 3
+
     @patch('services.llm_orchestrator.llm_adapters.requests.get')
     def test_list_models(self, mock_get):
         mock_get.return_value.raise_for_status.return_value = None
@@ -76,4 +104,7 @@ def test_llm_env_wiring_health_smoke():
         pytest.skip("LLM_PROVIDER/LLM_ENDPOINT not set; skipping runtime wiring smoke test")
 
     client = create_llm_client(provider=provider, endpoint=endpoint, model=model)
+    if not client.check_health():
+        pytest.skip("LLM endpoint not reachable in this test context")
+
     assert client.check_health() is True

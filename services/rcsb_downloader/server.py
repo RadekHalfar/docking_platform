@@ -18,10 +18,18 @@ class RCSBDownloaderServer(MCPServer):
     
     def setup_tools(self):
         """Register the download_structures tool."""
+
+        def search_ligands_handler(name: str, max_results: int = 10) -> dict:
+            """Handler for search_ligands tool."""
+            return {
+                "query": name,
+                "candidates": self.downloader.search_ligands(name=name, max_results=max_results),
+            }
         
         def download_structures_handler(
             protein_id: str,
             ligand_ids: list = None,
+            enable_name_resolution: bool = False,
             formats: dict = None,
             save_dir: str = "./data"
         ) -> dict:
@@ -29,9 +37,25 @@ class RCSBDownloaderServer(MCPServer):
             return self.downloader.download_structures(
                 protein_id=protein_id,
                 ligand_ids=ligand_ids,
+                enable_name_resolution=enable_name_resolution,
                 formats=formats,
                 save_dir=save_dir
             )
+
+        register_mcp_tool(
+            self,
+            name="search_ligands",
+            description="Search RCSB ligands by common name and return ranked component ID candidates",
+            handler=search_ligands_handler,
+            parameters=build_tool_parameters([
+                ("name", "string", "Ligand search text (e.g., 'aspirin')", True),
+                ("max_results", "number", "Maximum number of candidates to return (default: 10)"),
+            ]),
+            returns={
+                "query": "string",
+                "candidates": "array",
+            },
+        )
         
         register_mcp_tool(
             self,
@@ -40,7 +64,8 @@ class RCSBDownloaderServer(MCPServer):
             handler=download_structures_handler,
             parameters=build_tool_parameters([
                 ("protein_id", "string", "PDB identifier (4 characters, e.g., '1ABC')", True),
-                ("ligand_ids", "array", "List of ligand identifiers (e.g., ['ATP', 'HEM'])"),
+                ("ligand_ids", "array", "List of ligand identifiers or names (e.g., ['ATP', 'HEM', 'aspirin'])"),
+                ("enable_name_resolution", "boolean", "Resolve ligand names to chem_comp IDs via RCSB search (default: false; use search_ligands + user selection for interactive flow)"),
                 ("formats", "object", "File formats: {'protein': 'pdb'|'cif', 'ligand': 'sdf'|'mol'}"),
                 ("save_dir", "string", "Directory to save downloaded files"),
             ]),

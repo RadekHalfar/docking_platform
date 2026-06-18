@@ -9,6 +9,7 @@ import logging
 import argparse
 import subprocess
 import time
+import re
 import requests
 from datetime import datetime, timezone
 from typing import Optional, List, Callable, Dict, Any, Set
@@ -104,6 +105,7 @@ def _print_interactive_help() -> None:
     print("  - new <request>              # Start a fresh workflow in current session")
     print("  - change ligand to HEM       # Update parameters (natural language)")
     print("  - set center to 10,20,30     # Update docking box center")
+    print("  - search ligand aspirin       # Search RCSB ligands by name and choose one")
     print("  - state / show state         # Show active job state from disk")
     print("  - end / quit / exit          # End session")
     print("  - help                       # Show this help")
@@ -163,6 +165,167 @@ def _handle_update_parameters(
     else:
         print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
         return set()
+
+
+def _handle_search_ligand(
+    orchestrator: WorkflowOrchestrator,
+    session: "InteractiveSession",
+    query_name: Optional[str],
+) -> bool:
+    """Search ligands by name, let user select one, and store it in session parameters."""
+    if session.state_manager is None:
+        print("No active workflow state found. Start a workflow first.")
+        return False
+
+    query = (query_name or "").strip()
+    if not query:
+        query = input("Ligand name to search: ").strip()
+    if not query:
+        print("No search query provided.")
+        return False
+
+    try:
+        result = orchestrator.call_mcp_tool(
+            orchestrator.services["rcsb_downloader"],
+            "search_ligands",
+            {"name": query, "max_results": 10},
+        )
+    except Exception as exc:
+        print(f"❌ Ligand search failed: {exc}")
+        return False
+
+    candidates = result.get("candidates", []) if isinstance(result, dict) else []
+    if not candidates:
+        print(f"No ligands found for '{query}'.")
+        return False
+
+    print(f"\nFound {len(candidates)} ligand candidate(s) for '{query}':")
+    for idx, cand in enumerate(candidates, start=1):
+        comp_id = str(cand.get("component_id", "")).strip() or "?"
+        name = str(cand.get("name", "")).strip() or "(no name)"
+        score = cand.get("score")
+        score_text = f" score={score:.3f}" if isinstance(score, (int, float)) else ""
+        print(f"  {idx}. {comp_id} - {name}{score_text}")
+
+    selection = input(
+        "Choose ligand by index or component ID (blank to cancel): "
+    ).strip()
+    if not selection:
+        print("Search cancelled.")
+        return False
+
+    selected_id: Optional[str] = None
+    if selection.isdigit():
+        index = int(selection)
+        if 1 <= index <= len(candidates):
+            selected_id = str(candidates[index - 1].get("component_id", "")).strip().upper() or None
+    else:
+        selected_id = selection.upper()
+
+    if not selected_id:
+        print("Invalid ligand selection.")
+        return False
+
+    latest = session.state_manager.load_latest_parameters() or {}
+    latest["ligand_ids"] = [selected_id]
+    session.state_manager.save_parameters_checkpoint(latest, source="search_ligand")
+    session.pending_changed_params |= {"ligand_ids"}
+
+    print(f"✅ Selected ligand: {selected_id}")
+    print("Type 'rerun' to continue workflow with the selected ligand.")
+    return True
+
+
+def _is_probable_chem_comp_id(value: str) -> bool:
+    """Return True when *value* resembles an RCSB chem_comp identifier."""
+    token = (value or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9]{1,4}", token))
+
+
+def _search_and_select_ligand_id(
+    orchestrator: WorkflowOrchestrator,
+    query_name: str,
+) -> Optional[str]:
+    """Search ligands by name and return a selected component ID."""
+    query = (query_name or "").strip()
+    if not query:
+        return None
+
+    try:
+        result = orchestrator.call_mcp_tool(
+            orchestrator.services["rcsb_downloader"],
+            "search_ligands",
+            {"name": query, "max_results": 10},
+        )
+    except Exception as exc:
+        print(f"❌ Ligand search failed for '{query}': {exc}")
+        return None
+
+    candidates = result.get("candidates", []) if isinstance(result, dict) else []
+    if not candidates:
+        print(f"No ligands found for '{query}'.")
+        return None
+
+    print(f"\nFound {len(candidates)} ligand candidate(s) for '{query}':")
+    for idx, cand in enumerate(candidates, start=1):
+        comp_id = str(cand.get("component_id", "")).strip() or "?"
+        name = str(cand.get("name", "")).strip() or "(no name)"
+        score = cand.get("score")
+        score_text = f" score={score:.3f}" if isinstance(score, (int, float)) else ""
+        print(f"  {idx}. {comp_id} - {name}{score_text}")
+
+    selection = input(
+        "Choose ligand by index or component ID (blank to cancel workflow): "
+    ).strip()
+    if not selection:
+        return None
+
+    if selection.isdigit():
+        idx = int(selection)
+        if 1 <= idx <= len(candidates):
+            return str(candidates[idx - 1].get("component_id", "")).strip().upper() or None
+        return None
+
+    return selection.upper()
+
+
+def _auto_resolve_named_ligands_for_workflow(
+    orchestrator: WorkflowOrchestrator,
+    workflow: Dict[str, Any],
+) -> bool:
+    """Resolve non-code ligand tokens via mandatory interactive search-and-selection."""
+    params = workflow.get("parameters", {}) if isinstance(workflow, dict) else {}
+    ligands = params.get("ligand_ids")
+    if not isinstance(ligands, list) or not ligands:
+        return True
+
+    tokens = [str(x).strip() for x in ligands if str(x).strip()]
+    unresolved_names = [tok for tok in tokens if not _is_probable_chem_comp_id(tok)]
+    if not unresolved_names:
+        return True
+
+    name_to_selected: Dict[str, str] = {}
+    for ligand_name in unresolved_names:
+        key = ligand_name.lower()
+        if key in name_to_selected:
+            continue
+
+        print(
+            f"\nDetected ligand name '{ligand_name}' in workflow input. "
+            "You must choose a specific RCSB ligand before execution."
+        )
+        selected = _search_and_select_ligand_id(orchestrator, ligand_name)
+        if not selected:
+            print("Workflow cancelled: ligand selection was not completed.")
+            return False
+        name_to_selected[key] = selected
+
+    params["ligand_ids"] = [
+        tok.upper() if _is_probable_chem_comp_id(tok) else name_to_selected[tok.lower()]
+        for tok in tokens
+    ]
+    workflow["parameters"] = params
+    return True
 
 
 def _execute_partial_rerun(
@@ -479,6 +642,23 @@ def _run_interactive_loop(
                 if changed:
                     session.pending_changed_params |= changed
                     print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
+                continue
+
+            if intent == "search_ligand":
+                applied = _handle_search_ligand(
+                    orchestrator=orchestrator,
+                    session=session,
+                    query_name=(intent_result or {}).get("name"),
+                )
+                if applied and _ask_yes_no("Continue now with rerun of affected steps? [Y/n]: ", default_yes=True):
+                    original = (session.last_results or {}).get("services_executed", [])
+                    if original:
+                        _execute_partial_rerun(
+                            session,
+                            orchestrator,
+                            changed_params=session.pending_changed_params or {"ligand_ids"},
+                        )
+                        session.pending_changed_params = set()
                 continue
 
             if intent == "rerun_steps":
@@ -1218,6 +1398,10 @@ def process_workflow(
         # Validate and enrich
         print("✅ Validating workflow...")
         workflow = parser_obj.validate_workflow(parsed)
+
+        if not _auto_resolve_named_ligands_for_workflow(orchestrator, workflow):
+            return 1
+        parser_obj.validate_workflow(workflow)
 
         # Persist workflow parameters immediately after parsing/validation.
         shared_job_id = generate_job_id()

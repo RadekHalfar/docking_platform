@@ -33,8 +33,8 @@ RUN wget https://github.com/conda-forge/miniforge/releases/latest/download/Minif
     ln -s /opt/conda/bin/pymol /usr/local/bin/pymol && \
     /opt/conda/bin/conda clean -afy
 
-# Add conda to PATH (so python runs conda's python with pymol and flask)
-ENV PATH="/opt/conda/bin:${PATH}"
+# Keep system Python first (base image has app deps), while still exposing conda tools.
+ENV PATH="${PATH}:/opt/conda/bin"
 
 # Verify PyMOL installation
 RUN pymol -c -e "quit" || echo "PyMOL installed successfully"
@@ -56,4 +56,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Wrap command with xvfb-run for headless rendering
 # This creates a virtual display that PyMOL can use
-CMD ["sh", "-c", "xvfb-run -a python -m services.pymol_visualizer.server --host 0.0.0.0 --port 8005 --pymol-path /usr/local/bin/pymol"]
+CMD ["sh", "-c", "xvfb-run -a /usr/local/bin/python -m services.pymol_visualizer.server --host 0.0.0.0 --port 8005 --pymol-path /usr/local/bin/pymol"]

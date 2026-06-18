@@ -223,6 +223,7 @@ class WorkflowOrchestrator:
                     {
                         "protein_id": params["protein_id"],
                         "ligand_ids": params.get("ligand_ids", []),
+                        "enable_name_resolution": False,
                         "formats": params.get("formats", {"protein": "pdb", "ligand": "sdf"}),
                         "save_dir": self.normalize_path(download_dir)
                     }

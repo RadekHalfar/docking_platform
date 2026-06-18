@@ -10,6 +10,7 @@ Tool: download_structures
 - Returns local file paths and metadata
 """
 import os
+import re
 import logging
 import requests
 from pathlib import Path
@@ -35,6 +36,7 @@ class RCSBDownloader:
     
     BASE_URL = "https://files.rcsb.org/download"
     LIGAND_URL = "https://files.rcsb.org/ligands/view"
+    SEARCH_URL = os.getenv("RCSB_SEARCH_URL", "https://search.rcsb.org/rcsbsearch/v2/query")
     
     def __init__(self, cache_dir: Optional[str] = None):
         """
@@ -44,8 +46,154 @@ class RCSBDownloader:
             cache_dir: Directory to cache downloaded files
         """
         self.cache_dir = cache_dir
+        self._ligand_name_cache: Dict[str, List[Dict[str, Any]]] = {}
         if cache_dir:
             ensure_directory(cache_dir)
+
+    @staticmethod
+    def _is_probable_chem_comp_id(value: str) -> bool:
+        """Return True when *value* looks like an RCSB chemical component ID."""
+        if not value:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9]{1,4}", value.strip()))
+
+    def search_ligands(self, name: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Search RCSB chemical components by ligand common name.
+
+        Returns a ranked list of candidates with component IDs and scores.
+        """
+        query = (name or "").strip()
+        if not query:
+            return []
+
+        cache_key = query.lower()
+        if cache_key in self._ligand_name_cache:
+            return self._ligand_name_cache[cache_key][:max_results]
+
+        rows = max(1, min(int(max_results or 10), 50))
+        payload_candidates = [
+            {
+                "query": {
+                    "type": "group",
+                    "logical_operator": "or",
+                    "nodes": [
+                        {
+                            "type": "terminal",
+                            "service": "text",
+                            "parameters": {
+                                "attribute": "chem_comp.name",
+                                "operator": "contains_phrase",
+                                "value": query,
+                            },
+                        },
+                        {
+                            "type": "terminal",
+                            "service": "text",
+                            "parameters": {
+                                "attribute": "chem_comp.pdbx_synonyms",
+                                "operator": "contains_phrase",
+                                "value": query,
+                            },
+                        },
+                    ],
+                },
+                "return_type": "chem_comp",
+                "request_options": {
+                    "paginate": {"start": 0, "rows": rows},
+                },
+            },
+            {
+                "query": {
+                    "type": "group",
+                    "logical_operator": "or",
+                    "nodes": [
+                        {
+                            "type": "terminal",
+                            "service": "text_chem",
+                            "parameters": {
+                                "attribute": "chem_comp.name",
+                                "operator": "contains_phrase",
+                                "value": query,
+                            },
+                        },
+                        {
+                            "type": "terminal",
+                            "service": "text_chem",
+                            "parameters": {
+                                "attribute": "chem_comp.pdbx_synonyms",
+                                "operator": "contains_phrase",
+                                "value": query,
+                            },
+                        },
+                    ],
+                },
+                "return_type": "chem_comp",
+                "request_options": {
+                    "paginate": {"start": 0, "rows": rows},
+                },
+            },
+            {
+                "query": {
+                    "type": "terminal",
+                    "service": "text",
+                    "parameters": {
+                        "attribute": "chem_comp.name",
+                        "operator": "contains_words",
+                        "value": query,
+                    },
+                },
+                "return_type": "chem_comp",
+                "request_options": {
+                    "paginate": {"start": 0, "rows": rows},
+                },
+            },
+        ]
+
+        data: Optional[Dict[str, Any]] = None
+        last_error: Optional[str] = None
+        for payload in payload_candidates:
+            try:
+                response = requests.post(self.SEARCH_URL, json=payload, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except requests.RequestException as e:
+                body = ""
+                if getattr(e, "response", None) is not None:
+                    body = (e.response.text or "")[:400]
+                last_error = f"{e}; response={body}" if body else str(e)
+
+        if data is None:
+            raise RuntimeError(f"Failed to search ligands for '{query}': {last_error or 'unknown error'}")
+
+        candidates: List[Dict[str, Any]] = []
+        for entry in data.get("result_set", []):
+            identifier = str(entry.get("identifier", "")).strip().upper()
+            if not identifier:
+                continue
+            candidates.append(
+                {
+                    "component_id": identifier,
+                    "name": identifier,
+                    "score": entry.get("score"),
+                }
+            )
+
+        self._ligand_name_cache[cache_key] = candidates
+        return candidates[:rows]
+
+    def resolve_ligand_name(self, ligand_name: str) -> Optional[str]:
+        """Resolve a ligand name to the top-ranked RCSB chemical component ID."""
+        token = (ligand_name or "").strip()
+        if not token:
+            return None
+        if self._is_probable_chem_comp_id(token):
+            return token.upper()
+
+        candidates = self.search_ligands(token, max_results=1)
+        if not candidates:
+            return None
+        return str(candidates[0].get("component_id", "")).upper() or None
     
     def download_protein(
         self,
@@ -221,6 +369,7 @@ class RCSBDownloader:
         self,
         protein_id: str,
         ligand_ids: Optional[List[str]] = None,
+        enable_name_resolution: bool = False,
         formats: Optional[Dict[str, str]] = None,
         save_dir: str = "./data"
     ) -> Dict[str, Any]:
@@ -232,6 +381,7 @@ class RCSBDownloader:
         Args:
             protein_id: PDB identifier
             ligand_ids: List of ligand identifiers (optional)
+            enable_name_resolution: Resolve ligand names via RCSB search when not chem_comp-like IDs (disabled by default)
             formats: Dict with 'protein' and 'ligand' format specs
             save_dir: Base directory to save files
             
@@ -243,6 +393,27 @@ class RCSBDownloader:
         
         protein_format = formats.get("protein", "pdb")
         ligand_format = formats.get("ligand", "sdf")
+
+        resolved_ligands: List[str] = []
+        for ligand_id in ligand_ids:
+            token = str(ligand_id).strip()
+            if not token:
+                continue
+
+            if enable_name_resolution and not self._is_probable_chem_comp_id(token):
+                try:
+                    resolved = self.resolve_ligand_name(token)
+                except RuntimeError as exc:
+                    logger.warning(f"Ligand name resolution failed for '{token}': {exc}")
+                    resolved = None
+                if resolved:
+                    logger.info(f"Resolved ligand '{token}' to component ID '{resolved}'")
+                    resolved_ligands.append(resolved)
+                else:
+                    logger.warning(f"Could not resolve ligand name '{token}', using literal token")
+                    resolved_ligands.append(token)
+            else:
+                resolved_ligands.append(token.upper() if self._is_probable_chem_comp_id(token) else token)
         
         # Download protein
         protein_result = self.download_protein(
@@ -251,7 +422,7 @@ class RCSBDownloader:
         
         # Download ligands
         ligand_results = []
-        for ligand_id in ligand_ids:
+        for ligand_id in resolved_ligands:
             try:
                 ligand_result = self.download_ligand(
                     ligand_id, save_dir, ligand_format

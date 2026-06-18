@@ -213,3 +213,58 @@ def test_download_structures_partial_ligand_failure(downloader, tmp_path, sample
         
         # Only one ligand should be downloaded
         assert len(result["ligand_paths"]) == 1
+
+
+def test_search_ligands_success(downloader):
+    """Test ligand name search returns ranked candidates."""
+    payload = {
+        "result_set": [
+            {"identifier": "ASP", "score": 1.0},
+            {"identifier": "AIN", "score": 0.8},
+        ]
+    }
+    with patch("services.rcsb_downloader.requests.post") as mock_post:
+        mock_resp = Mock()
+        mock_resp.json.return_value = payload
+        mock_resp.raise_for_status = Mock()
+        mock_post.return_value = mock_resp
+
+        result = downloader.search_ligands("aspirin", max_results=5)
+
+        assert len(result) == 2
+        assert result[0]["component_id"] == "ASP"
+        assert result[1]["component_id"] == "AIN"
+
+
+def test_search_ligands_request_failure_raises(downloader):
+    """Test search errors are surfaced as RuntimeError."""
+    with patch("services.rcsb_downloader.requests.post") as mock_post:
+        mock_post.side_effect = requests.RequestException("timeout")
+        with pytest.raises(RuntimeError, match="Failed to search ligands"):
+            downloader.search_ligands("aspirin")
+
+
+def test_download_structures_resolves_name_when_enabled(downloader, tmp_path, sample_pdb_content, sample_sdf_content):
+    """Common ligand names should resolve to chem_comp IDs before download."""
+
+    def mock_get(url, timeout=None):
+        mock_resp = Mock()
+        if url.endswith(".pdb"):
+            mock_resp.content = sample_pdb_content
+        else:
+            mock_resp.content = sample_sdf_content
+        mock_resp.raise_for_status = Mock()
+        return mock_resp
+
+    with patch("services.rcsb_downloader.requests.get", side_effect=mock_get):
+        with patch.object(downloader, "resolve_ligand_name", return_value="AIN") as mock_resolve:
+            result = downloader.download_structures(
+                protein_id="1ABC",
+                ligand_ids=["aspirin"],
+                enable_name_resolution=True,
+                save_dir=str(tmp_path / "resolved"),
+            )
+
+            mock_resolve.assert_called_once_with("aspirin")
+            assert len(result["ligand_paths"]) == 1
+            assert result["ligand_paths"][0].endswith("AIN.sdf")

@@ -26,6 +26,8 @@ from services.llm_orchestrator.workflow_llm_parser import (
         ("new Download 6lu7 and dock ATP", "new_workflow", None),
         ("rerun", "rerun_steps", None),
         ("rerun docking", "rerun_steps", None),
+        ("search ligand aspirin", "search_ligand", "aspirin"),
+        ("find ligand named ibuprofen", "search_ligand", "ibuprofen"),
     ],
 )
 def test_classify_deterministic_intents(llm_client, command, expected_intent, expected_name):

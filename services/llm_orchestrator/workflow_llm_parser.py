@@ -23,7 +23,7 @@ Extract the following:
 
 2. Parameters:
    - protein_id (4-character PDB ID)
-   - ligand_ids (list of ligand names - CRITICAL: If user specifies multiple copies of the same ligand, you MUST duplicate the ligand ID in the array!)
+    - ligand_ids (list of ligand identifiers or ligand names - CRITICAL: If user specifies multiple copies of the same ligand, you MUST duplicate the ligand ID in the array!)
    - center (docking box center [x, y, z])
    - box_size (docking box dimensions [x, y, z])
    - ph (pH value, default 7.4)
@@ -173,7 +173,7 @@ def generate_llm_follow_up_question(
             return "The protein PDB ID looks invalid. Please provide a valid 4-character ID (e.g., 6lu7):"
         return "I am missing the protein PDB ID. Please provide it (e.g., 6lu7):"
     if current_param == "ligand_ids":
-        return "I am missing ligand IDs. Please provide comma-separated IDs (e.g., ATP,HEM):"
+        return "I am missing ligand IDs or names. Please provide comma-separated values (e.g., ATP,HEM,aspirin):"
     if current_param == "center":
         return "Please provide docking box center as x,y,z (e.g., 10,20,30):"
     if current_param == "box_size":
@@ -288,6 +288,7 @@ def extract_box_source_choice_with_llm(
 
 _SESSION_INTENTS = frozenset({
     "new_workflow",
+    "search_ligand",
     "update_parameters",
     "use_pymol_box",
     "rerun_steps",
@@ -304,6 +305,7 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "You classify follow-up commands inside an active molecular docking session. "
     "The session already has a running job. Classify the user's intent to exactly one of these values:\n"
     "- new_workflow: user wants to start a completely new workflow or switch to a different protein/job\n"
+    "- search_ligand: user wants to search ligand candidates by common name before choosing one\n"
     "- update_parameters: user wants to change one or more docking parameters (ligand, center, box size, etc.)\n"
     "- use_pymol_box: user wants to use interactive PyMOL to define the docking box\n"
     "- rerun_steps: user explicitly asks to rerun a docking or preparation step\n"
@@ -316,6 +318,7 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "- unknown: the intent does not match any of the above\n\n"
     'Return JSON only with this exact shape: {"intent": "<intent_name>", "name": null, "scope": "all"}. '
     "For save_results, set name to the save target name if the user provided one, else null. "
+    "For search_ligand, set name to the ligand query string to search (for example 'aspirin'). "
     "For save_results, set scope to 'docking' when only docking results are requested, "
     "'visualization' when only visualization is requested, else 'all'. "
     "For undo_revision, set name to the revision number string if provided, else null. "
@@ -382,6 +385,15 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
 
     if re.match(r"^new\s+\S", text, re.IGNORECASE):
         return {"intent": "new_workflow", "name": None}
+
+    search_match = re.match(
+        r"^(?:search|find|lookup)\s+(?:for\s+)?(?:a\s+)?(?:ligand\s+)?(?:named\s+)?(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if search_match:
+        query = search_match.group(1).strip()
+        return {"intent": "search_ligand", "name": query or None}
 
     if re.match(r"^(rerun|run|dock|execute)\b", t):
         return {"intent": "rerun_steps", "name": None}

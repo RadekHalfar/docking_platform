@@ -407,6 +407,94 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
     assert legacy_called["value"] is True
 
 
+def test_process_workflow_auto_resolves_named_ligands(monkeypatch, tmp_path, llm_client):
+    """Named ligands in normal workflow input should trigger search+selection before execution."""
+    parsed = {
+        "services": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_ids": ["aspirin", "aspirin"],
+            "center": [10.0, 10.0, 10.0],
+            "box_size": [25.0, 25.0, 25.0],
+        },
+        "missing_required": [],
+    }
+
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *_args, **_kwargs: parsed)
+
+    orchestrator = Mock()
+    orchestrator.output_base = Path(tmp_path)
+    orchestrator.services = {"rcsb_downloader": "http://rcsb-downloader:8001"}
+    orchestrator.call_mcp_tool.return_value = {
+        "query": "aspirin",
+        "candidates": [
+            {"component_id": "AIN", "name": "AIN", "score": 0.95},
+            {"component_id": "ASP", "name": "ASP", "score": 0.72},
+        ],
+    }
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_1",
+        "status": "completed",
+        "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        "errors": [],
+    }
+
+    answers = iter(["1", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+    monkeypatch.setattr(cli, "_integrate_with_pymol_interactive", lambda _results: None)
+
+    parser_obj = WorkflowParser()
+    result = cli.process_workflow(
+        "Download 6lu7 and two ligands for aspirin, prepare and dock and show visualization with center (10,10,10) and box size (25,25,25)",
+        llm_client,
+        orchestrator,
+        parser_obj,
+    )
+
+    assert result == 0
+    orchestrator.call_mcp_tool.assert_called_once()
+    workflow_arg = orchestrator.execute_workflow.call_args.args[0]
+    assert workflow_arg["parameters"]["ligand_ids"] == ["AIN", "AIN"]
+
+
+def test_process_workflow_cancels_when_named_ligand_not_selected(monkeypatch, tmp_path, llm_client):
+    """Workflow should stop if required ligand selection is cancelled."""
+    parsed = {
+        "services": ["download", "dock"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_ids": ["aspirin"],
+            "center": [10.0, 10.0, 10.0],
+            "box_size": [25.0, 25.0, 25.0],
+        },
+        "missing_required": [],
+    }
+
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *_args, **_kwargs: parsed)
+
+    orchestrator = Mock()
+    orchestrator.output_base = Path(tmp_path)
+    orchestrator.services = {"rcsb_downloader": "http://rcsb-downloader:8001"}
+    orchestrator.call_mcp_tool.return_value = {
+        "query": "aspirin",
+        "candidates": [{"component_id": "AIN", "name": "AIN", "score": 0.95}],
+    }
+
+    # Cancel at ligand selection prompt.
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    parser_obj = WorkflowParser()
+    result = cli.process_workflow(
+        "Download 6lu7 and aspirin and dock with center 10,10,10 and box size 25,25,25",
+        llm_client,
+        orchestrator,
+        parser_obj,
+    )
+
+    assert result == 1
+    orchestrator.execute_workflow.assert_not_called()
+
+
 def test_create_box_via_live_pymol_requires_rpc_ready(monkeypatch, tmp_path, capsys):
     orchestrator = Mock()
     orchestrator.execute_workflow.return_value = {
@@ -614,6 +702,36 @@ def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path,
 
     changed = cli._handle_update_parameters("change ligand to ATP", llm_client, session)
     assert changed == set()
+
+
+def test_handle_search_ligand_updates_session_parameters(monkeypatch, tmp_path):
+    """Searching ligands by name should persist selected component ID."""
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_search")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+        source="initial_parse",
+    )
+    session.activate("job_search", state_manager, last_results={"status": "completed", "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock"]})
+
+    orchestrator = Mock()
+    orchestrator.services = {"rcsb_downloader": "http://rcsb-downloader:8001"}
+    orchestrator.call_mcp_tool.return_value = {
+        "query": "aspirin",
+        "candidates": [
+            {"component_id": "AIN", "name": "AIN", "score": 0.95},
+            {"component_id": "ASP", "name": "ASP", "score": 0.76},
+        ],
+    }
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "1")
+
+    applied = cli._handle_search_ligand(orchestrator=orchestrator, session=session, query_name="aspirin")
+
+    assert applied is True
+    params = state_manager.load_latest_parameters()
+    assert params["ligand_ids"] == ["AIN"]
+    assert session.pending_changed_params == {"ligand_ids"}
 
 
 def test_execute_partial_rerun_calls_orchestrator(monkeypatch, tmp_path):

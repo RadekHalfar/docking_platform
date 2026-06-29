@@ -71,34 +71,51 @@ class RCSBDownloader:
             return self._ligand_name_cache[cache_key][:max_results]
 
         rows = max(1, min(int(max_results or 10), 50))
-        payload = {
-            "query": {
-                "type": "terminal",
-                "service": "text_chem",
-                "parameters": {
-                    "attribute": "chem_comp.name",
-                    "operator": "contains_phrase",
-                    "value": query,
+        # Only text_chem service is valid for return_type "chem_comp".
+        # text service + chem_comp return type is rejected with 400 by RCSB.
+        # mol_definition is the documented return_type for CCD searches.
+        # chem_comp is undocumented and causes RCSB to inject a default
+        # sort_by=score that its own schema then rejects with 400.
+        payload_candidates = [
+            {
+                "query": {
+                    "type": "terminal",
+                    "service": "text_chem",
+                    "parameters": {
+                        "attribute": "chem_comp.name",
+                        "operator": "contains_words",
+                        "value": query,
+                    },
                 },
+                "return_type": "mol_definition",
             },
-            "return_type": "mol_definition",
-        }
+            {
+                "query": {
+                    "type": "terminal",
+                    "service": "text_chem",
+                    "parameters": {
+                        "attribute": "chem_comp.name",
+                        "operator": "contains_phrase",
+                        "value": query,
+                    },
+                },
+                "return_type": "mol_definition",
+            },
+        ]
 
         data: Optional[Dict[str, Any]] = None
         last_error: Optional[str] = None
-        try:
-            response = requests.post(self.SEARCH_URL, json=payload, timeout=30)
-            response.raise_for_status()
-            # Handle 204 No Content - valid query but no results
-            if response.status_code == 204:
-                data = {"result_set": []}
-            else:
+        for payload in payload_candidates:
+            try:
+                response = requests.post(self.SEARCH_URL, json=payload, timeout=30)
+                response.raise_for_status()
                 data = response.json()
-        except requests.RequestException as e:
-            body = ""
-            if getattr(e, "response", None) is not None:
-                body = (e.response.text or "")[:400]
-            last_error = f"{e}; response={body}" if body else str(e)
+                break
+            except requests.RequestException as e:
+                body = ""
+                if getattr(e, "response", None) is not None:
+                    body = (e.response.text or "")[:400]
+                last_error = f"{e}; response={body}" if body else str(e)
 
         if data is None:
             raise RuntimeError(f"Failed to search ligands for '{query}': {last_error or 'unknown error'}")

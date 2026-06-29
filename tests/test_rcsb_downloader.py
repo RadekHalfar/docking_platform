@@ -244,6 +244,38 @@ def test_search_ligands_request_failure_raises(downloader):
             downloader.search_ligands("aspirin")
 
 
+def test_search_ligands_http_error_includes_response_body(downloader):
+    """HTTPError messages should include the response body for debugging (M2 split handler)."""
+    with patch("services.rcsb_downloader.requests.post") as mock_post:
+        http_error = requests.HTTPError("400 Bad Request")
+        mock_body = Mock()
+        mock_body.text = "Invalid query syntax from server"
+        http_error.response = mock_body
+
+        resp = Mock()
+        resp.raise_for_status.side_effect = http_error
+        mock_post.return_value = resp
+
+        with pytest.raises(RuntimeError) as exc_info:
+            downloader.search_ligands("aspirin")
+
+        assert "Invalid query syntax from server" in str(exc_info.value)
+        assert "response=" in str(exc_info.value)
+
+
+def test_search_ligands_connection_error_excludes_response_prefix(downloader):
+    """ConnectionError should not add 'response=' to the message (M2 split handler)."""
+    with patch("services.rcsb_downloader.requests.post") as mock_post:
+        mock_post.side_effect = requests.ConnectionError("Connection refused: aspirin")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            downloader.search_ligands("aspirin")
+
+        error_msg = str(exc_info.value)
+        assert "refused" in error_msg
+        assert "response=" not in error_msg
+
+
 def test_download_structures_resolves_name_when_enabled(downloader, tmp_path, sample_pdb_content, sample_sdf_content):
     """Common ligand names should resolve to chem_comp IDs before download."""
 

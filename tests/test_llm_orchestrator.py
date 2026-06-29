@@ -3,9 +3,11 @@ Tests for LLM Orchestrator
 
 Unit and integration tests for natural language workflow orchestration.
 """
+import builtins
 import pytest
 import json
 import platform
+import requests
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -307,6 +309,34 @@ class TestWorkflowParser:
         }
         assert expected_missing.issubset(set(result["missing_required"]))
 
+    def test_update_parameters_clears_multiple_missing_at_once(self):
+        """Updating several missing params in one call should clear all of them (M4 list comprehension)."""
+        parser = WorkflowParser()
+        parser.parsed_workflow = {
+            "services": ["dock"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+            "missing_required": ["center", "box_size"],
+        }
+
+        parser.update_parameters({"center": [10.0, 20.0, 30.0], "box_size": [25.0, 25.0, 25.0]})
+
+        missing = parser.get_missing_parameters()
+        assert "center" not in missing
+        assert "box_size" not in missing
+
+    def test_update_parameters_ignores_keys_not_in_missing(self):
+        """Updating a key not listed in missing_required should leave the list unchanged."""
+        parser = WorkflowParser()
+        parser.parsed_workflow = {
+            "services": ["dock"],
+            "parameters": {"protein_id": "6lu7"},
+            "missing_required": ["center"],
+        }
+
+        parser.update_parameters({"ph": 7.4})
+
+        assert "center" in parser.get_missing_parameters()
+
     def test_parser_applies_central_default_parameters(self):
         """Parser defaults should stay aligned with centralized defaults."""
         parser = WorkflowParser()
@@ -447,6 +477,96 @@ class TestWorkflowOrchestrator:
         assert results["status"] == "completed"
         assert captured_arguments["protein_id"] == "1abc"
         assert captured_arguments["ligand_ids"] == ["HEM"]
+
+
+class TestWorkflowOrchestratorErrors:
+    """Tests for WorkflowOrchestrator error handling (A2)."""
+
+    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    def test_call_mcp_tool_raises_on_http_error(self, mock_post):
+        """HTTP-level errors from a service should be re-raised as RuntimeError."""
+        mock_post.side_effect = requests.HTTPError("503 Service Unavailable")
+
+        orchestrator = WorkflowOrchestrator()
+        orchestrator.current_job_id = "err_test"
+
+        with pytest.raises(RuntimeError, match="download_structures"):
+            orchestrator.call_mcp_tool("http://localhost:8001", "download_structures", {})
+
+    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    def test_call_mcp_tool_raises_on_connection_error(self, mock_post):
+        """Connection-level failures should surface as RuntimeError."""
+        mock_post.side_effect = requests.ConnectionError("Connection refused")
+
+        orchestrator = WorkflowOrchestrator()
+        orchestrator.current_job_id = "conn_test"
+
+        with pytest.raises(RuntimeError):
+            orchestrator.call_mcp_tool("http://localhost:8001", "download_structures", {})
+
+    def test_execute_workflow_status_failed_on_step_error(self, tmp_path):
+        """A failing step should mark the workflow as 'failed' and record the error."""
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(side_effect=RuntimeError("service down"))
+
+        workflow = {
+            "services": ["download"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        results = orchestrator.execute_workflow(workflow, job_id="fail_test")
+
+        assert results["status"] == "failed"
+        assert len(results["errors"]) == 1
+        assert "service down" in results["errors"][0]
+
+    def test_execute_workflow_returns_results_despite_ioerror_on_save(self, tmp_path):
+        """IOError when writing workflow_results.json must not propagate (M6 try/except)."""
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": []}
+        )
+
+        workflow = {
+            "services": ["download"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        original_open = builtins.open
+
+        def fail_on_results_write(path, mode="r", *args, **kwargs):
+            if "workflow_results.json" in str(path) and ("w" in mode or "a" in mode):
+                raise IOError("disk full")
+            return original_open(path, mode, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=fail_on_results_write):
+            results = orchestrator.execute_workflow(workflow, job_id="io_err_test")
+
+        assert isinstance(results, dict)
+        assert results["job_id"] == "io_err_test"
+        assert "download" in results["services_executed"]
+
+    def test_execute_workflow_skips_step_when_not_in_services(self, tmp_path):
+        """Services not listed in the workflow should never be called."""
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        called_tools = []
+
+        def recording_call(service_url, tool_name, arguments):
+            called_tools.append(tool_name)
+            return {"protein_path": "/app/6lu7.pdb", "ligand_paths": []}
+
+        orchestrator.call_mcp_tool = Mock(side_effect=recording_call)
+
+        workflow = {
+            "services": ["download"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        orchestrator.execute_workflow(workflow, job_id="skip_test")
+
+        assert "visualize_docking" not in called_tools
+        assert "prepare_ligands" not in called_tools
+        assert "download_structures" in called_tools
 
 
 class TestWorkflowStateManager:

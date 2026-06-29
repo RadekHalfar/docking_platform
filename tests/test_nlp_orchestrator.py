@@ -918,3 +918,21 @@ def test_interactive_loop_invalid_command_does_not_terminate(monkeypatch, tmp_pa
     output = capsys.readouterr().out
     assert "help" in output.lower()  # guidance must be printed
 
+
+# ---------------------------------------------------------------------------
+# _is_running_in_container — env-var detection (L8 fix)
+# ---------------------------------------------------------------------------
+
+def test_is_running_in_container_returns_true_when_env_set(monkeypatch):
+    """CONTAINER env var alone should be sufficient to detect container context."""
+    monkeypatch.setenv("CONTAINER", "1")
+    assert cli._is_running_in_container() is True
+
+
+def test_is_running_in_container_returns_false_without_env_or_dockerenv(monkeypatch):
+    """On a bare host without /.dockerenv the function should return False."""
+    import os
+    monkeypatch.delenv("CONTAINER", raising=False)
+    if not os.path.exists("/.dockerenv"):
+        assert cli._is_running_in_container() is False
+

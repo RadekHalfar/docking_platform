@@ -195,3 +195,22 @@ def test_available_revisions_returns_sorted(mgr):
     available = mgr._available_revisions()
     assert available == sorted(available)
     assert len(available) == 3
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — fresh manager behaviour (C2)
+# ---------------------------------------------------------------------------
+
+def test_get_current_revision_zero_on_fresh_manager(mgr):
+    """A brand-new manager with no checkpoints must report revision 0."""
+    assert mgr.get_current_revision() == 0
+
+
+def test_load_latest_parameters_returns_none_when_no_checkpoint(mgr):
+    """load_latest_parameters() on a fresh manager must return None, not raise."""
+    assert mgr.load_latest_parameters() is None
+
+
+def test_load_latest_state_returns_none_when_no_checkpoint(mgr):
+    """load_latest_state() on a fresh manager must return None, not raise."""
+    assert mgr.load_latest_state() is None

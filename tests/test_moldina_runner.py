@@ -280,9 +280,35 @@ class TestMoldinaExecution:
         assert '200' in call_args
 
 
+class TestAffinitySort:
+    """Tests for affinity sort key (M3 fix: None-safe comparison)."""
+
+    def test_affinity_sort_puts_none_last(self):
+        results = [
+            {"best_affinity": None},
+            {"best_affinity": -7.5},
+            {"best_affinity": -8.0},
+        ]
+        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
+        assert results[0]["best_affinity"] == -8.0
+        assert results[1]["best_affinity"] == -7.5
+        assert results[2]["best_affinity"] is None
+
+    def test_affinity_sort_zero_sorts_after_negative_before_none(self):
+        results = [
+            {"best_affinity": None},
+            {"best_affinity": 0.0},
+            {"best_affinity": -7.5},
+        ]
+        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
+        assert results[0]["best_affinity"] == -7.5
+        assert results[1]["best_affinity"] == 0.0
+        assert results[2]["best_affinity"] is None
+
+
 class TestResultsParsing:
     """Test parsing of Moldina results"""
-    
+
     @pytest.fixture
     def runner(self, temp_dir, mock_platform_linux):
         """Create runner"""

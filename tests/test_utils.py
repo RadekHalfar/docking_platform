@@ -67,6 +67,7 @@ def test_validate_pdb_id():
     assert validate_pdb_id("ABCDE") is False  # Too long
     assert validate_pdb_id("AB-C") is False  # Invalid character
     assert validate_pdb_id(None) is False
+    assert validate_pdb_id(1234) is False  # integer input must not raise (L9 isinstance guard)
 
 
 def test_sanitize_filename():

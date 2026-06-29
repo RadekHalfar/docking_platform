@@ -78,7 +78,9 @@ class WorkflowParser:
             if key not in parameters:
                 parameters[key] = default_value
         
-        # Check for missing required parameters
+        # Publish parameters now so get_parameter_issue reads current values below.
+        self.parsed_workflow = {"services": services, "parameters": parameters, "missing_required": []}
+
         seen: set = set()
         missing = []
         for service in services:
@@ -88,14 +90,8 @@ class WorkflowParser:
                         missing.append(param)
                         seen.add(param)
 
-        validated = {
-            "services": services,
-            "parameters": parameters,
-            "missing_required": missing
-        }
-        
-        self.parsed_workflow = validated
-        return validated
+        self.parsed_workflow["missing_required"] = missing
+        return self.parsed_workflow
     
     def has_missing_parameters(self) -> bool:
         """Check if workflow has missing required parameters."""

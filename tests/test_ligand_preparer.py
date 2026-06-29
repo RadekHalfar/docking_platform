@@ -1,10 +1,11 @@
 """
 Unit tests for Ligand Preparer service.
 """
+import sys
 import pytest
 import os
 from pathlib import Path
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock
 
 # Check if RDKit is available
 try:
@@ -275,9 +276,89 @@ def test_prepare_molecule_no_optimization(preparer):
 def test_prepare_molecule_different_ph(preparer, ph):
     """Test preparation at different pH values."""
     mol = Chem.MolFromSmiles("CC(=O)O")  # Acetic acid
-    
+
     prepared = preparer.prepare_molecule(mol, ph=ph)
-    
+
     assert prepared is not None
     # Note: Current implementation doesn't actually change protonation by pH
     # For full pH-dependent protonation, tools like Dimorphite-DL would be needed
+
+
+# ---------------------------------------------------------------------------
+# Meeko conversion tests (A1) — meeko module is injected via sys.modules
+# ---------------------------------------------------------------------------
+
+def _make_mock_meeko(rotatable_bonds=None):
+    """Build a minimal mock meeko module for convert_to_pdbqt_meeko tests."""
+    mock_meeko = MagicMock()
+    mock_setup = MagicMock()
+    if rotatable_bonds is not None:
+        mock_setup.rotatable_bonds = rotatable_bonds
+    else:
+        mock_setup.rotatable_bonds = []
+    mock_meeko.MoleculePreparation.return_value.prepare.return_value = [mock_setup]
+    mock_meeko.PDBQTWriterLegacy.write_string.return_value = "REMARK MEEKO OUTPUT\nATOM...\n"
+    return mock_meeko
+
+
+def _minimal_pdb(path: Path) -> None:
+    path.write_text(
+        "ATOM      1  CA  ALA A   1       1.000   2.000   3.000  1.00  0.00           C\nEND\n"
+    )
+
+
+def test_convert_to_pdbqt_meeko_success(preparer, tmp_path):
+    """Happy path: meeko path writes PDBQT and reports method='meeko'."""
+    pdb_path = tmp_path / "lig.pdb"
+    _minimal_pdb(pdb_path)
+    output_path = str(tmp_path / "lig.pdbqt")
+
+    with patch.dict(sys.modules, {"meeko": _make_mock_meeko(rotatable_bonds=[])}):
+        result = preparer.convert_to_pdbqt_meeko(str(pdb_path), output_path)
+
+    assert result["method"] == "meeko"
+    assert result["rotatable_bonds"] == 0
+    assert os.path.exists(output_path)
+
+
+def test_convert_to_pdbqt_meeko_reports_rotatable_bonds(preparer, tmp_path):
+    """Rotatable bond count from setup should appear in the result dict."""
+    pdb_path = tmp_path / "lig.pdb"
+    _minimal_pdb(pdb_path)
+    output_path = str(tmp_path / "lig.pdbqt")
+
+    with patch.dict(sys.modules, {"meeko": _make_mock_meeko(rotatable_bonds=[1, 2, 3])}):
+        result = preparer.convert_to_pdbqt_meeko(str(pdb_path), output_path)
+
+    assert result["rotatable_bonds"] == 3
+
+
+def test_convert_to_pdbqt_meeko_rotatable_bonds_fallback_on_error(preparer, tmp_path):
+    """If len(setup.rotatable_bonds) raises, rotatable_bonds should default to 0."""
+    pdb_path = tmp_path / "lig.pdb"
+    _minimal_pdb(pdb_path)
+    output_path = str(tmp_path / "lig.pdbqt")
+
+    mock_meeko = _make_mock_meeko()
+    setup = mock_meeko.MoleculePreparation.return_value.prepare.return_value[0]
+    # Make len() raise — the except Exception: path should catch this and set rotatable_bonds=0
+    setup.rotatable_bonds = property(lambda self: (_ for _ in ()).throw(AttributeError("no bonds")))
+
+    with patch.dict(sys.modules, {"meeko": mock_meeko}):
+        result = preparer.convert_to_pdbqt_meeko(str(pdb_path), output_path)
+
+    assert result["rotatable_bonds"] == 0
+
+
+def test_convert_to_pdbqt_meeko_falls_back_to_obabel_on_import_error(preparer, tmp_path):
+    """ImportError from meeko should trigger the obabel fallback path."""
+    pdb_path = tmp_path / "lig.pdb"
+    _minimal_pdb(pdb_path)
+    output_path = str(tmp_path / "lig.pdbqt")
+
+    with patch.dict(sys.modules, {"meeko": None}):
+        with patch.object(preparer, "convert_to_pdbqt_obabel", return_value={"method": "obabel"}) as mock_ob:
+            result = preparer.convert_to_pdbqt_meeko(str(pdb_path), output_path)
+
+    mock_ob.assert_called_once_with(str(pdb_path), output_path)
+    assert result["method"] == "obabel"

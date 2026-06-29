@@ -95,6 +95,24 @@ def test_extract_updates_success_cases(llm_client, llm_output, user_command, exp
     assert updates == expected_updates
 
 
+@pytest.mark.parametrize(
+    "command,expected_scope",
+    [
+        ("save visualization my_run", "visualization"),
+        ("save viz quick", "visualization"),
+        ("save docking v1", "docking"),
+        ("save results as final", "all"),
+        ("save as control", "all"),
+    ],
+)
+def test_save_scope_mapping(llm_client, command, expected_scope):
+    """Save-results commands should carry the correct scope field (L6 dict-lookup refactor)."""
+    result = classify_session_intent(llm_client, command)
+    assert result["intent"] == "save_results"
+    assert result["scope"] == expected_scope
+    llm_client.generate.assert_not_called()
+
+
 @pytest.mark.parametrize("user_command", ["something vague", "something"])
 def test_extract_updates_empty_on_bad_llm_output_or_exception(llm_client, user_command):
     if user_command == "something vague":

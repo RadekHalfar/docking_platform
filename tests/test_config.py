@@ -44,6 +44,12 @@ class TestGetServicePort:
     def test_each_service_has_port_env_var(self, service):
         assert service in SERVICE_PORT_ENV_VARS
 
+    def test_raises_with_context_on_non_integer_port(self, monkeypatch):
+        env_var = SERVICE_PORT_ENV_VARS["rcsb_downloader"]
+        monkeypatch.setenv(env_var, "not_a_port")
+        with pytest.raises(ValueError, match="RCSB_DOWNLOADER_PORT"):
+            get_service_port("rcsb_downloader")
+
 
 class TestGetCacheDir:
     def test_returns_default_when_env_unset(self, monkeypatch):

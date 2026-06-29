@@ -27,7 +27,7 @@ class TestOllamaAdapter:
 
     @patch('services.llm_orchestrator.llm_adapters.requests.get')
     def test_check_health_failure(self, mock_get):
-        mock_get.side_effect = Exception("Connection failed")
+        mock_get.side_effect = requests.ConnectionError("Connection failed")
         adapter = OllamaAdapter()
         assert adapter.check_health() is False
 
@@ -68,6 +68,52 @@ class TestOllamaAdapter:
 
         assert response == "hello"
         assert mock_post.call_count == 3
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_generate_raises_runtime_error_on_non_404_http_error(self, mock_post):
+        """Non-404 HTTP errors should raise RuntimeError immediately without pulling."""
+        http_error = requests.HTTPError("500 Internal Server Error")
+        http_error.response = Mock(status_code=500)
+        mock_post.return_value.raise_for_status.side_effect = http_error
+
+        adapter = OllamaAdapter(model="llama2")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_generate_raises_runtime_error_on_timeout(self, mock_post):
+        """Timeout during generate should surface as RuntimeError."""
+        mock_post.side_effect = requests.Timeout("timed out")
+
+        adapter = OllamaAdapter(model="llama2")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_generate_raises_runtime_error_on_connection_error(self, mock_post):
+        """Connection refused during generate should surface as RuntimeError."""
+        mock_post.side_effect = requests.ConnectionError("refused")
+
+        adapter = OllamaAdapter(model="llama2")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_pull_model_logs_error_status_in_stream(self, mock_post):
+        """An error status line in the pull stream should be logged as a warning (L3 fix)."""
+        pull_response = Mock()
+        pull_response.raise_for_status.return_value = None
+        pull_response.iter_lines.return_value = [
+            b'{"status": "pulling manifest"}',
+            b'{"status": "error", "error": "disk full"}',
+        ]
+        mock_post.return_value = pull_response
+
+        adapter = OllamaAdapter(model="llama2")
+        with patch("services.llm_orchestrator.llm_adapters.logger") as mock_logger:
+            adapter._pull_model()
+            warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+            assert any("disk full" in call for call in warning_calls)
 
     @patch('services.llm_orchestrator.llm_adapters.requests.get')
     def test_list_models(self, mock_get):

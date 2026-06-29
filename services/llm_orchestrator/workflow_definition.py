@@ -39,6 +39,8 @@ DEFAULT_PARAMETERS: Dict[str, object] = {
 }
 
 
+CORE_PARAMS: FrozenSet[str] = frozenset({"protein_id", "ligand_ids", "center", "box_size"})
+
 REQUIRED_PARAMETERS_BY_STEP: Dict[str, List[str]] = {
     "download": ["protein_id"],
     "prepare_ligands": ["ligand_ids"],

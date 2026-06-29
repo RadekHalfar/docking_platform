@@ -24,5 +24,5 @@ class BaseLLMClient(ABC):
         """Check if the provider endpoint is healthy."""
 
     @abstractmethod
-    def list_models(self) -> list:
+    def list_models(self) -> list[str]:
         """List available models for the provider."""

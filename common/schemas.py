@@ -30,7 +30,7 @@ class PreparationSpec(BaseModel):
 class DockingSpec(BaseModel):
     """Specification for docking parameters."""
     center: Optional[List[float]] = Field(default=None, description="Search box center [x,y,z]")
-    size: Optional[List[float]] = Field(default=[20.0, 20.0, 20.0], description="Search box size")
+    size: Optional[List[float]] = Field(default_factory=lambda: [20.0, 20.0, 20.0], description="Search box size")
     exhaustiveness: int = Field(default=8, description="Exhaustiveness parameter")
     top_n: int = Field(default=3, description="Number of top poses to return")
     num_modes: int = Field(default=9, description="Number of binding modes")
@@ -39,7 +39,7 @@ class DockingSpec(BaseModel):
 class VisualizationSpec(BaseModel):
     """Specification for visualization."""
     top_n: int = Field(default=3, description="Number of top poses to visualize")
-    png_size: List[int] = Field(default=[1920, 1080], description="Image dimensions")
+    png_size: List[int] = Field(default_factory=lambda: [1920, 1080], description="Image dimensions")
     colors: Optional[Dict[str, str]] = Field(default=None, description="Color scheme")
     camera_angles: Optional[List[str]] = Field(default=None, description="Camera presets")
 

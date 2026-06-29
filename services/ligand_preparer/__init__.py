@@ -212,8 +212,8 @@ class LigandPreparer:
                     has_implicit = any(atom.GetTotalNumHs() > atom.GetNumExplicitHs() for atom in mol.GetAtoms())
                     if has_implicit:
                         mol = Chem.AddHs(mol, addCoords=True)
-                except:
-                    pass
+                except Exception:
+                    logger.debug("AddHs failed for molecule; continuing without explicit H")
             
             # Mark conformer as 3D to avoid Meeko warning
             if mol.GetNumConformers() > 0:
@@ -236,7 +236,7 @@ class LigandPreparer:
                 # Get rotatable bonds count
                 try:
                     rotatable_bonds = len(setup.rotatable_bonds) if hasattr(setup, 'rotatable_bonds') else 0
-                except:
+                except Exception:
                     rotatable_bonds = 0
                 break  # Use first setup
             

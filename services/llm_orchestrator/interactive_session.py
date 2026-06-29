@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, cast
 
 from common.file_io import atomic_write_json
 from .workflow_state_manager import WorkflowStateManager
@@ -205,14 +205,13 @@ class InteractiveSession:
                 "last_status": None,
             }
 
-        assert self.state_manager is not None  # for type checkers
-
+        sm = cast(WorkflowStateManager, self.state_manager)
         return {
             "active": True,
             "job_id": self.job_id,
-            "revision": self.state_manager.get_current_revision(),
-            "parameters": self.state_manager.load_latest_parameters() or {},
-            "runtime_state": self.state_manager.load_latest_state() or {},
+            "revision": sm.get_current_revision(),
+            "parameters": sm.load_latest_parameters() or {},
+            "runtime_state": sm.load_latest_state() or {},
             "last_status": "parameters_changed" if self.pending_changed_params else (self.last_results or {}).get("status"),
         }
 

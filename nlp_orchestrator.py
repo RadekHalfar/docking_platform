@@ -33,7 +33,7 @@ from services.llm_orchestrator import (
     validate_bundle_name,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
-from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
+from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP, CORE_PARAMS
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
 from common.utils import generate_job_id
 from common.file_io import atomic_write_json
@@ -60,9 +60,6 @@ class VerbosityFilter(logging.Filter):
             return False
         
         # In normal verbosity, show all INFO logs (current behavior)
-        elif current_verbosity == VERBOSITY_NORMAL:
-            return True
-        
         return True
 
 logging.basicConfig(
@@ -489,7 +486,7 @@ def _handle_undo_revision(
 
     # Mark all params as changed so 'rerun' will execute the full necessary set.
     if data["parameters"] is not None:
-        session.pending_changed_params |= {"protein_id", "ligand_ids", "center", "box_size"}
+        session.pending_changed_params |= CORE_PARAMS
         print("\n  ⚠️  Parameters changed. Type 'rerun' to re-execute affected steps.")
 
 
@@ -618,7 +615,8 @@ def _run_interactive_loop(
                 continue
 
             if intent == "new_workflow":
-                new_req = user_input[4:].strip() if user_input.lower().startswith("new ") else user_input.strip()
+                parts = user_input.split(maxsplit=1)
+                new_req = parts[1].strip() if len(parts) > 1 and user_input.lower().startswith("new ") else user_input.strip()
                 if not new_req:
                     print("Please provide a workflow request.")
                 else:
@@ -664,7 +662,7 @@ def _run_interactive_loop(
             if intent == "rerun_steps":
                 original = (session.last_results or {}).get("services_executed", [])
                 if original:
-                    rerun_params = session.pending_changed_params if session.pending_changed_params else {"protein_id", "ligand_ids", "center", "box_size"}
+                    rerun_params = session.pending_changed_params if session.pending_changed_params else CORE_PARAMS
                     _execute_partial_rerun(
                         session, orchestrator, changed_params=rerun_params,
                     )
@@ -1309,7 +1307,7 @@ def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) ->
 
 def _is_running_in_container() -> bool:
     """Best-effort check whether this process runs inside a container."""
-    return os.path.exists("/.dockerenv")
+    return bool(os.getenv("CONTAINER")) or os.path.exists("/.dockerenv")
 
 
 def _try_start_pymol_interactive_service() -> bool:

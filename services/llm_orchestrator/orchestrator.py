@@ -3,6 +3,7 @@ Workflow Orchestrator
 
 Coordinates execution of molecular docking workflow across MCP services.
 """
+import copy
 import json
 import logging
 import time
@@ -182,7 +183,7 @@ class WorkflowOrchestrator:
 
             latest_state = state_manager.load_latest_state()
             if isinstance(latest_state, dict):
-                self.workflow_state = latest_state.copy()
+                self.workflow_state = copy.deepcopy(latest_state)
 
         def _save_step_checkpoint(step: str) -> None:
             if state_manager:
@@ -459,9 +460,11 @@ class WorkflowOrchestrator:
         
         # Save results to file
         results_file = job_dir / "workflow_results.json"
-        with open(results_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        
-        logger.info(f"Results saved to: {results_file}")
+        try:
+            with open(results_file, 'w') as f:
+                json.dump(results, f, indent=2)
+            logger.info(f"Results saved to: {results_file}")
+        except IOError as e:
+            logger.error("Failed to save results to %s: %s", results_file, e)
         
         return results

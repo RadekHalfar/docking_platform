@@ -470,7 +470,7 @@ size_z = {box_size[2]}
             })
         
         # Sort by best affinity (most negative = best)
-        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] else float('inf'))
+        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
         
         return results
     

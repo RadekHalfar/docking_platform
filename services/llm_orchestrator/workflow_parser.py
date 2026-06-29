@@ -79,16 +79,15 @@ class WorkflowParser:
                 parameters[key] = default_value
         
         # Check for missing required parameters
+        seen: set = set()
         missing = []
         for service in services:
             if service in REQUIRED_PARAMETERS_BY_STEP:
                 for param in REQUIRED_PARAMETERS_BY_STEP[service]:
-                    if self.get_parameter_issue(param) is not None:
+                    if param not in seen and self.get_parameter_issue(param) is not None:
                         missing.append(param)
-        
-        # Remove duplicates
-        missing = list(set(missing))
-        
+                        seen.add(param)
+
         validated = {
             "services": services,
             "parameters": parameters,
@@ -162,9 +161,7 @@ class WorkflowParser:
         
         # Remove from missing list if now provided
         missing = self.parsed_workflow.get("missing_required", [])
-        for key in updates.keys():
-            if key in missing:
-                missing.remove(key)
+        self.parsed_workflow["missing_required"] = [p for p in missing if p not in updates]
 
         if persist and self.state_manager:
             self.state_manager.save_parameters_checkpoint(

@@ -52,9 +52,8 @@ COPY common/ /app/common/
 RUN mkdir -p /app/cache /app/data /app/output && \
     chmod -R 777 /app/cache /app/data /app/output
 
-# Health check (override in service-specific images)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check disabled in base image; each service image or compose stanza provides its own.
+HEALTHCHECK NONE
 
 # Default command (override in service-specific images)
 CMD ["python", "-m", "flask", "run"]

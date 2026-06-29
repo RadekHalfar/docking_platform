@@ -374,14 +374,15 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
         match = re.search(r"\d+", text)
         return {"intent": "undo_revision", "name": match.group(0) if match else None}
 
-    if any(t.startswith(p) for p in _SAVE_PREFIXES):
+    _SAVE_SCOPE_MAP = {
+        "save visualization": "visualization",
+        "save viz": "visualization",
+        "save docking": "docking",
+    }
+    save_scope = next((scope for prefix, scope in _SAVE_SCOPE_MAP.items() if t.startswith(prefix)), None)
+    if save_scope is not None or any(t.startswith(p) for p in _SAVE_PREFIXES):
+        scope = save_scope or "all"
         match = re.search(r"\bas\s+(\S+)", text, re.IGNORECASE)
-        if any(t.startswith(p) for p in ("save visualization", "save viz")):
-            scope = "visualization"
-        elif t.startswith("save docking"):
-            scope = "docking"
-        else:
-            scope = "all"
         return {"intent": "save_results", "name": match.group(1) if match else None, "scope": scope}
 
     if re.match(r"^new\s+\S", text, re.IGNORECASE):
@@ -428,7 +429,7 @@ def classify_session_intent(
     try:
         raw = llm_client.generate(prompt, system=_INTENT_CLASSIFIER_SYSTEM, temperature=0.1)
     except (requests.RequestException, RuntimeError) as exc:
-        logger.warning(f"Intent classification failed: {exc}")
+        logger.warning("Intent classification failed for %r: %s", user_input, exc)
         return {"intent": "unknown", "name": None}
 
     payload = _extract_json_object(raw)

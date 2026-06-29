@@ -1,6 +1,9 @@
 """Tests for shared file and path utility helpers."""
 
+import platform
 from pathlib import Path
+
+import pytest
 
 from common.file_io import atomic_write_json, load_json_dict
 from common.path_utils import normalize_path_for_docker, to_container_path
@@ -42,6 +45,7 @@ def test_to_container_path_maps_workspace_relative_paths(tmp_path):
     assert mapped.startswith("/app/")
 
 
+@pytest.mark.skipif(platform.system() != "Windows", reason="Windows drive-letter paths only")
 def test_to_container_path_preserves_absolute_windows_drive_style():
     """Absolute Windows paths should stay drive-qualified and slash-normalized."""
     mapped = to_container_path("C:\\Users\\test\\file.pdbqt", workspace_root=Path.cwd())

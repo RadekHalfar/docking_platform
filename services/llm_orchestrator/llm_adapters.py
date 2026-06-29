@@ -67,7 +67,7 @@ class OllamaAdapter(BaseLLMClient):
             logger.error(f"Ollama API error: {e}")
             raise RuntimeError(f"Failed to generate response: {e}")
 
-    def list_models(self) -> list:
+    def list_models(self) -> list[str]:
         """List models available in Ollama."""
         try:
             response = requests.get(self.tags_url, timeout=10)
@@ -90,7 +90,12 @@ class OllamaAdapter(BaseLLMClient):
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
                     continue
-                json.loads(line)
+                try:
+                    data = json.loads(line)
+                    if data.get("status") == "error":
+                        logger.warning("Ollama pull warning: %s", data.get("error", line))
+                except json.JSONDecodeError:
+                    pass
         except requests.RequestException as e:
             logger.error(f"Failed to pull Ollama model {self.model}: {e}")
             raise RuntimeError(f"Failed to pull Ollama model {self.model}: {e}")

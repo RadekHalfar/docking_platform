@@ -112,11 +112,11 @@ class RCSBDownloader:
                 response.raise_for_status()
                 data = response.json()
                 break
+            except requests.HTTPError as e:
+                body = (e.response.text or "")[:400]
+                last_error = f"{e}; response={body}"
             except requests.RequestException as e:
-                body = ""
-                if getattr(e, "response", None) is not None:
-                    body = (e.response.text or "")[:400]
-                last_error = f"{e}; response={body}" if body else str(e)
+                last_error = str(e)
 
         if data is None:
             raise RuntimeError(f"Failed to search ligands for '{query}': {last_error or 'unknown error'}")
@@ -148,7 +148,8 @@ class RCSBDownloader:
         candidates = self.search_ligands(token, max_results=1)
         if not candidates:
             return None
-        return str(candidates[0].get("component_id", "")).upper() or None
+        cid = candidates[0].get("component_id", "").strip().upper()
+        return cid or None
     
     def _cache_hit(self, filename: str, dest_path: str, source_url: str) -> Optional[Dict[str, Any]]:
         """Return a cached-result dict if *filename* exists in the cache, else None."""

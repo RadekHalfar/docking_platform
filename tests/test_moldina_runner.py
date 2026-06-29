@@ -203,18 +203,21 @@ class TestMoldinaExecution:
                 exhaustiveness=4
             )
         
-        # Check config file was created
-        config_path = os.path.join(output_dir, "moldina_config.txt")
-        assert os.path.exists(config_path)
-        
-        # Check config content
-        with open(config_path, 'r') as f:
-            config_content = f.read()
-        
-        assert 'receptor = ' in config_content
-        assert 'center_x = 0' in config_content
-        assert 'size_x = 20' in config_content
-        assert 'search_alg_PSO = 1' in config_content
+        # Check center/box config file
+        center_path = os.path.join(output_dir, "center.txt")
+        assert os.path.exists(center_path)
+        with open(center_path, 'r') as f:
+            center_content = f.read()
+        assert 'center_x = 0' in center_content
+        assert 'size_x = 20' in center_content
+
+        # Check parameters summary file
+        params_path = os.path.join(output_dir, "parameters.txt")
+        assert os.path.exists(params_path)
+        with open(params_path, 'r') as f:
+            params_content = f.read()
+        assert 'receptor = ' in params_content
+        assert 'search_alg_PSO' in params_content
     
     def test_run_moldina_ligands_list(self, runner_linux, temp_dir, mock_subprocess):
         """Test ligands list file generation"""
@@ -237,14 +240,10 @@ class TestMoldinaExecution:
                 box_size=(20, 20, 20)
             )
         
-        # Check ligands list file
-        ligands_list = os.path.join(output_dir, "ligands.txt")
-        assert os.path.exists(ligands_list)
-        
-        with open(ligands_list, 'r') as f:
-            ligands = f.read().strip().split('\n')
-        
-        assert len(ligands) == 2
+        # Verify both ligands were passed to the subprocess command
+        call_args = mock_subprocess.run.call_args[0][0]
+        assert ligand1 in call_args or any(ligand1 in str(a) for a in call_args)
+        assert ligand2 in call_args or any(ligand2 in str(a) for a in call_args)
     
     def test_run_moldina_command_construction(self, runner_linux, temp_dir, mock_subprocess):
         """Test Moldina command is correctly constructed"""

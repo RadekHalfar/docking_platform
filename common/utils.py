@@ -68,7 +68,7 @@ def validate_pdb_id(pdb_id: str) -> bool:
     Returns:
         True if valid format
     """
-    if not pdb_id or len(pdb_id) != 4:
+    if not isinstance(pdb_id, str) or not pdb_id or len(pdb_id) != 4:
         return False
     return pdb_id.isalnum()
 

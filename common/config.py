@@ -34,7 +34,11 @@ def get_service_port(service_name: str) -> int:
     """Return the port for *service_name*, respecting env-var override."""
     env_var = SERVICE_PORT_ENV_VARS[service_name]
     default = SERVICE_DEFAULT_PORTS[service_name]
-    return int(os.getenv(env_var, str(default)))
+    raw = os.getenv(env_var, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Invalid port value for {env_var}: {raw!r}") from None
 
 
 def get_cache_dir() -> str:

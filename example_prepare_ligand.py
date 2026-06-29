@@ -6,6 +6,7 @@ This example shows how to:
 2. Prepare it for AutoDock Vina docking
 """
 import json
+import requests
 
 from common.mcp_client import call_mcp_tool
 

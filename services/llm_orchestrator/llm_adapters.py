@@ -28,7 +28,7 @@ class OllamaAdapter(BaseLLMClient):
         try:
             response = requests.get(self.tags_url, timeout=5)
             return response.status_code == 200
-        except (requests.RequestException, Exception) as e:
+        except requests.RequestException as e:
             logger.error(f"Ollama health check failed: {e}")
             return False
 

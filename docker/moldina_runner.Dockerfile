@@ -35,7 +35,7 @@ COPY Moldina/moldina /usr/local/bin/moldina
 RUN chmod +x /usr/local/bin/moldina
 
 # Verify Moldina installation
-RUN moldina --help 2>&1 | head -20 || echo "Moldina installed"
+RUN moldina --help 2>&1 | head -20
 
 # Copy service code
 WORKDIR /app

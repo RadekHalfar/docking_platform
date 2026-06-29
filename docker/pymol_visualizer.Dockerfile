@@ -37,7 +37,7 @@ RUN wget https://github.com/conda-forge/miniforge/releases/latest/download/Minif
 ENV PATH="${PATH}:/opt/conda/bin"
 
 # Verify PyMOL installation
-RUN pymol -c -e "quit" || echo "PyMOL installed successfully"
+RUN pymol -c -e "quit"
 
 # Copy service code
 WORKDIR /app

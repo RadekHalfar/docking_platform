@@ -12,6 +12,7 @@ Tool: download_structures
 import os
 import re
 import logging
+import shutil
 import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -149,6 +150,26 @@ class RCSBDownloader:
             return None
         return str(candidates[0].get("component_id", "")).upper() or None
     
+    def _cache_hit(self, filename: str, dest_path: str, source_url: str) -> Optional[Dict[str, Any]]:
+        """Return a cached-result dict if *filename* exists in the cache, else None."""
+        if not self.cache_dir:
+            return None
+        cache_path = os.path.join(self.cache_dir, filename)
+        if not os.path.exists(cache_path):
+            return None
+        shutil.copy(cache_path, dest_path)
+        return {
+            "file_path": dest_path,
+            "checksum": compute_file_checksum(dest_path),
+            "source_url": source_url,
+            "cached": True,
+        }
+
+    def _cache_save(self, file_path: str, filename: str) -> None:
+        """Copy *file_path* into the cache directory under *filename*."""
+        if self.cache_dir:
+            shutil.copy(file_path, os.path.join(self.cache_dir, filename))
+
     def download_protein(
         self,
         pdb_id: str,
@@ -192,21 +213,11 @@ class RCSBDownloader:
         file_path = os.path.join(save_dir, filename)
         
         # Check cache
-        if self.cache_dir:
-            cache_path = os.path.join(self.cache_dir, filename)
-            if os.path.exists(cache_path):
-                logger.info(f"Using cached file: {cache_path}")
-                # Copy from cache
-                import shutil
-                shutil.copy(cache_path, file_path)
-                checksum = compute_file_checksum(file_path)
-                return {
-                    "file_path": file_path,
-                    "checksum": checksum,
-                    "source_url": url,
-                    "cached": True
-                }
-        
+        cached = self._cache_hit(filename, file_path, url)
+        if cached:
+            logger.info(f"Using cached file: {os.path.join(self.cache_dir, filename)}")
+            return cached
+
         # Download file
         logger.info(f"Downloading {url}")
         try:
@@ -214,27 +225,18 @@ class RCSBDownloader:
             response.raise_for_status()
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to download {pdb_id}: {str(e)}")
-        
-        # Save file
+
         with open(file_path, 'wb') as f:
             f.write(response.content)
-        
-        # Save to cache if configured
-        if self.cache_dir:
-            cache_path = os.path.join(self.cache_dir, filename)
-            import shutil
-            shutil.copy(file_path, cache_path)
-        
-        # Compute checksum
+        self._cache_save(file_path, filename)
+
         checksum = compute_file_checksum(file_path)
-        
         logger.info(f"Downloaded {pdb_id} to {file_path}")
-        
         return {
             "file_path": file_path,
             "checksum": checksum,
             "source_url": url,
-            "cached": False
+            "cached": False,
         }
     
     def download_ligand(
@@ -275,20 +277,11 @@ class RCSBDownloader:
         file_path = os.path.join(save_dir, filename)
         
         # Check cache
-        if self.cache_dir:
-            cache_path = os.path.join(self.cache_dir, filename)
-            if os.path.exists(cache_path):
-                logger.info(f"Using cached ligand: {cache_path}")
-                import shutil
-                shutil.copy(cache_path, file_path)
-                checksum = compute_file_checksum(file_path)
-                return {
-                    "file_path": file_path,
-                    "checksum": checksum,
-                    "source_url": url,
-                    "cached": True
-                }
-        
+        cached = self._cache_hit(filename, file_path, url)
+        if cached:
+            logger.info(f"Using cached ligand: {os.path.join(self.cache_dir, filename)}")
+            return cached
+
         # Download file
         logger.info(f"Downloading ligand {url}")
         try:
@@ -296,27 +289,18 @@ class RCSBDownloader:
             response.raise_for_status()
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to download ligand {ligand_id}: {str(e)}")
-        
-        # Save file
+
         with open(file_path, 'wb') as f:
             f.write(response.content)
-        
-        # Save to cache
-        if self.cache_dir:
-            cache_path = os.path.join(self.cache_dir, filename)
-            import shutil
-            shutil.copy(file_path, cache_path)
-        
-        # Compute checksum
+        self._cache_save(file_path, filename)
+
         checksum = compute_file_checksum(file_path)
-        
         logger.info(f"Downloaded ligand {ligand_id} to {file_path}")
-        
         return {
             "file_path": file_path,
             "checksum": checksum,
             "source_url": url,
-            "cached": False
+            "cached": False,
         }
     
     def download_structures(

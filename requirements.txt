@@ -3,10 +3,6 @@ requests>=2.31.0
 flask>=3.0.0
 python-dotenv>=1.0.0
 
-# NLP and parsing (for future orchestrator phase)
-spacy>=3.7.0
-# Download model: python -m spacy download en_core_web_sm
-
 # Testing
 pytest>=7.4.0
 pytest-cov>=4.1.0

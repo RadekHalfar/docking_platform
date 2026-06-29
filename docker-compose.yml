@@ -15,7 +15,6 @@ x-service-common: &service-common
     - mcp-network
   volumes:
     - ./cache:/app/cache
-    - ./demo_output:/app/output
     - ./demo_output:/app/demo_output
     - ./orchestrator_output:/app/orchestrator_output
   environment:

@@ -453,7 +453,7 @@ def _handle_undo_revision(
         try:
             revision = int(rev_str)
         except ValueError:
-            pass
+            pass  # rev_str was not numeric; will prompt interactively below
 
     if revision is None:
         try:
@@ -1121,7 +1121,7 @@ def _create_box_via_live_pymol(
                 break
             last_load_error = response.text
         except requests.RequestException:
-            pass
+            pass  # service may still be starting; retry until timeout
         time.sleep(1)
 
     if not loaded:

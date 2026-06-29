@@ -50,11 +50,10 @@ class WorkflowOrchestrator:
         self.current_job_id = None
 
     def _step_print(self, message: str) -> None:
-        """Print a step-level message in low/mcp_demo verbosity; log in normal mode."""
+        """Print a step-level message to stdout and always record it via the logger."""
+        logger.info(message)
         if self.verbosity in (VERBOSITY_LOW, VERBOSITY_MCP_DEMO):
             print(message)
-        else:
-            logger.info(message)
     
     def check_services_health(self) -> Dict[str, bool]:
         """Check health of all MCP services."""

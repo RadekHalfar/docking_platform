@@ -42,29 +42,8 @@ WORKDIR /app
 COPY requirements.txt /app/
 
 # Install Python dependencies
-# Split into layers for better caching
 RUN pip install --upgrade pip setuptools wheel
-
-# Install core dependencies (changes rarely)
-RUN pip install \
-    requests>=2.31.0 \
-    flask>=3.0.0 \
-    python-dotenv>=1.0.0 \
-    pytest>=7.4.0 \
-    pytest-cov>=4.1.0 \
-    pytest-mock>=3.12.0 \
-    pydantic>=2.5.0 \
-    jsonschema>=4.20.0 \
-    pyyaml>=6.0.1
-
-# Install chemistry packages (heavy, cache separately)
-RUN pip install \
-    numpy>=1.24.0 \
-    scipy>=1.11.0 \
-    rdkit>=2023.9.1 \
-    meeko>=0.5.0 \
-    gemmi>=0.6.0 \
-    openbabel-wheel>=3.1.1
+RUN pip install -r /app/requirements.txt
 
 # Copy common modules
 COPY common/ /app/common/

@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Optional
 
-from common.config import CACHE_DIR_DEFAULT
+from common.config import get_cache_dir
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.protein_preparer import ProteinPreparer
@@ -73,7 +73,7 @@ def main():
     parser = argparse.ArgumentParser(description="Protein Preparer MCP Server")
     parser.add_argument("--port", type=int, default=8003, help="Server port (default: 8003)")
     parser.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
-    parser.add_argument("--cache-dir", default=CACHE_DIR_DEFAULT, help=f"Cache directory (default: {CACHE_DIR_DEFAULT})")
+    parser.add_argument("--cache-dir", default=get_cache_dir(), help="Cache directory (default from CACHE_DIR env or ./cache)")
     
     args = parser.parse_args()
 

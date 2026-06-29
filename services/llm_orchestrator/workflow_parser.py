@@ -56,22 +56,6 @@ class WorkflowParser:
 
         return None
 
-    def _is_missing_required_param(self, param: str, value: Any) -> bool:
-        """Return True when a required parameter is absent or invalid."""
-        if value is None:
-            return True
-
-        if param == "protein_id":
-            return not isinstance(value, str) or not self.validate_protein_id(value.strip())
-
-        if param == "ligand_ids":
-            return not isinstance(value, list) or len(value) == 0
-
-        if param in ["center", "box_size"]:
-            return not self.validate_coordinates(value)
-
-        return False
-    
     def validate_workflow(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate parsed workflow and fill in defaults.
@@ -99,7 +83,7 @@ class WorkflowParser:
         for service in services:
             if service in REQUIRED_PARAMETERS_BY_STEP:
                 for param in REQUIRED_PARAMETERS_BY_STEP[service]:
-                    if self._is_missing_required_param(param, parameters.get(param)):
+                    if self.get_parameter_issue(param) is not None:
                         missing.append(param)
         
         # Remove duplicates

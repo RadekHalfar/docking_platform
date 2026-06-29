@@ -3,6 +3,7 @@ RCSB Downloader MCP Server
 
 Exposes download_structures tool via JSON-RPC.
 """
+from typing import Optional
 from common.config import get_service_port, get_cache_dir
 from common.mcp_base import MCPServer
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
@@ -28,9 +29,9 @@ class RCSBDownloaderServer(MCPServer):
         
         def download_structures_handler(
             protein_id: str,
-            ligand_ids: list = None,
+            ligand_ids: Optional[list] = None,
             enable_name_resolution: bool = False,
-            formats: dict = None,
+            formats: Optional[dict] = None,
             save_dir: str = "./data"
         ) -> dict:
             """Handler for download_structures tool."""

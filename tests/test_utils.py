@@ -3,8 +3,7 @@ Unit tests for common utilities.
 """
 from common.utils import (
     ensure_directory, compute_file_checksum,
-    create_job_directory, generate_job_id,
-    validate_pdb_id, sanitize_filename
+    generate_job_id, validate_pdb_id, sanitize_filename
 )
 from common.file_io import atomic_write_json, load_json_dict
 
@@ -43,22 +42,6 @@ def test_load_metadata_nonexistent():
     """Test loading metadata from nonexistent file."""
     result = load_json_dict("nonexistent_file.json")
     assert result is None
-
-
-def test_create_job_directory(tmp_path):
-    """Test job directory structure creation."""
-    job_id = "test_job_001"
-    dirs = create_job_directory(str(tmp_path), job_id)
-    
-    assert "root" in dirs
-    assert "raw" in dirs
-    assert "prepared" in dirs
-    assert "docking" in dirs
-    assert "visuals" in dirs
-    
-    for dir_path in dirs.values():
-        assert dir_path.exists()
-        assert dir_path.is_dir()
 
 
 def test_generate_job_id():

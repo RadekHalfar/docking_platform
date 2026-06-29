@@ -4,6 +4,7 @@ Provider-neutral workflow parsing using an LLM client interface.
 import json
 import logging
 import re
+import requests
 from typing import Any, Dict, Optional
 
 from .llm_base import BaseLLMClient
@@ -88,8 +89,6 @@ def _extract_json_object(raw: str) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError:
         return None
 
-    return None
-
 
 def parse_workflow_with_llm(llm_client: BaseLLMClient, user_input: str) -> Dict[str, Any]:
     """Parse natural language workflow request into structured format."""
@@ -164,7 +163,7 @@ def generate_llm_follow_up_question(
         question = response.strip().splitlines()[0].strip()
         if question:
             return question
-    except Exception as exc:
+    except (requests.RequestException, RuntimeError) as exc:
         logger.warning(f"Failed to generate LLM follow-up question for '{current_param}': {exc}")
 
     # Deterministic fallback when LLM call fails.
@@ -227,7 +226,7 @@ def extract_updates_with_llm(
 
     try:
         raw = llm_client.generate(prompt, system=_EXTRACT_UPDATES_SYSTEM, temperature=0.1)
-    except Exception as exc:
+    except (requests.RequestException, RuntimeError) as exc:
         logger.warning(f"Failed to extract parameter updates with LLM: {exc}")
         return {}
 
@@ -268,7 +267,7 @@ def extract_box_source_choice_with_llm(
 
     try:
         raw = llm_client.generate(prompt, system=_EXTRACT_BOX_SOURCE_SYSTEM, temperature=0.1)
-    except Exception as exc:
+    except (requests.RequestException, RuntimeError) as exc:
         logger.warning(f"Failed to classify docking box source with LLM: {exc}")
         return None
 
@@ -346,6 +345,15 @@ _EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM = (
 )
 
 
+_SAVE_PREFIXES = (
+    "save results",
+    "save docking",
+    "save visualization",
+    "save viz",
+    "save as",
+)
+
+
 def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     """Return an intent result dict if *text* matches an unambiguous pattern, else None."""
     t = text.strip().lower()
@@ -366,13 +374,6 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
         match = re.search(r"\d+", text)
         return {"intent": "undo_revision", "name": match.group(0) if match else None}
 
-    _SAVE_PREFIXES = (
-        "save results",
-        "save docking",
-        "save visualization",
-        "save viz",
-        "save as",
-    )
     if any(t.startswith(p) for p in _SAVE_PREFIXES):
         match = re.search(r"\bas\s+(\S+)", text, re.IGNORECASE)
         if any(t.startswith(p) for p in ("save visualization", "save viz")):
@@ -426,7 +427,7 @@ def classify_session_intent(
     prompt = f"Classify this session command:\n\n{user_input}"
     try:
         raw = llm_client.generate(prompt, system=_INTENT_CLASSIFIER_SYSTEM, temperature=0.1)
-    except Exception as exc:
+    except (requests.RequestException, RuntimeError) as exc:
         logger.warning(f"Intent classification failed: {exc}")
         return {"intent": "unknown", "name": None}
 
@@ -461,7 +462,7 @@ def extract_updates_from_command_with_llm(
     )
     try:
         raw = llm_client.generate(prompt, system=_EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM, temperature=0.1)
-    except Exception as exc:
+    except (requests.RequestException, RuntimeError) as exc:
         logger.warning(f"Parameter extraction from command failed: {exc}")
         return {}
 

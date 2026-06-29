@@ -1057,7 +1057,7 @@ def _collect_missing_parameters_hybrid(
         )
 
 
-def _normalize_clarification_mode(mode: str) -> str:
+def _default_clarification_mode(mode: str) -> str:
     """Normalize clarification mode with hybrid as safe default."""
     if mode == CLARIFICATION_MODE_LEGACY:
         return CLARIFICATION_MODE_LEGACY
@@ -1413,7 +1413,7 @@ def process_workflow(
         print("\n" + parser_obj.get_workflow_summary())
         
 
-        clarification_mode = _normalize_clarification_mode(clarification_mode)
+        clarification_mode = _default_clarification_mode(clarification_mode)
 
         # Check for missing parameters
         if parser_obj.has_missing_parameters():

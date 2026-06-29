@@ -27,6 +27,3 @@ pydantic>=2.5.0
 jsonschema>=4.20.0
 pyyaml>=6.0.1
 
-# Optional: ML-based parsing
-# transformers>=4.35.0
-# torch>=2.1.0

@@ -101,7 +101,7 @@ def save_results_bundle(
             shutil.copytree(src, dst)
             included.append("docking_results")
         else:
-            logger.warning("save_results_bundle: no docking results found in %s", src)
+            logger.debug("save_results_bundle: no docking results found in %s", src)
 
     if include_viz:
         src = job_dir / "visualization"
@@ -112,7 +112,7 @@ def save_results_bundle(
             shutil.copytree(src, dst)
             included.append("visualization")
         else:
-            logger.warning("save_results_bundle: no visualization artifacts found in %s", src)
+            logger.debug("save_results_bundle: no visualization artifacts found in %s", src)
 
     # Write docking_box.json from current parameters — always authoritative.
     # This guarantees the bundle reflects the box that was actually used for

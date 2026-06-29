@@ -44,41 +44,6 @@ def compute_file_checksum(file_path: str, algorithm: str = "md5") -> str:
     return hash_obj.hexdigest()
 
 
-def create_job_directory(base_dir: str, job_id: str) -> Dict[str, Path]:
-    """
-    Create directory structure for a job.
-    
-    Structure:
-        /data/jobs/<job_id>/
-            raw/        - downloaded files
-            prepared/   - prepared ligands
-            docking/    - docking results
-            visuals/    - images and sessions
-    
-    Args:
-        base_dir: Base data directory
-        job_id: Job identifier
-        
-    Returns:
-        Dictionary with paths for each subdirectory
-    """
-    job_root = Path(base_dir) / "jobs" / job_id
-    
-    subdirs = {
-        'root': job_root,
-        'raw': job_root / 'raw',
-        'prepared': job_root / 'prepared',
-        'docking': job_root / 'docking',
-        'visuals': job_root / 'visuals'
-    }
-    
-    for subdir in subdirs.values():
-        subdir.mkdir(parents=True, exist_ok=True)
-    
-    logger.info(f"Created job directory structure: {job_root}")
-    return subdirs
-
-
 def generate_job_id() -> str:
     """
     Generate a unique job ID.

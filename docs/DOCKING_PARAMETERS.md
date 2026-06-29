@@ -206,7 +206,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 | `output_dir` | string | **Yes** | - | Directory for docking output files |
 | `center` | array | **Yes** | - | Search box center `[x, y, z]` in Angstroms |
 | `box_size` | array | **Yes** | - | Search box dimensions `[x, y, z]` in Angstroms |
-| `cpu` | integer | No | `1` | Number of CPU cores to use |
+| `cpu` | integer | No | `4` | Number of CPU cores to use |
 | `population` | integer | No | `500` | PSO population size (min: 5) |
 | `exhaustiveness` | integer | No | `8` | Search exhaustiveness |
 | `num_modes` | integer | No | `15` | Maximum number of binding modes |

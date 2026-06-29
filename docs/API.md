@@ -525,17 +525,6 @@ Generates PyMOL visualization scripts and optionally renders high-quality images
 
 ---
 
-## 4. PyMOL Visualizer Service (Duplicate - Remove)
-
-**Port:** 8004  
-**Base URL:** `http://localhost:8004`
-
-### Tool: render_visuals
-
-*(To be implemented in Phase 4)*
-
----
-
 ## Error Codes
 
 Standard JSON-RPC 2.0 error codes:

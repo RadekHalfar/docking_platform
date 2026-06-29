@@ -170,7 +170,7 @@ docker compose --profile interactive up -d pymol-interactive
 # .\demo_output\visualization\docking_visualization.png
 ```
 
-**See [DOCKER_QUICKSTART.md](DOCKER_QUICKSTART.md) for detailed guide.**
+**See [DOCKER_QUICK_REFERENCE.md](DOCKER_QUICK_REFERENCE.md) for detailed guide.**
 
 ### Local Installation (Optional)
 

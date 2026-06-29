@@ -11,7 +11,7 @@
 
 **Quick Start:**
 ```bash
-# See ../DOCKER_QUICKSTART.md for complete guide
+# See ../DOCKER_QUICK_REFERENCE.md for complete guide
 .\docker_build.ps1        # Build images (Windows)
 docker compose up -d      # Start services
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"

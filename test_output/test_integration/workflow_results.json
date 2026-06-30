@@ -1,10 +1,10 @@
 {
   "job_id": "test_integration",
   "services_executed": [
-    "download"
+    "get_input_files"
   ],
   "results": {
-    "download": {
+    "get_input_files": {
       "protein_path": "/app/6lu7.pdb",
       "ligand_paths": [
         "/app/ATP.sdf"

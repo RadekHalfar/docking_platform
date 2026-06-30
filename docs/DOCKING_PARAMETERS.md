@@ -425,7 +425,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 | Stage | Critical Parameters | Default | Notes |
 |-------|-------------------|---------|-------|
-| **Download** | `protein_id` | - | Must be valid PDB ID |
+| **Get Input Files** | `protein_id` | - | Must be valid PDB ID (or `protein_file` for local input) |
 | | `ligand_ids` | `[]` | Can download without ligands |
 | **Ligand Prep** | `ligand_paths` | - | List of input files |
 | | `ph` | `7.4` | Match protein pH |

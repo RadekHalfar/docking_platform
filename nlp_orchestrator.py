@@ -569,6 +569,8 @@ def _run_interactive_loop(
     orchestrator: WorkflowOrchestrator,
     parser_obj: WorkflowParser,
     clarification_mode: str,
+    protein_file: Optional[str] = None,
+    ligand_files: Optional[List[str]] = None,
 ) -> int:
     """Run phase-1 interactive session loop with persistent active job context."""
     session = InteractiveSession()
@@ -627,6 +629,8 @@ def _run_interactive_loop(
                         parser_obj,
                         clarification_mode=clarification_mode,
                         session=session,
+                        protein_file=protein_file,
+                        ligand_files=ligand_files,
                     )
                 continue
 
@@ -706,6 +710,8 @@ def _run_interactive_loop(
                     parser_obj,
                     clarification_mode=clarification_mode,
                     session=session,
+                    protein_file=protein_file,
+                    ligand_files=ligand_files,
                 )
 
         except KeyboardInterrupt:
@@ -776,6 +782,18 @@ Examples:
         "--output-dir",
         default="./orchestrator_output",
         help="Base directory for workflow outputs (default: ./orchestrator_output)"
+    )
+    parser.add_argument(
+        "--protein-file",
+        default=None,
+        help="Path to a local protein .pdb/.cif file to use instead of downloading from RCSB"
+    )
+    parser.add_argument(
+        "--ligand-files",
+        action="append",
+        default=None,
+        help="Path to a local ligand file (.sdf/.mol/.mol2/.pdbqt) to use instead of downloading from RCSB. "
+             "Repeat the flag for multiple ligands (e.g. --ligand-files a.sdf --ligand-files b.sdf)."
     )
     parser.add_argument(
         "--check-health",
@@ -867,8 +885,10 @@ Examples:
             orchestrator=orchestrator,
             parser_obj=parser_obj,
             clarification_mode=args.clarification_mode,
+            protein_file=args.protein_file,
+            ligand_files=args.ligand_files,
         )
-    
+
     # Single command mode
     if args.command:
         return process_workflow(
@@ -877,6 +897,8 @@ Examples:
             orchestrator,
             parser_obj,
             clarification_mode=args.clarification_mode,
+            protein_file=args.protein_file,
+            ligand_files=args.ligand_files,
         )
     else:
         parser.print_help()
@@ -1092,7 +1114,7 @@ def _create_box_via_live_pymol(
     # Run the preparation phase so interactive service can load prepared receptor/ligands.
     print("\n🧪 Preparing structures for interactive box selection...")
     prep_workflow = {
-        "services": ["download", "prepare_ligands", "prepare_protein"],
+        "services": ["get_input_files", "prepare_ligands", "prepare_protein"],
         "parameters": workflow.get("parameters", {}),
     }
     prep_results = orchestrator.execute_workflow(prep_workflow, job_id=job_id, state_manager=state_manager)
@@ -1376,10 +1398,12 @@ def process_workflow(
     parser_obj: WorkflowParser,
     clarification_mode: str = CLARIFICATION_MODE_HYBRID,
     session: Optional[InteractiveSession] = None,
+    protein_file: Optional[str] = None,
+    ligand_files: Optional[List[str]] = None,
 ) -> int:
     """
     Process a workflow from natural language input.
-    
+
     Returns:
         Exit code (0 for success, 1 for failure)
     """
@@ -1388,11 +1412,27 @@ def process_workflow(
         print("Processing workflow request...")
         print("="*80)
         print(f"\n📝 Input: {user_input}\n")
-        
+
         # Parse with LLM
         print("🤖 Parsing with LLM...")
         parsed = parse_workflow_with_llm(llm_client, user_input)
-        
+
+        # Apply local file overrides from CLI flags. A local protein_file always
+        # takes precedence over an LLM-parsed protein_id (only one protein per run).
+        # Local ligand_files are *combined* with any LLM-parsed ligand_ids — both
+        # sources are fetched/copied and docked together.
+        if protein_file or ligand_files:
+            parsed.setdefault("parameters", {})
+            if protein_file:
+                parsed["parameters"]["protein_file"] = protein_file
+                print(f"📁 Using local protein file: {protein_file}")
+            if ligand_files:
+                parsed["parameters"]["ligand_files"] = ligand_files
+                print(f"📁 Using local ligand file(s): {', '.join(ligand_files)}")
+            services = parsed.setdefault("services", [])
+            if "get_input_files" not in services:
+                services.append("get_input_files")
+
         # Validate and enrich
         print("✅ Validating workflow...")
         workflow = parser_obj.validate_workflow(parsed)

@@ -44,7 +44,7 @@ def _visualize_result():
 
 
 # Tool name map based on actual call_mcp_tool calls in orchestrator.py:
-#   download  → "download_structures"
+#   get_input_files  → "download_structures"
 #   prepare_ligands  → "prepare_ligands"
 #   prepare_protein  → "prepare_proteins"
 #   dock             → "run_docking"
@@ -67,7 +67,7 @@ def _full_chain_fake_call(service_url, tool_name, arguments):
 
 
 _FULL_CHAIN_WORKFLOW = {
-    "services": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+    "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
     "parameters": {
         "protein_id": "6lu7",
         "ligand_ids": ["ATP"],
@@ -117,7 +117,7 @@ def test_execute_workflow_skips_step_not_in_services(tmp_path):
     orchestrator.call_mcp_tool = Mock(side_effect=recording_call)
 
     workflow = {
-        "services": ["download"],
+        "services": ["get_input_files"],
         "parameters": {
             "protein_id": "6lu7",
             "ligand_ids": [],
@@ -152,7 +152,7 @@ def test_execute_workflow_records_error_without_crashing(tmp_path):
     orchestrator.call_mcp_tool = Mock(side_effect=RuntimeError("service offline"))
 
     workflow = {
-        "services": ["download"],
+        "services": ["get_input_files"],
         "parameters": {
             "protein_id": "6lu7",
             "ligand_ids": [],

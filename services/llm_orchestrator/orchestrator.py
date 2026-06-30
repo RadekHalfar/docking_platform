@@ -6,6 +6,7 @@ Coordinates execution of molecular docking workflow across MCP services.
 import copy
 import json
 import logging
+import shutil
 import time
 import uuid
 import requests
@@ -134,6 +135,15 @@ class WorkflowOrchestrator:
             logger.error(f"Request failed: {e}")
             raise RuntimeError(f"Failed to call {tool_name}: {e}")
     
+    def _copy_local_input(self, source_path: str, dest_dir: Path) -> str:
+        """Copy a user-supplied local file into the job's downloads dir and return its container path."""
+        src = Path(source_path)
+        if not src.is_file():
+            raise RuntimeError(f"Local input file not found: {source_path}")
+        dest = dest_dir / src.name
+        shutil.copy(src, dest)
+        return self.normalize_path(str(dest))
+
     def normalize_path(self, path: str) -> str:
         """
         Convert path to Docker container-compatible format.
@@ -204,47 +214,82 @@ class WorkflowOrchestrator:
         logger.info(f"Services to execute: {services}")
         
         try:
-            # Step 1: Download structures
-            if "download" in services:
+            # Step 1: Get input files (RCSB download and/or local file copy)
+            if "get_input_files" in services:
                 _reload_latest_from_disk()
 
-                self._step_print("\n\U0001f4e5 STEP 1: Downloading structures...")
+                self._step_print("\n\U0001f4e5 STEP 1: Getting input files...")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info("\n" + "="*80)
-                    logger.info("STEP 1: Downloading structures")
+                    logger.info("STEP 1: Getting input files")
                     logger.info("="*80)
                 
                 download_dir = job_dir / "downloads"
                 download_dir.mkdir(exist_ok=True)
-                
-                download_result = self.call_mcp_tool(
-                    self.services["rcsb_downloader"],
-                    "download_structures",
-                    {
-                        "protein_id": params["protein_id"],
-                        "ligand_ids": params.get("ligand_ids", []),
-                        "enable_name_resolution": False,
-                        "formats": params.get("formats", {"protein": "pdb", "ligand": "sdf"}),
-                        "save_dir": self.normalize_path(download_dir)
-                    }
-                )
-                
-                results["results"]["download"] = download_result
-                results["services_executed"].append("download")
-                
-                # Store file paths for next steps (paths are already in container format from download service)
-                protein_path = download_result.get("protein_path")
-                ligand_paths = download_result.get("ligand_paths", [])
-                
+
+                local_protein_file = params.get("protein_file")
+                local_ligand_files = params.get("ligand_files") or []
+                remote_ligand_ids = params.get("ligand_ids") or []
+
+                needs_remote_protein = not local_protein_file
+                needs_remote_ligands = bool(remote_ligand_ids)
+
+                download_result: Dict[str, Any] = {}
+                protein_path = None
+                downloaded_ligand_paths: List[str] = []
+
+                # Local ligand files and RCSB ligand IDs can be combined: each side is
+                # fetched independently and the resulting paths are merged below.
+                if needs_remote_protein or needs_remote_ligands:
+                    download_result = self.call_mcp_tool(
+                        self.services["rcsb_downloader"],
+                        "download_structures",
+                        {
+                            "protein_id": params.get("protein_id") if needs_remote_protein else None,
+                            "ligand_ids": remote_ligand_ids if needs_remote_ligands else [],
+                            "enable_name_resolution": False,
+                            "formats": params.get("formats", {"protein": "pdb", "ligand": "sdf"}),
+                            "save_dir": self.normalize_path(download_dir)
+                        }
+                    )
+                    if needs_remote_protein:
+                        protein_path = download_result.get("protein_path")
+                    if needs_remote_ligands:
+                        downloaded_ligand_paths = download_result.get("ligand_paths", [])
+
+                if local_protein_file:
+                    protein_path = self._copy_local_input(local_protein_file, download_dir)
+
+                local_ligand_paths = [self._copy_local_input(f, download_dir) for f in local_ligand_files]
+                ligand_paths = downloaded_ligand_paths + local_ligand_paths
+
+                results["results"]["get_input_files"] = {
+                    **download_result,
+                    "protein_path": protein_path,
+                    "ligand_paths": ligand_paths,
+                    "status": download_result.get("status", "ok"),
+                }
+                results["services_executed"].append("get_input_files")
+
                 self.workflow_state["protein_file"] = protein_path
                 self.workflow_state["ligand_files"] = ligand_paths
-                
-                self._step_print(f"   \u2705 Downloaded protein and {len(self.workflow_state['ligand_files'])} ligand(s)")
-                if self.verbosity == VERBOSITY_NORMAL:
-                    logger.info(f"\u2705 Downloaded protein: {self.workflow_state['protein_file']}")
-                    logger.info(f"\u2705 Downloaded {len(self.workflow_state['ligand_files'])} ligands")
 
-                _save_step_checkpoint("download")
+                protein_source = "local file" if local_protein_file else "RCSB download"
+                if local_ligand_files and remote_ligand_ids:
+                    ligand_source = "local files + RCSB download"
+                elif local_ligand_files:
+                    ligand_source = "local files"
+                else:
+                    ligand_source = "RCSB download"
+                self._step_print(
+                    f"   \u2705 Got protein ({protein_source}) and "
+                    f"{len(self.workflow_state['ligand_files'])} ligand(s) ({ligand_source})"
+                )
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Got protein ({protein_source}): {self.workflow_state['protein_file']}")
+                    logger.info(f"\u2705 Got {len(self.workflow_state['ligand_files'])} ligand(s) ({ligand_source})")
+
+                _save_step_checkpoint("get_input_files")
             
             # Step 2: Prepare ligands
             if "prepare_ligands" in services or "prepare_protein" in services:

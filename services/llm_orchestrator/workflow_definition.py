@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import Dict, FrozenSet, List
+from pathlib import Path
+from typing import Any, Dict, FrozenSet, List, Optional
 
 
 WORKFLOW_STEPS: List[str] = [
-    "download",
+    "get_input_files",
     "prepare_ligands",
     "prepare_protein",
     "dock",
@@ -36,13 +37,15 @@ DEFAULT_PARAMETERS: Dict[str, object] = {
     "generate_3d": True,
     "optimize": True,
     "formats": {"protein": "pdb", "ligand": "sdf"},
+    "protein_file": None,
+    "ligand_files": None,
 }
 
 
 CORE_PARAMS: FrozenSet[str] = frozenset({"protein_id", "ligand_ids", "center", "box_size"})
 
 REQUIRED_PARAMETERS_BY_STEP: Dict[str, List[str]] = {
-    "download": ["protein_id"],
+    "get_input_files": ["protein_id"],
     "prepare_ligands": ["ligand_ids"],
     "prepare_protein": ["protein_id"],
     "dock": ["protein_id", "ligand_ids", "center", "box_size"],
@@ -51,8 +54,8 @@ REQUIRED_PARAMETERS_BY_STEP: Dict[str, List[str]] = {
 
 
 PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
-    "protein_id": frozenset({"download", "prepare_protein", "dock", "visualize"}),
-    "ligand_ids": frozenset({"download", "prepare_ligands", "dock", "visualize"}),
+    "protein_id": frozenset({"get_input_files", "prepare_protein", "dock", "visualize"}),
+    "ligand_ids": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
     "center": frozenset({"dock", "visualize"}),
     "box_size": frozenset({"dock", "visualize"}),
     "ph": frozenset({"prepare_ligands", "prepare_protein", "dock", "visualize"}),
@@ -65,16 +68,16 @@ PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
 
 
 STEP_UPSTREAM: Dict[str, FrozenSet[str]] = {
-    "download": frozenset(),
-    "prepare_ligands": frozenset({"download"}),
-    "prepare_protein": frozenset({"download"}),
+    "get_input_files": frozenset(),
+    "prepare_ligands": frozenset({"get_input_files"}),
+    "prepare_protein": frozenset({"get_input_files"}),
     "dock": frozenset({"prepare_ligands", "prepare_protein"}),
     "visualize": frozenset({"dock"}),
 }
 
 
 STEP_LABELS: Dict[str, str] = {
-    "download": "Download structures",
+    "get_input_files": "Get input files",
     "prepare_ligands": "Prepare ligands",
     "prepare_protein": "Prepare protein",
     "dock": "Run docking",
@@ -112,3 +115,35 @@ def get_service_urls_from_env() -> Dict[str, str]:
         env_key = MCP_SERVICE_URL_ENV_VARS[service_name]
         urls[service_name] = os.getenv(env_key, default_url)
     return urls
+
+
+def get_protein_display_name(parameters: Dict[str, Any]) -> Optional[str]:
+    """Return a human-readable protein label: the local file's stem, or the PDB ID.
+
+    A local protein_file always wins over protein_id at execution time
+    (see WorkflowOrchestrator.execute_workflow), so the display must match.
+    """
+    protein_file = parameters.get("protein_file")
+    if protein_file:
+        return f"{Path(protein_file).stem} (local file)"
+    protein_id = parameters.get("protein_id")
+    if protein_id:
+        return str(protein_id)
+    return None
+
+
+def get_ligand_display_names(parameters: Dict[str, Any]) -> List[str]:
+    """Return human-readable ligand labels: local file stems plus PDB ligand IDs.
+
+    Unlike protein_file/protein_id, ligand_files and ligand_ids are combined (not
+    mutually exclusive) at execution time (see WorkflowOrchestrator.execute_workflow),
+    so the display must list both sources.
+    """
+    names: List[str] = []
+    ligand_files = parameters.get("ligand_files")
+    if ligand_files:
+        names.extend(f"{Path(f).stem} (local file)" for f in ligand_files)
+    ligand_ids = parameters.get("ligand_ids")
+    if ligand_ids:
+        names.extend(str(lid) for lid in ligand_ids)
+    return names

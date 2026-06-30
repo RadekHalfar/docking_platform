@@ -4,11 +4,14 @@ Workflow Parser
 Validates and processes parsed workflow from LLM.
 """
 import logging
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from services.llm_orchestrator.workflow_definition import (
     REQUIRED_PARAMETERS_BY_STEP,
     get_default_parameters,
+    get_ligand_display_names,
+    get_protein_display_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,22 +33,38 @@ class WorkflowParser:
         if not self.parsed_workflow:
             return "missing"
 
-        value = self.parsed_workflow.get("parameters", {}).get(param)
-
-        if value is None:
-            return "missing"
+        params = self.parsed_workflow.get("parameters", {})
+        value = params.get(param)
 
         if param == "protein_id":
-            if not isinstance(value, str) or not value.strip():
+            if params.get("protein_file"):
+                return self._validate_local_file_param(
+                    params["protein_file"], allowed_extensions={".pdb", ".cif"}
+                )
+            if value is None or not isinstance(value, str) or not value.strip():
                 return "missing"
             if not self.validate_protein_id(value.strip()):
                 return "invalid"
             return None
 
         if param == "ligand_ids":
-            if not isinstance(value, list) or len(value) == 0:
+            if params.get("ligand_files"):
+                files = params["ligand_files"]
+                if not isinstance(files, list) or len(files) == 0:
+                    return "missing"
+                for f in files:
+                    issue = self._validate_local_file_param(
+                        f, allowed_extensions={".sdf", ".mol", ".mol2", ".pdbqt"}
+                    )
+                    if issue is not None:
+                        return issue
+                return None
+            if value is None or not isinstance(value, list) or len(value) == 0:
                 return "missing"
             return None
+
+        if value is None:
+            return "missing"
 
         if param in ["center", "box_size"]:
             if not isinstance(value, list) or len(value) == 0:
@@ -54,6 +73,18 @@ class WorkflowParser:
                 return "invalid"
             return None
 
+        return None
+
+    @staticmethod
+    def _validate_local_file_param(path: str, allowed_extensions: set) -> Optional[str]:
+        """Return 'invalid' if a local file path doesn't exist or has the wrong extension."""
+        if not isinstance(path, str) or not path.strip():
+            return "missing"
+        p = Path(path)
+        if p.suffix.lower() not in allowed_extensions:
+            return "invalid"
+        if not p.is_file():
+            return "invalid"
         return None
 
     def validate_workflow(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
@@ -114,13 +145,25 @@ class WorkflowParser:
         lines = ["Required parameters needing clarification:"]
         for param in missing:
             issue = self.get_parameter_issue(param)
+            params = (self.parsed_workflow or {}).get("parameters", {})
             if param == "protein_id":
-                if issue == "invalid":
+                if params.get("protein_file"):
+                    lines.append(
+                        f"  - The local protein file '{params['protein_file']}' is invalid or not found "
+                        "(expected an existing .pdb or .cif file)."
+                    )
+                elif issue == "invalid":
                     lines.append("  - The protein PDB ID is invalid. Please provide a 4-character ID (e.g., '6lu7').")
                 else:
-                    lines.append("  - Please provide the protein PDB ID (e.g., '6lu7').")
+                    lines.append("  - Please provide the protein PDB ID (e.g., '6lu7') or a local protein file.")
             elif param == "ligand_ids":
-                lines.append("  - Please provide ligand IDs (e.g., 'ATP, HEM').")
+                if params.get("ligand_files"):
+                    lines.append(
+                        "  - One or more local ligand files are invalid or not found "
+                        "(expected existing .sdf, .mol, .mol2 or .pdbqt files)."
+                    )
+                else:
+                    lines.append("  - Please provide ligand IDs (e.g., 'ATP, HEM') or local ligand files.")
             elif param == "center":
                 if issue == "invalid":
                     lines.append("  - Docking box center is invalid. Please provide [x, y, z] (e.g., '10, 20, 30').")
@@ -186,10 +229,12 @@ class WorkflowParser:
         lines.append("")
         lines.append("Parameters:")
         
-        if "protein_id" in params:
-            lines.append(f"  Protein: {params['protein_id']}")
-        if "ligand_ids" in params:
-            lines.append(f"  Ligands: {', '.join(params['ligand_ids'])}")
+        protein_display = get_protein_display_name(params)
+        if protein_display:
+            lines.append(f"  Protein: {protein_display}")
+        ligand_display = get_ligand_display_names(params)
+        if ligand_display:
+            lines.append(f"  Ligands: {', '.join(ligand_display)}")
         if "center" in params:
             lines.append(f"  Docking Center: {params['center']}")
         if "box_size" in params:

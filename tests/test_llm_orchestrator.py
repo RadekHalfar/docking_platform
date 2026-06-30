@@ -43,7 +43,7 @@ class TestLLMArchitecture:
     def test_parse_workflow_with_llm(self):
         """Provider-neutral parser should parse JSON returned by adapter."""
         workflow_json = {
-            "services": ["download", "dock"],
+            "services": ["get_input_files", "dock"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP"],
@@ -57,14 +57,14 @@ class TestLLMArchitecture:
         with patch.object(llm_client, "generate", return_value=json.dumps(workflow_json)):
             result = parse_workflow_with_llm(llm_client, "Download ATP and dock to 6lu7")
 
-        assert result["services"] == ["download", "dock"]
+        assert result["services"] == ["get_input_files", "dock"]
         assert result["parameters"]["protein_id"] == "6lu7"
         assert "center" in result["parameters"]
 
     def test_parse_workflow_visualization_fallback(self):
         """Visualization keyword fallback should append visualize service."""
         llm_output = {
-            "services": ["download", "prepare_ligands", "prepare_protein", "dock"],
+            "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP"]
@@ -100,7 +100,7 @@ class TestWorkflowParser:
         parser = WorkflowParser()
         
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP"]
@@ -177,7 +177,7 @@ class TestWorkflowParser:
         parser = WorkflowParser()
 
         workflow = {
-            "services": ["download", "prepare_protein", "dock"],
+            "services": ["get_input_files", "prepare_protein", "dock"],
             "parameters": {
                 "protein_id": "6lu",
                 "ligand_ids": ["ATP"],
@@ -195,7 +195,7 @@ class TestWorkflowParser:
         parser = WorkflowParser()
 
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "protein_id": "6lu"
             }
@@ -270,7 +270,7 @@ class TestWorkflowParser:
         parser = WorkflowParser()
         
         workflow = {
-            "services": ["download", "dock"],
+            "services": ["get_input_files", "dock"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP", "HEM"],
@@ -342,7 +342,7 @@ class TestWorkflowParser:
         parser = WorkflowParser()
         result = parser.validate_workflow(
             {
-                "services": ["download"],
+                "services": ["get_input_files"],
                 "parameters": {"protein_id": "6lu7"},
             }
         )
@@ -460,7 +460,7 @@ class TestWorkflowOrchestrator:
         orchestrator.call_mcp_tool = Mock(side_effect=_fake_call)
 
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP"],
@@ -510,7 +510,7 @@ class TestWorkflowOrchestratorErrors:
         orchestrator.call_mcp_tool = Mock(side_effect=RuntimeError("service down"))
 
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
         }
 
@@ -528,7 +528,7 @@ class TestWorkflowOrchestratorErrors:
         )
 
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
         }
 
@@ -544,7 +544,7 @@ class TestWorkflowOrchestratorErrors:
 
         assert isinstance(results, dict)
         assert results["job_id"] == "io_err_test"
-        assert "download" in results["services_executed"]
+        assert "get_input_files" in results["services_executed"]
 
     def test_execute_workflow_skips_step_when_not_in_services(self, tmp_path):
         """Services not listed in the workflow should never be called."""
@@ -558,7 +558,7 @@ class TestWorkflowOrchestratorErrors:
         orchestrator.call_mcp_tool = Mock(side_effect=recording_call)
 
         workflow = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
         }
 
@@ -582,7 +582,7 @@ class TestWorkflowStateManager:
         )
         rev3 = manager.save_execution_state_checkpoint(
             {"protein_file": "/app/6lu7.pdb", "ligand_files": ["/app/ATP.sdf"]},
-            step="download",
+            step="get_input_files",
         )
 
         assert rev1 == 1
@@ -608,7 +608,7 @@ class TestIntegration:
     def test_full_workflow_mock(self, mock_mcp_post, make_mcp_response):
         """Test full workflow with mocked services."""
         workflow_json = {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "protein_id": "6lu7",
                 "ligand_ids": ["ATP"]
@@ -641,7 +641,7 @@ class TestIntegration:
         results = orchestrator.execute_workflow(workflow, job_id="test_integration")
         
         assert results["job_id"] == "test_integration"
-        assert "download" in results["services_executed"]
+        assert "get_input_files" in results["services_executed"]
 
 
 if __name__ == "__main__":

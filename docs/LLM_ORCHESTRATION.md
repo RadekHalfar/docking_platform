@@ -153,6 +153,35 @@ python nlp_orchestrator.py "Download ligands ATP, HEM and protein 6lu7, prepare 
 python nlp_orchestrator.py "Download 1ABC and ligand NAD, prepare at pH 5.0, dock with exhaustiveness 16"
 ```
 
+### Local File Input
+
+Use `--protein-file` and/or `--ligand-files` to dock against local structures instead of
+(or alongside) RCSB downloads. Whichever side has a local file is copied straight into the
+job's `downloads/` directory and skips the RCSB download for that side; the other side, if
+not given a local file, is still downloaded from RCSB normally.
+
+```bash
+# Local protein file, ligand still downloaded from RCSB
+python nlp_orchestrator.py --protein-file /data/6lu7.pdb \
+  "prepare and dock ATP, center 10 20 30 box 25 30 35"
+
+# Local ligand file(s), protein still downloaded from RCSB
+# (repeat --ligand-files once per file; it takes a single path each time)
+python nlp_orchestrator.py --ligand-files /data/ATP.sdf --ligand-files /data/HEM.sdf \
+  "download 6lu7, prepare and dock, center 10 20 30 box 25 30 35"
+
+# Both local — no RCSB download at all
+python nlp_orchestrator.py --protein-file /data/6lu7.pdb --ligand-files /data/ATP.sdf \
+  "prepare and dock, center 10 20 30 box 25 30 35"
+```
+
+Accepted protein extensions: `.pdb`, `.cif`. Accepted ligand extensions: `.sdf`, `.mol`,
+`.mol2`, `.pdbqt`. An invalid extension or a path that doesn't exist is reported as a
+missing/invalid parameter the same way an unresolvable PDB ID would be.
+
+These flags also work with `--interactive` mode and apply to every `new_workflow` request
+issued in that session.
+
 ### Interactive Mode
 
 ```bash
@@ -329,7 +358,7 @@ CLARIFICATION_MODE=legacy python nlp_orchestrator.py "Download 6lu7 and ATP, pre
 
 The LLM can identify these workflow stages:
 
-1. **`download`** - Download structures from RCSB
+1. **`get_input_files`** - Get protein/ligand structures (downloaded from RCSB, or copied from local files)
 2. **`prepare_ligands`** - Prepare ligands for docking
 3. **`prepare_protein`** - Prepare protein for docking
 4. **`dock`** - Run molecular docking
@@ -474,9 +503,9 @@ orchestrator_output/
 {
   "job_id": "job_1730304123",
   "status": "completed",
-  "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+  "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
   "results": {
-    "download": {...},
+    "get_input_files": {...},
     "prepare_ligands": {...},
     "dock": {...}
   },

@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a molecular docking workflow parser. Extract structured information from user requests.
 
 Extract the following:
-1. Services needed (choose from: download, prepare_ligands, prepare_protein, dock, visualize)
-   - Always include "download" if protein/ligand IDs are mentioned
+1. Services needed (choose from: get_input_files, prepare_ligands, prepare_protein, dock, visualize)
+   - Always include "get_input_files" if protein/ligand IDs are mentioned
    - Always include "prepare_ligands" and "prepare_protein" if preparing or docking
    - Always include "dock" if docking is requested
    - Include "visualize" if user mentions ANY of these keywords: visualize, visualization, visualise, visualisation, view, render, rendering, image, picture, photo, show results, create visualization, display, see results, generate image
@@ -39,14 +39,14 @@ CRITICAL RULE FOR LIGAND_IDS:
 - The array must contain the EXACT number of copies specified by the user!
 
 Correct Examples:
-User: "Dock 6lu7 with ATP" -> ligand_ids: ["ATP"], services: ["download", "prepare_ligands", "prepare_protein", "dock"]
+User: "Dock 6lu7 with ATP" -> ligand_ids: ["ATP"], services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]
 User: "Dock protein with two WWO ligands" -> ligand_ids: ["WWO", "WWO"]
 User: "Dock 5ogo and two WWO ligands" -> ligand_ids: ["WWO", "WWO"]
 User: "Use three ATP molecules" -> ligand_ids: ["ATP", "ATP", "ATP"]
 User: "Dock with ATP and two HEM" -> ligand_ids: ["ATP", "HEM", "HEM"]
-User: "Dock and create visualization" -> services: ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"]
-User: "Dock with ATP and render image" -> services: ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"]
-User: "Dock and show results" -> services: ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+User: "Dock and create visualization" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+User: "Dock with ATP and render image" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+User: "Dock and show results" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
 
 Wrong Examples (DO NOT DO THIS):
 User: "Dock with two WWO ligands" -> ligand_ids: ["WWO"] WRONG! Should be ["WWO", "WWO"]
@@ -54,7 +54,7 @@ User: "Use three ATP" -> ligand_ids: ["ATP"] WRONG! Should be ["ATP", "ATP", "AT
 
 Respond ONLY with valid JSON in this exact format:
 {
-  "services": ["download", "prepare_ligands", "prepare_protein", "dock"],
+  "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
   "parameters": {
     "protein_id": "5ogo",
     "ligand_ids": ["WWO", "WWO"],

@@ -306,7 +306,7 @@ class RCSBDownloader:
     
     def download_structures(
         self,
-        protein_id: str,
+        protein_id: Optional[str] = None,
         ligand_ids: Optional[List[str]] = None,
         enable_name_resolution: bool = False,
         formats: Optional[Dict[str, str]] = None,
@@ -314,16 +314,17 @@ class RCSBDownloader:
     ) -> Dict[str, Any]:
         """
         Download protein and ligands in one call.
-        
+
         This is the main tool method exposed via MCP.
-        
+
         Args:
-            protein_id: PDB identifier
+            protein_id: PDB identifier. Omit to skip the protein download
+                (e.g. when the caller supplies a local protein file instead).
             ligand_ids: List of ligand identifiers (optional)
             enable_name_resolution: Resolve ligand names via RCSB search when not chem_comp-like IDs (disabled by default)
             formats: Dict with 'protein' and 'ligand' format specs
             save_dir: Base directory to save files
-            
+
         Returns:
             Dictionary with protein_path, ligand_paths, metadata
         """
@@ -354,11 +355,13 @@ class RCSBDownloader:
             else:
                 resolved_ligands.append(token.upper() if self._is_probable_chem_comp_id(token) else token)
         
-        # Download protein
-        protein_result = self.download_protein(
-            protein_id, save_dir, protein_format
-        )
-        
+        # Download protein (skipped when no protein_id is supplied)
+        protein_result = None
+        if protein_id:
+            protein_result = self.download_protein(
+                protein_id, save_dir, protein_format
+            )
+
         # Download ligands
         ligand_results = []
         for ligand_id in resolved_ligands:
@@ -370,24 +373,25 @@ class RCSBDownloader:
             except (requests.RequestException, RuntimeError) as e:
                 logger.error(f"Failed to download ligand {ligand_id}: {e}")
                 # Continue with other ligands
-        
+
         # Prepare response
         result = {
-            "protein_path": protein_result["file_path"],
+            "protein_path": protein_result["file_path"] if protein_result else None,
             "ligand_paths": [lr["file_path"] for lr in ligand_results],
             "sources": {
-                "protein": protein_result["source_url"],
+                "protein": protein_result["source_url"] if protein_result else None,
                 "ligands": [lr["source_url"] for lr in ligand_results]
             },
             "checksums": {
-                "protein": protein_result["checksum"],
+                "protein": protein_result["checksum"] if protein_result else None,
                 "ligands": [lr["checksum"] for lr in ligand_results]
             },
             "status": "ok"
         }
-        
+
         # Save metadata
-        metadata_path = os.path.join(save_dir, f"{protein_id}_download_meta.json")
+        metadata_name = f"{protein_id}_download_meta.json" if protein_id else "ligands_download_meta.json"
+        metadata_path = os.path.join(save_dir, metadata_name)
         atomic_write_json(metadata_path, result)
-        
+
         return result

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast
 
 from common.file_io import atomic_write_json
+from .workflow_definition import get_ligand_display_names, get_protein_display_name
 from .workflow_state_manager import WorkflowStateManager
 
 logger = logging.getLogger(__name__)
@@ -231,10 +232,12 @@ class InteractiveSession:
         params = snapshot["parameters"]
         if params:
             lines.append("  Parameters:")
-            if "protein_id" in params:
-                lines.append(f"    protein_id: {params['protein_id']}")
-            if "ligand_ids" in params:
-                lines.append(f"    ligand_ids: {params['ligand_ids']}")
+            protein_display = get_protein_display_name(params)
+            if protein_display:
+                lines.append(f"    protein_id: {protein_display}")
+            ligand_display = get_ligand_display_names(params)
+            if ligand_display:
+                lines.append(f"    ligand_ids: {ligand_display}")
             if "center" in params:
                 lines.append(f"    center: {params['center']}")
             if "box_size" in params:

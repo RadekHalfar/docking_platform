@@ -25,7 +25,7 @@ The LLM parser in [services/llm_orchestrator/workflow_llm_parser.py](../services
 
 | Service | Selected When | Required Parameters |
 |---------|---------------|-------------------|
-| **download** | Protein/ligand IDs are mentioned | `protein_id` |
+| **get_input_files** | Protein/ligand IDs are mentioned (downloads from RCSB, or uses local files) | `protein_id` |
 | **prepare_ligands** | User wants to prepare OR dock | `ligand_ids` |
 | **prepare_protein** | User wants to prepare OR dock | `protein_id` |
 | **dock** | User explicitly requests docking | `protein_id`, `ligand_ids`, `center`, `box_size` |
@@ -35,16 +35,16 @@ The LLM parser in [services/llm_orchestrator/workflow_llm_parser.py](../services
 
 ```
 User: "Download 6lu7 and ATP, prepare and dock"
-→ Services: ["download", "prepare_ligands", "prepare_protein", "dock"]
+→ Services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]
 → Missing: center, box_size
 
 User: "Dock 5ogo with two WWO ligands and render image"
-→ Services: ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+→ Services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
 → Missing: center, box_size
 
 User: "Just download 1ABC"
-→ Services: ["download"]
-→ Missing: none (only download is needed)
+→ Services: ["get_input_files"]
+→ Missing: none (only get_input_files is needed)
 
 User: "Show results of docking"
 → Services: ["visualize"]
@@ -55,9 +55,9 @@ User: "Show results of docking"
 
 ## Part 2: Input/Output Requirements for Each Service
 
-### 1. DOWNLOAD Service (`rcsb_downloader`)
+### 1. GET_INPUT_FILES Service (`rcsb_downloader`)
 
-**Purpose:** Fetch protein and ligand structures from RCSB Protein Data Bank
+**Purpose:** Obtain protein and ligand structures — either downloaded from RCSB Protein Data Bank, or copied in from local files (see [Local File Input](LLM_ORCHESTRATION.md#local-file-input))
 
 **Input Parameters:**
 ```json
@@ -85,7 +85,7 @@ User: "Show results of docking"
 }
 ```
 
-**Data Flow:** Files are saved to the download directory
+**Data Flow:** Files are saved to the downloads directory
 
 ---
 
@@ -96,7 +96,7 @@ User: "Show results of docking"
 **Input Parameters:**
 ```json
 {
-  "ligand_paths": [                    // From download service
+  "ligand_paths": [                    // From get_input_files service
     "/app/downloads/ATP.sdf",
     "/app/downloads/HEM.sdf"
   ],
@@ -128,7 +128,7 @@ User: "Show results of docking"
 }
 ```
 
-**Data Flow:** Consumes ligand files from download → produces PDBQT files for docking
+**Data Flow:** Consumes ligand files from get_input_files → produces PDBQT files for docking
 
 ---
 
@@ -139,7 +139,7 @@ User: "Show results of docking"
 **Input Parameters:**
 ```json
 {
-  "protein_paths": [                   // From download service
+  "protein_paths": [                   // From get_input_files service
     "/app/downloads/6lu7.pdb"
   ],
   "output_dir": "/app/prepared",       // Where to save prepared file
@@ -163,7 +163,7 @@ User: "Show results of docking"
 }
 ```
 
-**Data Flow:** Consumes protein from download → produces PDBQT file for docking
+**Data Flow:** Consumes protein from get_input_files → produces PDBQT file for docking
 
 ---
 
@@ -283,17 +283,17 @@ Workflow Validator → checks for missing parameters
     ↓
 Orchestrator executes in this ORDER:
 
-1. DOWNLOAD (if needed)
-   ├─ Input: protein_id, ligand_ids
+1. GET_INPUT_FILES (if needed)
+   ├─ Input: protein_id, ligand_ids (or protein_file, ligand_files for local input)
    ├─ Output: protein_path, ligand_paths
    └─ State saved: workflow_state["protein_file"], workflow_state["ligand_files"]
 
-2. PREPARE_LIGANDS (depends on DOWNLOAD)
+2. PREPARE_LIGANDS (depends on GET_INPUT_FILES)
    ├─ Input: ligand_files from state
    ├─ Output: prepared_ligands PDBQT paths
    └─ State saved: workflow_state["prepared_ligands"]
 
-3. PREPARE_PROTEIN (depends on DOWNLOAD)
+3. PREPARE_PROTEIN (depends on GET_INPUT_FILES)
    ├─ Input: protein_file from state
    ├─ Output: prepared_protein PDBQT path
    └─ State saved: workflow_state["prepared_protein"]
@@ -312,22 +312,22 @@ Orchestrator executes in this ORDER:
 ### Critical Dependencies
 
 **CANNOT RUN WITHOUT:**
-- `prepare_ligands` requires output from `download`
-- `prepare_protein` requires output from `download`
+- `prepare_ligands` requires output from `get_input_files`
+- `prepare_protein` requires output from `get_input_files`
 - `dock` requires output from both `prepare_ligands` AND `prepare_protein`
 - `visualize` requires output from `prepare_protein` (and optionally `dock`)
 
 ### Data Flow Through Services
 
 ```
-download → preparation → docking → visualization
-   ↓            ↓          ↓              ↓
- Input:    Consumes:   Consumes:     Consumes:
-protein_id  ligand     prepared      docking
-ligand_ids  files      molecules     results
-            protein    + params
-            files      (center,
-                       box_size)
+get_input_files → preparation → docking → visualization
+   ↓                  ↓           ↓              ↓
+ Input:          Consumes:   Consumes:     Consumes:
+protein_id        ligand     prepared      docking
+ligand_ids        files      molecules     results
+                   protein    + params
+                   files      (center,
+                              box_size)
 ```
 
 ---
@@ -362,8 +362,8 @@ These are **CRITICAL** and determine if docking can proceed:
 |-----------|---------|------|---------|--------------|
 | `center` | moldina | [x, y, z] floats | [12.3, 34.5, -5.6] | Ask: "Where should the search box be centered?" |
 | `box_size` | moldina | [x, y, z] floats | [20.0, 20.0, 20.0] | Ask: "What should the search box dimensions be?" |
-| `protein_id` | download, dock | 4-char string | "6lu7" | Ask: "What protein PDB ID?" |
-| `ligand_ids` | download, prepare | list of strings | ["ATP", "HEM"] | Ask: "Which ligands?" |
+| `protein_id` | get_input_files, dock | 4-char string | "6lu7" | Ask: "What protein PDB ID?" |
+| `ligand_ids` | get_input_files, prepare | list of strings | ["ATP", "HEM"] | Ask: "Which ligands?" |
 
 ### Optional Parameters (Can Override Defaults)
 
@@ -408,7 +408,7 @@ steps are re-executed. The rerun planner lives in
 
 ### Parameter → invalidated steps
 
-| Changed Parameter | download | prepare_ligands | prepare_protein | dock | visualize |
+| Changed Parameter | get_input_files | prepare_ligands | prepare_protein | dock | visualize |
 |---|---|---|---|---|---|
 | `protein_id` | ✅ | | ✅ | ✅ | ✅ |
 | `ligand_ids` | ✅ | ✅ | | ✅ | ✅ |
@@ -423,7 +423,7 @@ steps are re-executed. The rerun planner lives in
 
 ### Examples
 
-- **Change ligand**: reruns download → prepare_ligands → dock → visualize (protein preparation reused)
+- **Change ligand**: reruns get_input_files → prepare_ligands → dock → visualize (protein preparation reused)
 - **Change center/box_size**: reruns dock → visualize only (prepared molecules reused)
 - **Change exhaustiveness**: reruns dock → visualize only
 
@@ -439,7 +439,7 @@ original workflow, so a step the user never requested will not be included.
 #### Step 1: LLM Parsing
 ```json
 {
-  "services": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+  "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
   "parameters": {
     "protein_id": "6lu7",
     "ligand_ids": ["ATP"],
@@ -459,7 +459,7 @@ original workflow, so a step the user never requested will not be included.
 #### Step 3: Orchestrator Execution
 
 ```
-1️⃣ DOWNLOAD
+1️⃣ GET_INPUT_FILES
   Input: protein_id="6lu7", ligand_ids=["ATP"]
   Output: 6lu7.pdb, ATP.sdf
   State: workflow_state["protein_file"] = ".../6lu7.pdb"
@@ -505,7 +505,7 @@ original workflow, so a step the user never requested will not be included.
 **Problem:** One service in the chain fails
 
 **Solution:** Check the error in the previous step's output. Each service depends on the prior ones:
-- If `download` fails → nothing else can run
+- If `get_input_files` fails → nothing else can run
 - If `prepare_ligands` fails → docking can't proceed
 - If `prepare_protein` fails → docking can't proceed
 - If `dock` fails → visualization uses prepared ligands instead
@@ -522,9 +522,9 @@ original workflow, so a step the user never requested will not be included.
 
 | Service | Depends On | Required Input | Outputs | When Used |
 |---------|-----------|----------------|---------|-----------|
-| **download** | None | protein_id, ligand_ids | protein_path, ligand_paths | Always (if IDs given) |
-| **prepare_ligands** | download | ligand_paths | prepared_ligands (PDBQT) | When preparing or docking |
-| **prepare_protein** | download | protein_path | prepared_protein (PDBQT) | When preparing or docking |
+| **get_input_files** | None | protein_id, ligand_ids | protein_path, ligand_paths | Always (if IDs or local files given) |
+| **prepare_ligands** | get_input_files | ligand_paths | prepared_ligands (PDBQT) | When preparing or docking |
+| **prepare_protein** | get_input_files | protein_path | prepared_protein (PDBQT) | When preparing or docking |
 | **dock** | prepare_ligands, prepare_protein | receptor, ligands, center, box_size | docking_results | When docking requested |
 | **visualize** | prepare_protein (+ dock optional) | receptor, ligands | visualization script, PNG | When visualization requested |
 

@@ -19,10 +19,10 @@ from services.llm_orchestrator.workflow_definition import (
     "changed_params,expected_steps",
     [
         (set(), []),
-        ({"ligand_ids"}, ["download", "prepare_ligands", "dock", "visualize"]),
+        ({"ligand_ids"}, ["get_input_files", "prepare_ligands", "dock", "visualize"]),
         ({"center"}, ["dock", "visualize"]),
         ({"box_size"}, ["dock", "visualize"]),
-        ({"protein_id"}, ["download", "prepare_protein", "dock", "visualize"]),
+        ({"protein_id"}, ["get_input_files", "prepare_protein", "dock", "visualize"]),
         ({"exhaustiveness"}, ["dock", "visualize"]),
     ],
 )
@@ -49,7 +49,7 @@ def test_ph_change_cascades_through_preparation_dock_viz():
 
 def test_multiple_params_union():
     steps = compute_rerun_steps({"center", "ligand_ids"})
-    assert steps == ["download", "prepare_ligands", "dock", "visualize"]
+    assert steps == ["get_input_files", "prepare_ligands", "dock", "visualize"]
 
 
 def test_unknown_param_yields_empty():
@@ -65,9 +65,9 @@ def test_intersection_with_original_services():
     """Only steps that were originally executed should be planned."""
     steps = compute_rerun_steps(
         {"ligand_ids"},
-        original_services=["download", "prepare_ligands", "dock"],
+        original_services=["get_input_files", "prepare_ligands", "dock"],
     )
-    assert steps == ["download", "prepare_ligands", "dock"]
+    assert steps == ["get_input_files", "prepare_ligands", "dock"]
     assert "visualize" not in steps
 
 

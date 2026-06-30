@@ -255,8 +255,8 @@ python nlp_orchestrator.py --interactive
 # Example outputs:
 # 🤖 Parsing workflow...
 # 📋 Workflow Plan:
-#   1. Download protein: 6lu7
-#   2. Download ligand: ATP  
+#   1. Get protein: 6lu7
+#   2. Get ligand: ATP  
 #   3. Prepare ligands
 #   4. Prepare protein
 #   5. Run docking

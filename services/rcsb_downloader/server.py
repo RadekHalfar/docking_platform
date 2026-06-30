@@ -28,7 +28,7 @@ class RCSBDownloaderServer(MCPServer):
             }
         
         def download_structures_handler(
-            protein_id: str,
+            protein_id: Optional[str] = None,
             ligand_ids: Optional[list] = None,
             enable_name_resolution: bool = False,
             formats: Optional[dict] = None,
@@ -64,7 +64,7 @@ class RCSBDownloaderServer(MCPServer):
             description="Download protein structures and ligands from RCSB PDB",
             handler=download_structures_handler,
             parameters=build_tool_parameters([
-                ("protein_id", "string", "PDB identifier (4 characters, e.g., '1ABC')", True),
+                ("protein_id", "string", "PDB identifier (4 characters, e.g., '1ABC'). Omit to skip protein download (e.g. when supplying a local protein file)."),
                 ("ligand_ids", "array", "List of ligand identifiers or names (e.g., ['ATP', 'HEM', 'aspirin'])"),
                 ("enable_name_resolution", "boolean", "Resolve ligand names to chem_comp IDs via RCSB search (default: false; use search_ligands + user selection for interactive flow)"),
                 ("formats", "object", "File formats: {'protein': 'pdb'|'cif', 'ligand': 'sdf'|'mol'}"),

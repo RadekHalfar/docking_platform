@@ -338,7 +338,7 @@ pymol -c -Q viz.pml
 
 Typical workflow:
 
-1. **Download**: RCSB Downloader → `protein.pdb`, `ligand.sdf`
+1. **Get Input Files**: RCSB Downloader (or local files) → `protein.pdb`, `ligand.sdf`
 2. **Prepare Protein**: Protein Preparer → `receptor.pdbqt`
 3. **Prepare Ligands**: Ligand Preparer → `ligand.pdbqt`
 4. **Dock**: Moldina Runner → `docked_poses.pdbqt` + affinities

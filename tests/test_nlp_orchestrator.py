@@ -92,7 +92,7 @@ def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_pat
     parser = WorkflowParser()
     parser.validate_workflow(
         {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "ligand_ids": ["ATP"],
             },
@@ -117,7 +117,7 @@ def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tm
     parser = WorkflowParser()
     parser.validate_workflow(
         {
-            "services": ["download"],
+            "services": ["get_input_files"],
             "parameters": {
                 "ligand_ids": ["ATP"],
             },
@@ -410,7 +410,7 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
 def test_process_workflow_auto_resolves_named_ligands(monkeypatch, tmp_path, llm_client):
     """Named ligands in normal workflow input should trigger search+selection before execution."""
     parsed = {
-        "services": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
         "parameters": {
             "protein_id": "6lu7",
             "ligand_ids": ["aspirin", "aspirin"],
@@ -435,7 +435,7 @@ def test_process_workflow_auto_resolves_named_ligands(monkeypatch, tmp_path, llm
     orchestrator.execute_workflow.return_value = {
         "job_id": "job_1",
         "status": "completed",
-        "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
         "errors": [],
     }
 
@@ -460,7 +460,7 @@ def test_process_workflow_auto_resolves_named_ligands(monkeypatch, tmp_path, llm
 def test_process_workflow_cancels_when_named_ligand_not_selected(monkeypatch, tmp_path, llm_client):
     """Workflow should stop if required ligand selection is cancelled."""
     parsed = {
-        "services": ["download", "dock"],
+        "services": ["get_input_files", "dock"],
         "parameters": {
             "protein_id": "6lu7",
             "ligand_ids": ["aspirin"],
@@ -668,7 +668,7 @@ def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path, ll
         {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
         source="initial_parse",
     )
-    session.activate("job_rerun", state_manager, last_results={"status": "completed", "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock"]})
+    session.activate("job_rerun", state_manager, last_results={"status": "completed", "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]})
 
     monkeypatch.setattr(
         cli, "extract_updates_from_command_with_llm",
@@ -712,7 +712,7 @@ def test_handle_search_ligand_updates_session_parameters(monkeypatch, tmp_path):
         {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
         source="initial_parse",
     )
-    session.activate("job_search", state_manager, last_results={"status": "completed", "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock"]})
+    session.activate("job_search", state_manager, last_results={"status": "completed", "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]})
 
     orchestrator = Mock()
     orchestrator.services = {"rcsb_downloader": "http://rcsb-downloader:8001"}
@@ -747,7 +747,7 @@ def test_execute_partial_rerun_calls_orchestrator(monkeypatch, tmp_path):
         state_manager,
         last_results={
             "status": "completed",
-            "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+            "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
             "results": {},
         },
     )
@@ -809,7 +809,7 @@ def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys, l
             )
             sess.activate("job_loop", sm, last_results={
                 "status": "completed",
-                "services_executed": ["download", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+                "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
                 "results": {},
             })
         return 0

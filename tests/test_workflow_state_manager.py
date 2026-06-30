@@ -32,7 +32,7 @@ def test_list_revisions_empty_initially(mgr):
 
 def test_list_revisions_is_monotonic(mgr):
     mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
-    mgr.save_execution_state_checkpoint(STATE_A, step="download")
+    mgr.save_execution_state_checkpoint(STATE_A, step="get_input_files")
     mgr.save_parameters_checkpoint(PARAMS_B, source="interactive_update")
 
     revisions = mgr.list_revisions()

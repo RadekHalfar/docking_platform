@@ -936,3 +936,57 @@ def test_is_running_in_container_returns_false_without_env_or_dockerenv(monkeypa
     if not os.path.exists("/.dockerenv"):
         assert cli._is_running_in_container() is False
 
+
+# ---------------------------------------------------------------------------
+# `compare` subcommand
+# ---------------------------------------------------------------------------
+
+def test_run_compare_command_no_args_prints_usage(capsys):
+    """Calling `compare` with no job dirs prints usage and returns exit code 1."""
+    exit_code = cli._run_compare_command([])
+
+    assert exit_code == 1
+    assert "Usage" in capsys.readouterr().out
+
+
+def test_run_compare_command_missing_job_dir_reports_error(tmp_path, capsys):
+    """A nonexistent job directory should produce a friendly error, not a traceback."""
+    exit_code = cli._run_compare_command([str(tmp_path / "no_such_job")])
+
+    assert exit_code == 1
+    assert "❌" in capsys.readouterr().out
+
+
+def test_run_compare_command_prints_table(tmp_path, capsys):
+    """A successful comparison prints a ligand x job ASCII table."""
+    import json
+
+    job_dir = tmp_path / "job_abc"
+    job_dir.mkdir()
+    (job_dir / "workflow_results.json").write_text(json.dumps({
+        "results": {"dock": {"results": [{"ligand_id": "ATP", "best_affinity": -8.4}]}}
+    }))
+
+    exit_code = cli._run_compare_command([str(job_dir)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "ATP" in output
+    assert "-8.4" in output
+    assert "job_abc" in output
+
+
+def test_format_comparison_table_shows_na_for_missing_values():
+    """Ligands missing from a job should render as N/A rather than crashing."""
+    comparison = {
+        "ligands": ["ATP", "HEM"],
+        "jobs": ["job_abc", "job_def"],
+        "affinities": [[-8.4, None], [None, -7.1]],
+    }
+
+    table = cli._format_comparison_table(comparison)
+
+    assert "N/A" in table
+    assert "-8.4" in table
+    assert "-7.1" in table
+

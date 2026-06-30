@@ -240,3 +240,45 @@ Before showing the rerun plan or asking for confirmation, all required parameter
 ```
 
 This prevents a `KeyError` crash inside the orchestrator and gives the user a clear remediation path.
+
+---
+
+## Job Comparison
+
+### What it reads
+
+`compare_jobs()` (`services/llm_orchestrator/job_comparator.py`) reads each job's
+`workflow_results.json` — the same file written at the end of `execute_workflow()` — and
+extracts `results.dock.results[].{ligand_id, best_affinity}` for each job. No other
+persistence file (parameters, state, checkpoints) is involved; comparison is purely a
+read-only operation over completed jobs.
+
+### CLI usage
+
+```bash
+python nlp_orchestrator.py compare orchestrator_output/job_abc orchestrator_output/job_xyz
+```
+
+This is handled as a special case at the very top of `main()`, before the LLM client or
+orchestrator are constructed — comparing jobs needs no LLM and no MCP services, only
+local files, so neither is initialized for this subcommand.
+
+### How to interpret the table
+
+Columns are jobs, rows are ligands, cells are best binding affinity in kcal/mol. A ligand
+missing from a job's results shows `N/A`. Affinity is more favorable the more negative it
+is, so `compare_jobs()`'s `best_per_ligand` picks the *minimum* (most negative) value per
+ligand row across jobs.
+
+If a job docks the same `ligand_id` more than once (e.g. "two WWO ligands"), each
+occurrence after the first is disambiguated as `WWO #2`, `WWO #3`, etc. in dock-result
+order, so no duplicate result is silently dropped. These disambiguated rows only align
+across jobs that have the same number of occurrences of that ligand — a job with a single
+`WWO` has no `WWO #2` row, so that cell reads `N/A`.
+
+### Test coverage
+
+`tests/test_job_comparator.py` covers `load_job_affinities()` and `compare_jobs()`
+directly (missing files, empty dock results, missing-ligand alignment, best-per-ligand
+selection). `tests/test_nlp_orchestrator.py` covers the `compare` subcommand's argument
+handling and ASCII table formatting.

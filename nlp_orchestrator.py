@@ -31,6 +31,7 @@ from services.llm_orchestrator import (
     extract_updates_from_command_with_llm,
     save_results_bundle,
     validate_bundle_name,
+    compare_jobs,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP, CORE_PARAMS
@@ -727,8 +728,50 @@ def _run_interactive_loop(
     return 0
 
 
+def _format_comparison_table(comparison: Dict[str, Any]) -> str:
+    """Format a compare_jobs() result as a fixed-width ASCII table."""
+    ligands = comparison["ligands"]
+    jobs = comparison["jobs"]
+    affinities = comparison["affinities"]
+
+    ligand_width = max([len("Ligand")] + [len(l) for l in ligands])
+    job_widths = [max(len(j), 10) for j in jobs]
+
+    header = f"{'Ligand':<{ligand_width}} " + " ".join(f"{j:<{w}}" for j, w in zip(jobs, job_widths))
+    separator = "-" * ligand_width + " " + " ".join("-" * w for w in job_widths)
+
+    lines = [header, separator]
+    for ligand, row in zip(ligands, affinities):
+        cells = []
+        for val, w in zip(row, job_widths):
+            cell = f"{val:.1f}" if isinstance(val, (int, float)) else "N/A"
+            cells.append(f"{cell:<{w}}")
+        lines.append(f"{ligand:<{ligand_width}} " + " ".join(cells))
+
+    return "\n".join(lines)
+
+
+def _run_compare_command(job_dirs: List[str]) -> int:
+    """Handle `nlp_orchestrator.py compare JOB_DIR [JOB_DIR ...]`."""
+    if not job_dirs:
+        print("Usage: python nlp_orchestrator.py compare JOB_DIR [JOB_DIR ...]")
+        return 1
+
+    try:
+        comparison = compare_jobs(job_dirs)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    print(_format_comparison_table(comparison))
+    return 0
+
+
 def main():
     """Main entry point for orchestrator CLI."""
+    if len(sys.argv) > 1 and sys.argv[1] == "compare":
+        return _run_compare_command(sys.argv[2:])
+
     parser = argparse.ArgumentParser(
         description="Natural Language Molecular Docking Workflow Orchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,

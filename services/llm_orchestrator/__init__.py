@@ -21,6 +21,7 @@ from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
 from .interactive_session import InteractiveSession, save_results_bundle, validate_bundle_name
 from .rerun_planner import compute_rerun_steps, describe_rerun_plan
+from .job_comparator import load_job_affinities, compare_jobs
 
 __all__ = [
 	'WorkflowOrchestrator',
@@ -40,4 +41,6 @@ __all__ = [
 	'extract_box_source_choice_with_llm',
     'classify_session_intent',
     'extract_updates_from_command_with_llm',
+    'load_job_affinities',
+    'compare_jobs',
 ]

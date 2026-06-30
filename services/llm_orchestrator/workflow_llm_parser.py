@@ -17,7 +17,7 @@ SYSTEM_PROMPT = """You are a molecular docking workflow parser. Extract structur
 
 Extract the following:
 1. Services needed (choose from: get_input_files, prepare_ligands, prepare_protein, dock, visualize)
-   - Always include "get_input_files" if protein/ligand IDs are mentioned
+   - Always include "get_input_files" if protein/ligand IDs or a ligand_folder are mentioned
    - Always include "prepare_ligands" and "prepare_protein" if preparing or docking
    - Always include "dock" if docking is requested
    - Include "visualize" if user mentions ANY of these keywords: visualize, visualization, visualise, visualisation, view, render, rendering, image, picture, photo, show results, create visualization, display, see results, generate image
@@ -25,6 +25,11 @@ Extract the following:
 2. Parameters:
    - protein_id (4-character PDB ID)
     - ligand_ids (list of ligand identifiers or ligand names - CRITICAL: If user specifies multiple copies of the same ligand, you MUST duplicate the ligand ID in the array!)
+   - ligand_folder (path to a local directory of ligand files — ONLY set this when the user
+     explicitly names a folder/directory of ligands, e.g. "all ligands in /data/ligands" or
+     "every ligand file in ./my_ligands". Copy the path EXACTLY as the user wrote it, including
+     "./" or "/" prefixes — do not normalize, expand, or guess it. When ligand_folder is set,
+     do NOT also set ligand_ids — omit ligand_ids entirely.)
    - center (docking box center [x, y, z])
    - box_size (docking box dimensions [x, y, z])
    - ph (pH value, default 7.4)
@@ -47,10 +52,13 @@ User: "Dock with ATP and two HEM" -> ligand_ids: ["ATP", "HEM", "HEM"]
 User: "Dock and create visualization" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
 User: "Dock with ATP and render image" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
 User: "Dock and show results" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+User: "Dock protein 6lu7 against all ligands in /data/ligands" -> ligand_folder: "/data/ligands" (no ligand_ids)
+User: "Dock 6lu7 with every ligand file in ./my_ligands" -> ligand_folder: "./my_ligands" (no ligand_ids)
 
 Wrong Examples (DO NOT DO THIS):
 User: "Dock with two WWO ligands" -> ligand_ids: ["WWO"] WRONG! Should be ["WWO", "WWO"]
 User: "Use three ATP" -> ligand_ids: ["ATP"] WRONG! Should be ["ATP", "ATP", "ATP"]
+User: "Dock against all ligands in /data/ligands" -> ligand_ids: ["all ligands in /data/ligands"] WRONG! Should be ligand_folder: "/data/ligands"
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -67,6 +75,9 @@ Respond ONLY with valid JSON in this exact format:
   },
   "missing_required": []
 }
+
+Omit "ligand_ids" and instead include "ligand_folder": "<path>" in "parameters" when the user
+named a folder of ligands instead of individual ligand IDs.
 
 If critical parameters (center, box_size) are missing, list them in "missing_required".
 Do not add explanations, only return the JSON."""

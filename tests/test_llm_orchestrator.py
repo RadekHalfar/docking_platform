@@ -61,6 +61,29 @@ class TestLLMArchitecture:
         assert result["parameters"]["protein_id"] == "6lu7"
         assert "center" in result["parameters"]
 
+    def test_parse_workflow_with_llm_extracts_ligand_folder(self):
+        """LLM-parsed JSON carrying ligand_folder (no ligand_ids) should pass through
+        unchanged, since the LLM is responsible for choosing one or the other."""
+        workflow_json = {
+            "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_folder": "/data/ligands",
+                "center": [10, 20, 30],
+                "box_size": [25, 30, 35]
+            },
+            "missing_required": []
+        }
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(workflow_json)):
+            result = parse_workflow_with_llm(
+                llm_client, "Dock protein 6lu7 against all ligands in /data/ligands"
+            )
+
+        assert result["parameters"]["ligand_folder"] == "/data/ligands"
+        assert "ligand_ids" not in result["parameters"]
+
     def test_parse_workflow_visualization_fallback(self):
         """Visualization keyword fallback should append visualize service."""
         llm_output = {

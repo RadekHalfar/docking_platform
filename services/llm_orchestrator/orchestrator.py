@@ -13,6 +13,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from common.file_utils import scan_ligand_folder
 from common.path_utils import to_container_path
 from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
@@ -228,8 +229,21 @@ class WorkflowOrchestrator:
                 download_dir.mkdir(exist_ok=True)
 
                 local_protein_file = params.get("protein_file")
-                local_ligand_files = params.get("ligand_files") or []
-                remote_ligand_ids = params.get("ligand_ids") or []
+
+                ligand_folder = params.get("ligand_folder")
+                if ligand_folder:
+                    # A ligand folder supersedes individual ligand_files/ligand_ids:
+                    # every matching file in the folder is docked, nothing else.
+                    local_ligand_files = scan_ligand_folder(ligand_folder)
+                    if not local_ligand_files:
+                        raise ValueError(f"No ligand files found in {ligand_folder}")
+                    self._step_print(
+                        f"   \U0001f4c1 Found {len(local_ligand_files)} ligand file(s) in {ligand_folder}"
+                    )
+                    remote_ligand_ids: List[str] = []
+                else:
+                    local_ligand_files = params.get("ligand_files") or []
+                    remote_ligand_ids = params.get("ligand_ids") or []
 
                 needs_remote_protein = not local_protein_file
                 needs_remote_ligands = bool(remote_ligand_ids)

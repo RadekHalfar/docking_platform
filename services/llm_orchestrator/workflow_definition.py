@@ -39,6 +39,7 @@ DEFAULT_PARAMETERS: Dict[str, object] = {
     "formats": {"protein": "pdb", "ligand": "sdf"},
     "protein_file": None,
     "ligand_files": None,
+    "ligand_folder": None,
 }
 
 
@@ -137,8 +138,13 @@ def get_ligand_display_names(parameters: Dict[str, Any]) -> List[str]:
 
     Unlike protein_file/protein_id, ligand_files and ligand_ids are combined (not
     mutually exclusive) at execution time (see WorkflowOrchestrator.execute_workflow),
-    so the display must list both sources.
+    so the display must list both sources. ligand_folder supersedes both (it is
+    expanded into ligand_files at execution time), so it's shown on its own.
     """
+    ligand_folder = parameters.get("ligand_folder")
+    if ligand_folder:
+        return [f"all files in {ligand_folder} (folder)"]
+
     names: List[str] = []
     ligand_files = parameters.get("ligand_files")
     if ligand_files:

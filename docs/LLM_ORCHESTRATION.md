@@ -182,6 +182,9 @@ missing/invalid parameter the same way an unresolvable PDB ID would be.
 These flags also work with `--interactive` mode and apply to every `new_workflow` request
 issued in that session.
 
+For docking one protein against every ligand file in a folder, see
+[Batch Docking from a Folder](BATCH_DOCKING.md) (`--ligand-folder`).
+
 ### Interactive Mode
 
 ```bash

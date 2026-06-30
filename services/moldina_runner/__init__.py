@@ -237,27 +237,22 @@ class MoldinaRunner:
             
         Returns:
             Dictionary with docking results
+
+        Note: ligands are docked one at a time (one Moldina invocation per ligand)
+        rather than batched into a single invocation. This keeps memory usage flat
+        regardless of batch size and stops one bad ligand from killing the whole
+        run — batching all ligands into a single process previously triggered the
+        Linux OOM killer (SIGKILL / exit -9) once the container's memory limit was
+        exceeded.
         """
         ensure_directory(output_dir)
-        
+
         # Convert Windows paths to WSL paths if needed
         if self.is_windows:
             receptor_wsl = self._windows_path_to_wsl(receptor_path)
-            ligands_wsl = [self._windows_path_to_wsl(lig) for lig in ligand_paths]
-            output_dir_wsl = self._windows_path_to_wsl(output_dir)
         else:
-            # Convert to absolute paths for Linux/Docker
             receptor_wsl = os.path.abspath(receptor_path)
-            ligands_wsl = [os.path.abspath(lig) for lig in ligand_paths]
-            output_dir_wsl = os.path.abspath(output_dir)
-        
-        # Prepare output path
-        output_prefix = os.path.join(output_dir, "docking_output.pdbqt")
-        if self.is_windows:
-            output_prefix_wsl = self._windows_path_to_wsl(output_prefix)
-        else:
-            output_prefix_wsl = os.path.abspath(output_prefix)
-        
+
         # Config file contains only box/center parameters (new Moldina interface)
         config_path = os.path.join(output_dir, "center.txt")
         config_content = f"""center_x = {center[0]}
@@ -267,96 +262,157 @@ size_x = {box_size[0]}
 size_y = {box_size[1]}
 size_z = {box_size[2]}
 """
-        
+
         with open(config_path, 'w') as f:
             f.write(config_content)
-        
+
         if self.is_windows:
             config_wsl = self._windows_path_to_wsl(config_path)
         else:
             config_wsl = os.path.abspath(config_path)
-        
-        logger.info(f"Running Moldina docking for {len(ligand_paths)} ligands")
-        
-        # Build Moldina command — all parameters passed as flags, ligands via repeated --ligand args
-        moldina_cmd = [
-            self.moldina_path,
-            '--receptor', receptor_wsl,
-            '--ligand', *ligands_wsl,
-            '--config', config_wsl,
-            '--out', output_prefix_wsl,
-            '--cpu', str(cpu),
-            '--population', str(population),
-            '--exhaustiveness', str(exhaustiveness),
-            '--num_modes', str(num_modes),
-            '--energy_range', str(energy_range),
-            '--search_alg_PSO',
-        ]
-        
-        # Save parameters summary
+
+        # Save parameters summary (informational; one Moldina invocation per ligand below)
         params_path = os.path.join(output_dir, "parameters.txt")
         with open(params_path, 'w') as f:
             f.write("# Moldina run parameters\n")
             f.write(f"receptor = {receptor_wsl}\n")
-            for lig in ligands_wsl:
+            for lig in ligand_paths:
                 f.write(f"ligand = {lig}\n")
             f.write(f"config = {config_wsl}\n")
-            f.write(f"out = {output_prefix_wsl}\n")
             f.write(f"cpu = {cpu}\n")
             f.write(f"population = {population}\n")
             f.write(f"exhaustiveness = {exhaustiveness}\n")
             f.write(f"num_modes = {num_modes}\n")
             f.write(f"energy_range = {energy_range}\n")
             f.write(f"search_alg_PSO\n")
-        
-        try:
-            # Run Moldina
+
+        logger.info(f"Running Moldina docking for {len(ligand_paths)} ligand(s), one at a time")
+
+        results: List[Dict[str, Any]] = []
+        errors: List[str] = []
+
+        for ligand_path in ligand_paths:
+            ligand_id = Path(ligand_path).stem
+
             if self.is_windows:
-                moldina_cmd_str = ' '.join([shlex.quote(arg) for arg in moldina_cmd])
-                result = self._run_wsl_command(['bash', '-lc', moldina_cmd_str])
+                ligand_wsl = self._windows_path_to_wsl(ligand_path)
             else:
-                result = subprocess.run(
-                    moldina_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=3600
-                )
-            
-            if result.returncode != 0:
-                logger.error(f"Moldina failed: {result.stderr}")
-                raise RuntimeError(f"Moldina execution failed: {result.stderr}")
-            
-            # Save stdout/stderr as log file
-            log_file = os.path.join(output_dir, "moldina_output.log")
+                ligand_wsl = os.path.abspath(ligand_path)
+
+            output_prefix = os.path.join(output_dir, f"{ligand_id}_out.pdbqt")
+            if self.is_windows:
+                output_prefix_wsl = self._windows_path_to_wsl(output_prefix)
+            else:
+                output_prefix_wsl = os.path.abspath(output_prefix)
+
+            moldina_cmd = [
+                self.moldina_path,
+                '--receptor', receptor_wsl,
+                '--ligand', ligand_wsl,
+                '--config', config_wsl,
+                '--out', output_prefix_wsl,
+                '--cpu', str(cpu),
+                '--population', str(population),
+                '--exhaustiveness', str(exhaustiveness),
+                '--num_modes', str(num_modes),
+                '--energy_range', str(energy_range),
+                '--search_alg_PSO',
+            ]
+
+            try:
+                if self.is_windows:
+                    moldina_cmd_str = ' '.join([shlex.quote(arg) for arg in moldina_cmd])
+                    result = self._run_wsl_command(['bash', '-lc', moldina_cmd_str])
+                else:
+                    result = subprocess.run(
+                        moldina_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=3600
+                    )
+            except subprocess.TimeoutExpired:
+                logger.error(f"Moldina timed out for {ligand_id} (>1 hour)")
+                errors.append(f"{ligand_id}: docking timed out (>1 hour)")
+                continue
+
+            # Save stdout/stderr as a per-ligand log file unconditionally, so a
+            # failure is still debuggable from disk (the error text is often on
+            # stdout, not stderr).
+            log_file = os.path.join(output_dir, f"{ligand_id}_moldina_output.log")
             with open(log_file, 'w') as f:
                 f.write("=== STDOUT ===\n")
                 f.write(result.stdout)
                 f.write("\n\n=== STDERR ===\n")
                 f.write(result.stderr)
-            logger.info(f"Saved Moldina output to {log_file}")
-            
-            # Parse results
-            results = self._parse_moldina_results(output_dir, ligand_paths, result.stdout)
-            
-            return {
-                "status": "ok",
-                "receptor": receptor_path,
-                "total": len(ligand_paths),
-                "successful": len(results),
-                "failed": len(ligand_paths) - len(results),
-                "results": results,
-                "config_file": config_path,
-                "parameters_file": params_path,
-                "output_dir": output_dir,
-                "log_file": log_file
-            }
-            
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Moldina docking timed out (>1 hour)")
-        except Exception as e:
-            logger.error(f"Moldina docking failed: {e}")
-            raise
-    
+
+            if result.returncode != 0:
+                logger.error(
+                    f"Moldina failed for {ligand_id} (exit {result.returncode}): "
+                    f"stdout={result.stdout!r} stderr={result.stderr!r}"
+                )
+                errors.append(
+                    f"{ligand_id}: exit {result.returncode}: "
+                    f"{result.stderr or result.stdout or '(no output captured)'}"
+                )
+                continue
+
+            results.append(self._build_ligand_result(ligand_path, output_dir, result.stdout))
+
+        if not results:
+            raise RuntimeError(
+                "Moldina execution failed for all ligands: " + "; ".join(errors)
+            )
+
+        if errors:
+            logger.warning(f"Moldina docking had {len(errors)} failure(s): {'; '.join(errors)}")
+
+        # Sort by best affinity (most negative = best)
+        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
+
+        return {
+            "status": "ok",
+            "receptor": receptor_path,
+            "total": len(ligand_paths),
+            "successful": len(results),
+            "failed": len(ligand_paths) - len(results),
+            "errors": errors,
+            "results": results,
+            "config_file": config_path,
+            "parameters_file": params_path,
+            "output_dir": output_dir,
+        }
+
+    def _build_ligand_result(self, ligand_path: str, output_dir: str, stdout: str) -> Dict[str, Any]:
+        """
+        Build a single ligand's result dict from its own (non-batched) Moldina run.
+
+        Args:
+            ligand_path: Path to the input ligand file
+            output_dir: Directory containing this ligand's output/log files
+            stdout: This ligand's own Moldina stdout (not combined with other ligands)
+
+        Returns:
+            Result dictionary for this ligand
+        """
+        ligand_id = Path(ligand_path).stem
+        output_file = os.path.join(output_dir, f"{ligand_id}_out.pdbqt")
+        log_file = os.path.join(output_dir, f"{ligand_id}_out.log")
+
+        affinity_data = self._parse_moldina_stdout(stdout)
+        if not affinity_data["modes"] and os.path.exists(log_file):
+            affinity_data = self._parse_vina_log(log_file)
+
+        return {
+            "ligand_id": ligand_id,
+            "ligand_path": ligand_path,
+            "output_path": output_file if os.path.exists(output_file) else None,
+            "log_path": log_file if os.path.exists(log_file) else None,
+            "best_affinity": affinity_data.get("best_affinity"),
+            "modes": affinity_data.get("modes", []),
+            "num_modes_found": affinity_data.get("num_modes_found", 0),
+            "checksum": compute_file_checksum(output_file) if os.path.exists(output_file) else None,
+        }
+
     def _parse_moldina_results(self, output_dir: str, ligand_paths: List[str], stdout: str = "") -> List[Dict[str, Any]]:
         """
         Parse Moldina output results.

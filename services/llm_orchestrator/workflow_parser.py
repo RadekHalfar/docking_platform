@@ -48,6 +48,13 @@ class WorkflowParser:
             return None
 
         if param == "ligand_ids":
+            if params.get("ligand_folder"):
+                folder = params["ligand_folder"]
+                if not isinstance(folder, str) or not folder.strip():
+                    return "missing"
+                if not Path(folder).is_dir():
+                    return "invalid"
+                return None
             if params.get("ligand_files"):
                 files = params["ligand_files"]
                 if not isinstance(files, list) or len(files) == 0:
@@ -157,13 +164,17 @@ class WorkflowParser:
                 else:
                     lines.append("  - Please provide the protein PDB ID (e.g., '6lu7') or a local protein file.")
             elif param == "ligand_ids":
-                if params.get("ligand_files"):
+                if params.get("ligand_folder"):
+                    lines.append(
+                        f"  - The ligand folder '{params['ligand_folder']}' is invalid or not found."
+                    )
+                elif params.get("ligand_files"):
                     lines.append(
                         "  - One or more local ligand files are invalid or not found "
                         "(expected existing .sdf, .mol, .mol2 or .pdbqt files)."
                     )
                 else:
-                    lines.append("  - Please provide ligand IDs (e.g., 'ATP, HEM') or local ligand files.")
+                    lines.append("  - Please provide ligand IDs (e.g., 'ATP, HEM'), local ligand files, or a ligand folder.")
             elif param == "center":
                 if issue == "invalid":
                     lines.append("  - Docking box center is invalid. Please provide [x, y, z] (e.g., '10, 20, 30').")

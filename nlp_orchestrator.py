@@ -571,6 +571,7 @@ def _run_interactive_loop(
     clarification_mode: str,
     protein_file: Optional[str] = None,
     ligand_files: Optional[List[str]] = None,
+    ligand_folder: Optional[str] = None,
 ) -> int:
     """Run phase-1 interactive session loop with persistent active job context."""
     session = InteractiveSession()
@@ -631,6 +632,7 @@ def _run_interactive_loop(
                         session=session,
                         protein_file=protein_file,
                         ligand_files=ligand_files,
+                        ligand_folder=ligand_folder,
                     )
                 continue
 
@@ -712,6 +714,7 @@ def _run_interactive_loop(
                     session=session,
                     protein_file=protein_file,
                     ligand_files=ligand_files,
+                    ligand_folder=ligand_folder,
                 )
 
         except KeyboardInterrupt:
@@ -794,6 +797,12 @@ Examples:
         default=None,
         help="Path to a local ligand file (.sdf/.mol/.mol2/.pdbqt) to use instead of downloading from RCSB. "
              "Repeat the flag for multiple ligands (e.g. --ligand-files a.sdf --ligand-files b.sdf)."
+    )
+    parser.add_argument(
+        "--ligand-folder",
+        default=None,
+        help="Path to a directory of local ligand files (.sdf/.mol/.mol2/.pdbqt, scanned recursively) "
+             "to dock against. Overrides --ligand-files and any ligand IDs in the command."
     )
     parser.add_argument(
         "--check-health",
@@ -887,6 +896,7 @@ Examples:
             clarification_mode=args.clarification_mode,
             protein_file=args.protein_file,
             ligand_files=args.ligand_files,
+            ligand_folder=args.ligand_folder,
         )
 
     # Single command mode
@@ -899,6 +909,7 @@ Examples:
             clarification_mode=args.clarification_mode,
             protein_file=args.protein_file,
             ligand_files=args.ligand_files,
+            ligand_folder=args.ligand_folder,
         )
     else:
         parser.print_help()
@@ -1400,6 +1411,7 @@ def process_workflow(
     session: Optional[InteractiveSession] = None,
     protein_file: Optional[str] = None,
     ligand_files: Optional[List[str]] = None,
+    ligand_folder: Optional[str] = None,
 ) -> int:
     """
     Process a workflow from natural language input.
@@ -1420,13 +1432,17 @@ def process_workflow(
         # Apply local file overrides from CLI flags. A local protein_file always
         # takes precedence over an LLM-parsed protein_id (only one protein per run).
         # Local ligand_files are *combined* with any LLM-parsed ligand_ids — both
-        # sources are fetched/copied and docked together.
-        if protein_file or ligand_files:
+        # sources are fetched/copied and docked together. ligand_folder supersedes
+        # both ligand_files and ligand_ids (every file in the folder is docked).
+        if protein_file or ligand_files or ligand_folder:
             parsed.setdefault("parameters", {})
             if protein_file:
                 parsed["parameters"]["protein_file"] = protein_file
                 print(f"📁 Using local protein file: {protein_file}")
-            if ligand_files:
+            if ligand_folder:
+                parsed["parameters"]["ligand_folder"] = ligand_folder
+                print(f"📁 Using local ligand folder: {ligand_folder}")
+            elif ligand_files:
                 parsed["parameters"]["ligand_files"] = ligand_files
                 print(f"📁 Using local ligand file(s): {', '.join(ligand_files)}")
             services = parsed.setdefault("services", [])

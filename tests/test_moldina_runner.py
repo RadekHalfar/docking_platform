@@ -220,57 +220,59 @@ class TestMoldinaExecution:
         assert 'search_alg_PSO' in params_content
     
     def test_run_moldina_ligands_list(self, runner_linux, temp_dir, mock_subprocess):
-        """Test ligands list file generation"""
+        """Ligands are docked one at a time: each gets its own subprocess.run call
+        containing only that ligand's path (not batched into a single invocation,
+        which previously caused OOM kills on larger batches)."""
         receptor_path = os.path.join(temp_dir, "receptor.pdbqt")
         ligand1 = os.path.join(temp_dir, "ligand1.pdbqt")
         ligand2 = os.path.join(temp_dir, "ligand2.pdbqt")
         output_dir = os.path.join(temp_dir, "output")
-        
+
         for path in [receptor_path, ligand1, ligand2]:
             Path(path).touch()
-        
+
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
-        
-        with patch.object(runner_linux, '_parse_moldina_results', return_value=[]):
-            runner_linux.run_moldina_docking(
-                receptor_path=receptor_path,
-                ligand_paths=[ligand1, ligand2],
-                output_dir=output_dir,
-                center=(0, 0, 0),
-                box_size=(20, 20, 20)
-            )
-        
-        # Verify both ligands were passed to the subprocess command
-        call_args = mock_subprocess.run.call_args[0][0]
-        assert ligand1 in call_args or any(ligand1 in str(a) for a in call_args)
-        assert ligand2 in call_args or any(ligand2 in str(a) for a in call_args)
-    
+
+        runner_linux.run_moldina_docking(
+            receptor_path=receptor_path,
+            ligand_paths=[ligand1, ligand2],
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20)
+        )
+
+        # One subprocess.run call per ligand
+        assert mock_subprocess.run.call_count == 2
+        call1_args = mock_subprocess.run.call_args_list[0][0][0]
+        call2_args = mock_subprocess.run.call_args_list[1][0][0]
+        assert ligand1 in call1_args and ligand2 not in call1_args
+        assert ligand2 in call2_args and ligand1 not in call2_args
+
     def test_run_moldina_command_construction(self, runner_linux, temp_dir, mock_subprocess):
         """Test Moldina command is correctly constructed"""
         receptor_path = os.path.join(temp_dir, "receptor.pdbqt")
         ligand_path = os.path.join(temp_dir, "ligand.pdbqt")
         output_dir = os.path.join(temp_dir, "output")
-        
+
         for path in [receptor_path, ligand_path]:
             Path(path).touch()
-        
+
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
-        
-        with patch.object(runner_linux, '_parse_moldina_results', return_value=[]):
-            runner_linux.run_moldina_docking(
-                receptor_path=receptor_path,
-                ligand_paths=[ligand_path],
-                output_dir=output_dir,
-                center=(10.5, 20.3, -5.2),
-                box_size=(25, 30, 35),
-                cpu=4,
-                population=200
-            )
-        
+
+        runner_linux.run_moldina_docking(
+            receptor_path=receptor_path,
+            ligand_paths=[ligand_path],
+            output_dir=output_dir,
+            center=(10.5, 20.3, -5.2),
+            box_size=(25, 30, 35),
+            cpu=4,
+            population=200
+        )
+
         # Check that subprocess.run was called
         assert mock_subprocess.run.called
         call_args = mock_subprocess.run.call_args[0][0]
-        
+
         # Verify command structure
         assert runner_linux.moldina_path in call_args
         assert '--config' in call_args
@@ -454,3 +456,68 @@ class TestMoldinaRunnerIntegration:
         assert results["successful"] == 1
         assert len(results["results"]) == 1
         assert results["results"][0]["best_affinity"] == -8.5
+
+    def test_one_bad_ligand_does_not_kill_whole_batch(self, runner, temp_dir, mock_subprocess):
+        """A single failing ligand (e.g. OOM-killed, exit -9) is recorded as an error
+        but does not abort docking for the other ligands in the batch."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        good_ligand = os.path.join(temp_dir, "good.pdbqt")
+        bad_ligand = os.path.join(temp_dir, "bad.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+
+        Path(receptor).touch()
+        Path(good_ligand).touch()
+        Path(bad_ligand).touch()
+
+        def mock_moldina_run(cmd, *args, **kwargs):
+            os.makedirs(output_dir, exist_ok=True)
+            if "bad" in cmd[cmd.index('--ligand') + 1]:
+                return Mock(returncode=-9, stdout='', stderr='')
+            out_file = os.path.join(output_dir, "good_out.pdbqt")
+            log_file = os.path.join(output_dir, "good_out.log")
+            Path(out_file).write_text("MODEL 1\nREMARK VINA RESULT: -8.5\nENDMDL\n")
+            Path(log_file).write_text("""mode |   affinity | dist from best mode
+     | (kcal/mol) | rmsd l.b.| rmsd u.b.
+-----+------------+----------+----------
+   1       -8.5      0.000      0.000
+""")
+            return Mock(returncode=0, stdout='Moldina completed', stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        results = runner.run_moldina_docking(
+            receptor_path=receptor,
+            ligand_paths=[good_ligand, bad_ligand],
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20)
+        )
+
+        assert results["status"] == "ok"
+        assert results["total"] == 2
+        assert results["successful"] == 1
+        assert results["failed"] == 1
+        assert len(results["results"]) == 1
+        assert results["results"][0]["ligand_id"] == "good"
+        assert len(results["errors"]) == 1
+        assert "bad" in results["errors"][0]
+
+    def test_all_ligands_failing_raises_runtime_error(self, runner, temp_dir, mock_subprocess):
+        """If every ligand fails, the whole docking call still raises (no false 'ok' status)."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand = os.path.join(temp_dir, "ligand.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+
+        Path(receptor).touch()
+        Path(ligand).touch()
+
+        mock_subprocess.run.return_value = Mock(returncode=-9, stdout='', stderr='')
+
+        with pytest.raises(RuntimeError, match="failed for all ligands"):
+            runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=[ligand],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20)
+            )

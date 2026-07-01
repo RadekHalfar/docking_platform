@@ -60,14 +60,19 @@ User: "Dock with two WWO ligands" -> ligand_ids: ["WWO"] WRONG! Should be ["WWO"
 User: "Use three ATP" -> ligand_ids: ["ATP"] WRONG! Should be ["ATP", "ATP", "ATP"]
 User: "Dock against all ligands in /data/ligands" -> ligand_ids: ["all ligands in /data/ligands"] WRONG! Should be ligand_folder: "/data/ligands"
 
-Respond ONLY with valid JSON in this exact format:
+CRITICAL RULE FOR CENTER AND BOX_SIZE:
+- NEVER guess, invent, or use a default value for "center" or "box_size".
+- Only include them in "parameters" if the user EXPLICITLY stated the numeric values.
+- If either is not explicitly stated: OMIT it from "parameters" and add it to "missing_required".
+
+Example 1 — center and box_size both explicitly given by the user:
 {
   "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
   "parameters": {
     "protein_id": "5ogo",
     "ligand_ids": ["WWO", "WWO"],
     "center": [16.0, 9.0, 12.0],
-    "box_size": [20.0, 20.0, 20.0],
+    "box_size": [24.0, 28.0, 32.0],
     "ph": 7.4,
     "exhaustiveness": 8,
     "cpu": 4,
@@ -76,10 +81,39 @@ Respond ONLY with valid JSON in this exact format:
   "missing_required": []
 }
 
+Example 2 — center given but box_size NOT given (must be listed as missing):
+{
+  "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+  "parameters": {
+    "protein_id": "6lu7",
+    "ligand_ids": ["ATP"],
+    "center": [10.0, 20.0, 30.0],
+    "ph": 7.4,
+    "exhaustiveness": 8,
+    "cpu": 4,
+    "population": 500
+  },
+  "missing_required": ["box_size"]
+}
+
+Example 3 — box_size given but center NOT given (must be listed as missing; NEVER copy box_size numbers into center):
+{
+  "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+  "parameters": {
+    "protein_id": "6lu7",
+    "ligand_ids": ["ATP"],
+    "box_size": [1.0, 10.0, 1.0],
+    "ph": 7.4,
+    "exhaustiveness": 8,
+    "cpu": 4,
+    "population": 500
+  },
+  "missing_required": ["center"]
+}
+
 Omit "ligand_ids" and instead include "ligand_folder": "<path>" in "parameters" when the user
 named a folder of ligands instead of individual ligand IDs.
 
-If critical parameters (center, box_size) are missing, list them in "missing_required".
 Do not add explanations, only return the JSON."""
 
 

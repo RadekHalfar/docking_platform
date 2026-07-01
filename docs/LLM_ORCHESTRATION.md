@@ -906,14 +906,82 @@ A: Yes, in interactive mode you can provide missing parameters. For programmatic
 
 ---
 
-## References
+## Supported LLM Providers
 
-- **Ollama:** https://ollama.com/
-- **Llama 2:** https://ai.meta.com/llama/
-- **Mistral:** https://mistral.ai/
-- **Model Context Protocol (MCP):** Used for service communication
-- **Docking Parameters Guide:** See `docs/DOCKING_PARAMETERS.md`
+The platform works with any of the providers below — no code changes required. Set the
+provider in your `.env` file (copy `.env.example`) or via CLI flags.
+
+### Ollama (default — local, private, free)
+
+Runs entirely on your machine. Supports DeepSeek, LLaMA, Mistral, Qwen, Phi, and hundreds
+of other models — just change the model name.
+
+```bash
+LLM_PROVIDER=ollama
+LLM_ENDPOINT=http://localhost:11434
+LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
+```
+
+CLI: `--llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model <model>`
+
+### OpenAI
+
+Cloud provider. Requires an API key. `gpt-4o-mini` is recommended for cost efficiency.
+
+```bash
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-4o-mini
+```
+
+CLI: `--llm-provider openai --llm-api-key sk-... --llm-model gpt-4o-mini`
+
+### Anthropic
+
+Cloud provider. Requires an API key.
+
+```bash
+LLM_PROVIDER=anthropic
+LLM_API_KEY=sk-ant-...
+LLM_MODEL=claude-haiku-4-5-20251001
+```
+
+CLI: `--llm-provider anthropic --llm-api-key sk-ant-... --llm-model claude-haiku-4-5-20251001`
+
+### OpenAI-compatible (LM Studio, vLLM, Groq, Together AI, etc.)
+
+Any server exposing `POST /chat/completions` and `GET /models` in the OpenAI format.
+
+```bash
+# LM Studio (local):
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=http://localhost:1234/v1
+LLM_API_KEY=lm-studio        # placeholder — required to be non-empty by some servers
+LLM_MODEL=local-model
+
+# Groq cloud:
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_API_KEY=gsk_...
+LLM_MODEL=llama3-8b-8192
+```
+
+CLI: `--llm-provider openai_compatible --llm-base-url <url> --llm-api-key <key> --llm-model <model>`
+
+### Privacy summary
+
+| Provider | Data stays local? | Cost |
+|---|---|---|
+| Ollama | Yes | Free |
+| OpenAI-compatible (local) | Yes | Free |
+| OpenAI | No | Per token |
+| Anthropic | No | Per token |
+| Groq / Together AI | No | Free tier / per token |
 
 ---
 
-*Last updated: March 23, 2026*
+## References
+
+- **Ollama:** https://ollama.com/
+- **Model Context Protocol (MCP):** Used for service communication
+- **Docking Parameters Guide:** See `docs/DOCKING_PARAMETERS.md`

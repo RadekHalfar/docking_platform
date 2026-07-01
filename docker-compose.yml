@@ -212,9 +212,11 @@ services:
       - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
       - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
       - MCP_PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
-      - LLM_PROVIDER=ollama
-      - LLM_ENDPOINT=http://ollama:11434
-      - LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-http://ollama:11434}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
       - OLLAMA_URL=http://ollama:11434
     depends_on:
       rcsb-downloader:

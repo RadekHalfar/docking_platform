@@ -825,6 +825,11 @@ Examples:
         help="Optional API key for LLM providers that require authentication"
     )
     parser.add_argument(
+        "--llm-base-url",
+        default=os.getenv("LLM_BASE_URL"),
+        help="Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio)"
+    )
+    parser.add_argument(
         "--output-dir",
         default="./orchestrator_output",
         help="Base directory for workflow outputs (default: ./orchestrator_output)"
@@ -896,6 +901,7 @@ Examples:
         endpoint=args.llm_endpoint,
         model=args.llm_model,
         api_key=args.llm_api_key,
+        base_url=args.llm_base_url,
     )
     orchestrator = WorkflowOrchestrator(output_base=args.output_dir, verbosity=current_verbosity)
     parser_obj = WorkflowParser()

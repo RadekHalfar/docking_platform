@@ -7,7 +7,7 @@ Uses pluggable LLM providers to parse user input and coordinate MCP services.
 
 from .orchestrator import WorkflowOrchestrator
 from .llm_base import BaseLLMClient
-from .llm_adapters import OllamaAdapter
+from .llm_adapters import OllamaAdapter, OpenAIAdapter, AnthropicAdapter, OpenAICompatibleAdapter
 from .llm_factory import create_llm_client
 from .workflow_llm_parser import (
     parse_workflow_with_llm,
@@ -34,6 +34,9 @@ __all__ = [
 	'describe_rerun_plan',
 	'BaseLLMClient',
 	'OllamaAdapter',
+    'OpenAIAdapter',
+    'AnthropicAdapter',
+    'OpenAICompatibleAdapter',
 	'create_llm_client',
 	'parse_workflow_with_llm',
 	'generate_llm_follow_up_question',

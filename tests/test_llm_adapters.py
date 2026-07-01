@@ -7,7 +7,12 @@ import requests
 from unittest.mock import Mock, patch
 
 from services.llm_orchestrator import create_llm_client
-from services.llm_orchestrator.llm_adapters import OllamaAdapter
+from services.llm_orchestrator.llm_adapters import (
+    AnthropicAdapter,
+    OllamaAdapter,
+    OpenAIAdapter,
+    OpenAICompatibleAdapter,
+)
 
 
 class TestOllamaAdapter:
@@ -131,12 +136,208 @@ class TestOllamaAdapter:
         assert models == ["llama2", "mistral"]
 
 
+class TestOpenAIAdapter:
+    """Tests for OpenAI provider."""
+
+    def _make_chat_response(self, content: str):
+        mock = Mock()
+        mock.raise_for_status.return_value = None
+        mock.json.return_value = {"choices": [{"message": {"content": content}}]}
+        return mock
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_success(self, mock_post):
+        mock_post.return_value = self._make_chat_response("hello from openai")
+        adapter = OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
+        assert adapter.generate("prompt") == "hello from openai"
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_sends_system_message(self, mock_post):
+        mock_post.return_value = self._make_chat_response("ok")
+        adapter = OpenAIAdapter(api_key="sk-test")
+        adapter.generate("user prompt", system="system prompt")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["messages"][0] == {"role": "system", "content": "system prompt"}
+        assert payload["messages"][1] == {"role": "user", "content": "user prompt"}
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_raises_on_http_error(self, mock_post):
+        err = requests.HTTPError("401 Unauthorized")
+        err.response = Mock(status_code=401)
+        mock_post.return_value.raise_for_status.side_effect = err
+        adapter = OpenAIAdapter(api_key="sk-bad")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    def test_check_health_success(self, mock_get):
+        mock_get.return_value.status_code = 200
+        assert OpenAIAdapter(api_key="sk-test").check_health() is True
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    def test_check_health_failure(self, mock_get):
+        mock_get.side_effect = requests.ConnectionError()
+        assert OpenAIAdapter(api_key="sk-test").check_health() is False
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    def test_list_models(self, mock_get):
+        mock_get.return_value.raise_for_status.return_value = None
+        mock_get.return_value.json.return_value = {
+            "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]
+        }
+        models = OpenAIAdapter(api_key="sk-test").list_models()
+        assert models == ["gpt-4o", "gpt-4o-mini"]
+
+    def test_authorization_header_set(self):
+        adapter = OpenAIAdapter(api_key="sk-mykey")
+        assert adapter._headers()["Authorization"] == "Bearer sk-mykey"
+
+
+class TestAnthropicAdapter:
+    """Tests for Anthropic provider."""
+
+    def _make_messages_response(self, text: str):
+        mock = Mock()
+        mock.raise_for_status.return_value = None
+        mock.json.return_value = {"content": [{"text": text}]}
+        return mock
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_success(self, mock_post):
+        mock_post.return_value = self._make_messages_response("hello from claude")
+        adapter = AnthropicAdapter(api_key="sk-ant-test")
+        assert adapter.generate("prompt") == "hello from claude"
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_includes_system_field(self, mock_post):
+        mock_post.return_value = self._make_messages_response("ok")
+        adapter = AnthropicAdapter(api_key="sk-ant-test")
+        adapter.generate("user prompt", system="system prompt")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["system"] == "system prompt"
+        assert payload["messages"] == [{"role": "user", "content": "user prompt"}]
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_raises_on_auth_error(self, mock_post):
+        err = requests.HTTPError("401 Unauthorized")
+        err.response = Mock(status_code=401)
+        mock_post.return_value.raise_for_status.side_effect = err
+        adapter = AnthropicAdapter(api_key="sk-ant-bad")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    def test_check_health_uses_models_endpoint(self, mock_get):
+        mock_get.return_value.status_code = 200
+        AnthropicAdapter(api_key="sk-ant-test").check_health()
+        assert "/v1/models" in mock_get.call_args.args[0]
+
+    def test_correct_headers_set(self):
+        adapter = AnthropicAdapter(api_key="sk-ant-mykey")
+        headers = adapter._headers()
+        assert headers["x-api-key"] == "sk-ant-mykey"
+        assert headers["anthropic-version"] == "2023-06-01"
+
+
+class TestOpenAICompatibleAdapter:
+    """Tests for OpenAI-compatible provider (LM Studio, vLLM, etc.)."""
+
+    def _make_chat_response(self, content: str):
+        mock = Mock()
+        mock.raise_for_status.return_value = None
+        mock.json.return_value = {"choices": [{"message": {"content": content}}]}
+        return mock
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_uses_custom_base_url(self, mock_post):
+        mock_post.return_value = self._make_chat_response("ok")
+        adapter = OpenAICompatibleAdapter(
+            base_url="http://localhost:1234/v1", model="local-model"
+        )
+        adapter.generate("prompt")
+        assert "http://localhost:1234/v1/chat/completions" in mock_post.call_args.args[0]
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_works_without_api_key(self, mock_post):
+        mock_post.return_value = self._make_chat_response("ok")
+        adapter = OpenAICompatibleAdapter(base_url="http://localhost:1234/v1", model="m")
+        adapter.generate("prompt")
+        headers = mock_post.call_args.kwargs["headers"]
+        assert "Authorization" not in headers
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_sends_auth_when_api_key_provided(self, mock_post):
+        mock_post.return_value = self._make_chat_response("ok")
+        adapter = OpenAICompatibleAdapter(
+            base_url="http://localhost:1234/v1", model="m", api_key="my-key"
+        )
+        adapter.generate("prompt")
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer my-key"
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    def test_check_health_hits_models_endpoint(self, mock_get):
+        mock_get.return_value.status_code = 200
+        adapter = OpenAICompatibleAdapter(base_url="http://localhost:8000/v1", model="m")
+        assert adapter.check_health() is True
+        assert "http://localhost:8000/v1/models" in mock_get.call_args.args[0]
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    def test_generate_raises_on_http_error(self, mock_post):
+        err = requests.HTTPError("500 Internal Server Error")
+        err.response = Mock(status_code=500)
+        mock_post.return_value.raise_for_status.side_effect = err
+        adapter = OpenAICompatibleAdapter(base_url="http://localhost:1234/v1", model="m")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+
 class TestLLMFactory:
     """Tests for provider factory behavior."""
 
     def test_create_ollama_client(self):
         client = create_llm_client("ollama", "http://test:11434", "llama2")
         assert isinstance(client, OllamaAdapter)
+
+    def test_create_openai_client(self):
+        client = create_llm_client("openai", "", "gpt-4o-mini", api_key="sk-test")
+        assert isinstance(client, OpenAIAdapter)
+        assert client.model == "gpt-4o-mini"
+
+    def test_create_anthropic_client(self):
+        client = create_llm_client("anthropic", "", "claude-haiku-4-5-20251001", api_key="sk-ant-test")
+        assert isinstance(client, AnthropicAdapter)
+        assert client.api_key == "sk-ant-test"
+
+    def test_create_openai_compatible_uses_base_url(self):
+        client = create_llm_client(
+            "openai_compatible", "http://fallback:11434", "local-model",
+            base_url="http://localhost:1234/v1",
+        )
+        assert isinstance(client, OpenAICompatibleAdapter)
+        assert client.endpoint == "http://localhost:1234/v1"
+
+    def test_create_openai_compatible_falls_back_to_endpoint_when_no_base_url(self):
+        client = create_llm_client("openai_compatible", "http://localhost:8000/v1", "model")
+        assert isinstance(client, OpenAICompatibleAdapter)
+        assert client.endpoint == "http://localhost:8000/v1"
+
+    def test_create_llm_client_raises_on_unknown_provider(self):
+        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+            create_llm_client("unknown_provider", "http://x", "model")
+
+    @pytest.mark.parametrize("provider,expected_type", [
+        ("ollama", OllamaAdapter),
+        ("openai", OpenAIAdapter),
+        ("anthropic", AnthropicAdapter),
+        ("openai_compatible", OpenAICompatibleAdapter),
+    ])
+    def test_factory_returns_correct_type_per_provider(self, provider, expected_type):
+        client = create_llm_client(
+            provider, "http://localhost:11434", "model",
+            api_key="test-key", base_url="http://localhost:1234/v1",
+        )
+        assert isinstance(client, expected_type)
 
 
 @pytest.mark.integration

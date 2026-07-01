@@ -45,6 +45,7 @@ COPY services/__init__.py /app/services/__init__.py
 RUN mkdir -p /app/orchestrator_output /app/demo_output /tmp/runtime && chmod -R 777 /tmp/runtime /app/orchestrator_output /app/demo_output
 
 COPY docker/pymol_interactive_start.sh /usr/local/bin/pymol_interactive_start.sh
+COPY docker/pymol_rpc_server.py /usr/local/bin/pymol_rpc_server.py
 RUN chmod +x /usr/local/bin/pymol_interactive_start.sh
 
 EXPOSE 6080 8090

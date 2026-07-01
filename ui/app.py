@@ -9,6 +9,7 @@ from common.utils import generate_job_id
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
 from ui.orchestrator_bridge import OrchestratorBridge
+from ui.results import make_affinity_chart_figure
 from ui.session_state import apply_parsed_params, get_params, init
 
 st.set_page_config(
@@ -48,9 +49,7 @@ def _collect_form_params() -> dict:
         pid = st.session_state.get("param_protein_id", "").strip()
         if pid:
             params["protein_id"] = pid
-        folder = st.session_state.get("param_ligand_folder_path", "").strip()
-        if folder:
-            params["ligand_folder"] = folder
+        # ligand_files already written to params via _on_folder_ligand_upload_change
 
     # local_files: protein_file / ligand_files already written to params during upload
 
@@ -128,8 +127,8 @@ def _handle_run_docking() -> None:
     st.session_state.params.update(form_params)
     params = st.session_state.params.copy()
 
-    # Determine services based on what's present
-    services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]
+    # Always include visualization — it runs after docking and produces the PNG.
+    services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
     try:
         validated = st.session_state.parser.validate_workflow(
             {"services": services, "parameters": params}
@@ -151,6 +150,7 @@ def _handle_run_docking() -> None:
 
     job_id = generate_job_id()
     st.session_state.job_id = job_id
+    st.session_state["_job_done"] = False
 
     bridge = OrchestratorBridge()
     bridge.start_workflow(validated, job_id, str(OUTPUT_BASE))
@@ -539,50 +539,67 @@ def _render_current_job() -> None:
 
 
 def _render_affinity_chart(result: dict) -> None:
-    import plotly.graph_objects as go
-
     dock_results = result.get("results", {}).get("dock", {}).get("results", [])
-    if not dock_results:
-        return
+    fig = make_affinity_chart_figure(dock_results)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
 
-    ligands = [r["ligand_id"] for r in dock_results]
-    affinities = [r.get("best_affinity") for r in dock_results]
-    valid = [(l, a) for l, a in zip(ligands, affinities) if a is not None]
-    if not valid:
-        return
-    valid.sort(key=lambda x: x[1])  # most negative first
 
-    labels, values = zip(*valid)
-    fig = go.Figure(
-        go.Bar(
-            x=list(values),
-            y=list(labels),
-            orientation="h",
-            marker_color="steelblue",
-        )
-    )
-    fig.update_layout(
-        title="Binding Affinity (kcal/mol)",
-        xaxis_title="Affinity (kcal/mol)",
-        height=max(200, len(labels) * 40 + 80),
-        margin=dict(l=10, r=10, t=40, b=40),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+def _load_job_in_pymol(job_id: str | None) -> tuple[bool, str]:
+    """Ask the pymol-interactive helper API to load job structures.
+
+    Returns (success, message) for display in the PyMOL tab.
+    """
+    if not job_id:
+        return False, "No job selected."
+    already_loaded = st.session_state.get("_pymol_loaded_job")
+    if already_loaded == job_id:
+        return True, f"Loaded job `{job_id}`."
+    try:
+        import requests as _req
+        api_url = os.getenv("PYMOL_INTERACTIVE_URL", "http://pymol-interactive:8090")
+        resp = _req.post(f"{api_url}/api/load_job", json={"job_id": job_id}, timeout=10)
+        if resp.ok:
+            st.session_state["_pymol_loaded_job"] = job_id
+            return True, f"Loaded job `{job_id}` into PyMOL."
+        return False, f"load_job failed ({resp.status_code}): {resp.text[:200]}"
+    except Exception as exc:
+        return False, f"Cannot reach PyMOL helper API: {exc}"
+
+
+def _resolve_container_path(path: str) -> Path:
+    """Remap /app/orchestrator_output/... → OUTPUT_BASE/... so the UI container
+    can access files written by MCP services that mount the volume at /app."""
+    p = Path(path)
+    try:
+        # e.g. /app/orchestrator_output/job_x/... → job_x/...
+        rel = p.relative_to("/app/orchestrator_output")
+        return OUTPUT_BASE / rel
+    except ValueError:
+        return p
 
 
 def _render_visualization(result: dict) -> None:
-    png_path = result.get("results", {}).get("visualize", {}).get("image_path")
-    if not png_path or not Path(png_path).exists():
+    raw_path = result.get("results", {}).get("visualize", {}).get("image_path")
+    if not raw_path:
+        return
+    png_path = _resolve_container_path(raw_path)
+    if not png_path.exists():
         return
 
     tab_img, tab_pymol = st.tabs(["Image", "PyMOL"])
     with tab_img:
-        st.image(png_path)
+        st.image(str(png_path))
         with open(png_path, "rb") as f:
             st.download_button("Download PNG", f, file_name="docking.png", mime="image/png")
     with tab_pymol:
-        pymol_url = os.getenv("PYMOL_INTERACTIVE_URL", "http://localhost:6080")
-        st.components.v1.iframe(pymol_url, height=600, scrolling=False)
+        ok, msg = _load_job_in_pymol(st.session_state.get("job_id"))
+        if ok:
+            st.success(msg, icon="✅")
+        else:
+            st.error(msg)
+        novnc_url = os.getenv("PYMOL_NOVNC_URL", "http://localhost:6080") + "/vnc_auto.html"
+        st.components.v1.iframe(novnc_url, height=600, scrolling=False)
 
 
 def _render_file_downloads(job_id: str) -> None:
@@ -633,6 +650,8 @@ with params_col:
 with results_col:
     render_results_panel()
 
-# Keep polling while a job is running.
+# Keep polling while a job is running — 2 s delay avoids spinning the CPU.
 if st.session_state.bridge and st.session_state.bridge.is_running():
+    import time
+    time.sleep(2)
     st.rerun()

@@ -133,7 +133,6 @@ services:
   # Browser UI for interactive visualization and docking-box definition.
   pymol-interactive:
     <<: *service-common
-    profiles: ["interactive"]
     image: mcp-pymol-interactive:latest
     build:
       context: .
@@ -262,6 +261,7 @@ services:
       - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
       - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
       - PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
+      - PYMOL_NOVNC_URL=http://localhost:6080
     depends_on:
       rcsb-downloader:
         condition: service_healthy
@@ -272,6 +272,8 @@ services:
       moldina-runner:
         condition: service_healthy
       pymol-visualizer:
+        condition: service_healthy
+      pymol-interactive:
         condition: service_healthy
       ollama:
         condition: service_healthy

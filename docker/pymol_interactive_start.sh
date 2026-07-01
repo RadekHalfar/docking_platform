@@ -35,8 +35,9 @@ openbox >/tmp/runtime/openbox.log 2>&1 &
 x11vnc -display "$DISPLAY" -forever -shared -nopw -rfbport 5900 >/tmp/runtime/x11vnc.log 2>&1 &
 /usr/share/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 >/tmp/runtime/novnc.log 2>&1 &
 
-# GUI PyMOL with XML-RPC enabled for helper API integration
-pymol -R >/tmp/runtime/pymol.log 2>&1 &
+# GUI PyMOL with explicit XML-RPC server via startup script.
+# pymol -R is unreliable in open-source 3.x (logs start but never binds socket).
+pymol -r /usr/local/bin/pymol_rpc_server.py >/tmp/runtime/pymol.log 2>&1 &
 
 # Start helper API in foreground
 exec python -m services.pymol_interactive.server

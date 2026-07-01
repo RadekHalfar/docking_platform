@@ -1,0 +1,20 @@
+FROM mcp-docking-base:latest
+
+RUN pip install --no-cache-dir \
+    "streamlit>=1.35" \
+    "watchdog>=4.0" \
+    "plotly>=5.0" \
+    "pandas>=2.0"
+
+WORKDIR /workspace
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+  CMD curl -sf http://localhost:3000/_stcore/health || exit 1
+
+CMD ["streamlit", "run", "ui/app.py", \
+     "--server.port=3000", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--server.fileWatcherType=none"]

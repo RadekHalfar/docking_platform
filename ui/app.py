@@ -8,9 +8,11 @@ import streamlit as st
 from common.utils import generate_job_id
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
+from ui.job_history import list_completed_jobs
+from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
-from ui.results import make_affinity_chart_figure
-from ui.session_state import apply_parsed_params, get_params, init
+from ui.results import build_comparison_html, make_affinity_chart_figure
+from ui.session_state import apply_parsed_params, apply_settings, get_params, init
 
 st.set_page_config(
     layout="wide",
@@ -150,6 +152,7 @@ def _handle_run_docking() -> None:
 
     job_id = generate_job_id()
     st.session_state.job_id = job_id
+    st.session_state.viewed_job_id = job_id
     st.session_state["_job_done"] = False
 
     bridge = OrchestratorBridge()
@@ -170,36 +173,90 @@ def _reset_session() -> None:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
+_PROVIDER_LABELS = {
+    "ollama": "Ollama (local)",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "openai_compatible": "Other local server",
+}
+_PROVIDER_KEYS = {label: key for key, label in _PROVIDER_LABELS.items()}
+
+
 def render_sidebar() -> None:
     with st.sidebar:
         st.header("Settings")
-        provider = os.getenv("LLM_PROVIDER", "ollama")
-        model = os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M")
-        endpoint = os.getenv("LLM_ENDPOINT", "http://localhost:11434")
-        st.info(f"Provider: **{provider}**  \nModel: `{model}`  \nEndpoint: `{endpoint}`")
+        _render_settings_form()
 
         st.divider()
         st.subheader("Job History")
         _render_job_history()
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_ollama_models(endpoint: str) -> list:
+    return list_ollama_models(endpoint)
+
+
+def _render_settings_form() -> None:
+    settings = st.session_state.settings
+    labels = list(_PROVIDER_LABELS.values())
+    current_label = _PROVIDER_LABELS.get(settings.get("provider", "ollama"), labels[0])
+
+    provider_label = st.selectbox("LLM Provider", labels, index=labels.index(current_label))
+    provider = _PROVIDER_KEYS[provider_label]
+
+    endpoint = settings.get("endpoint", "")
+    base_url = settings.get("base_url", "")
+    api_key = settings.get("api_key", "")
+    current_model = settings.get("model", "")
+
+    if provider == "ollama":
+        with st.expander("Advanced"):
+            endpoint = st.text_input(
+                "Endpoint URL",
+                value=endpoint or "http://localhost:11434",
+                help="Point at a different Ollama server (e.g. a GPU workstation) "
+                     "instead of the bundled one.",
+            )
+    elif provider == "openai_compatible":
+        endpoint = st.text_input(
+            "Endpoint URL", value=endpoint or "http://localhost:11434"
+        )
+        base_url = st.text_input("Base URL (OpenAI-compatible)", value=base_url or endpoint)
+
+    if provider == "ollama":
+        available_models = _cached_ollama_models(endpoint)
+        if available_models:
+            options = available_models if current_model in available_models else (
+                ([current_model] if current_model else []) + available_models
+            )
+            model = st.selectbox("Model", options, index=options.index(current_model) if current_model in options else 0)
+        else:
+            model = st.text_input("Model", value=current_model)
+            st.caption("Could not reach Ollama to list models — showing free-text input.")
+    else:
+        model = st.text_input("Model", value=current_model)
+
+    if provider in ("openai", "anthropic", "openai_compatible"):
+        api_key = st.text_input("API Key", value=api_key, type="password")
+
+    if st.button("Apply settings"):
+        new_settings = {
+            "provider": provider,
+            "model": model.strip(),
+            "endpoint": endpoint.strip(),
+            "api_key": api_key.strip(),
+            "base_url": base_url.strip(),
+        }
+        try:
+            apply_settings(new_settings)
+            st.success("Settings applied.")
+        except Exception as exc:
+            st.error(f"Could not apply settings: {exc}")
+
+
 def _render_job_history() -> None:
-    jobs = []
-    if OUTPUT_BASE.exists():
-        for results_file in sorted(OUTPUT_BASE.glob("*/workflow_results.json"), reverse=True):
-            try:
-                data = json.loads(results_file.read_text())
-                if data.get("status") == "completed":
-                    dock = data.get("results", {}).get("dock", {})
-                    jobs.append(
-                        {
-                            "job_id": results_file.parent.name,
-                            "job_dir": str(results_file.parent),
-                            "ligand_count": len(dock.get("results", [])),
-                        }
-                    )
-            except Exception:
-                pass
+    jobs = list_completed_jobs(str(OUTPUT_BASE))
 
     if not jobs:
         st.caption("No completed jobs yet.")
@@ -207,9 +264,15 @@ def _render_job_history() -> None:
 
     selected = []
     for job in jobs[:10]:
-        label = f"{job['job_id']} ({job['ligand_count']} ligand(s))"
-        if st.checkbox(label, key=f"job_sel_{job['job_id']}"):
-            selected.append(job["job_dir"])
+        label = f"{job['job_id']}  {job['protein_id']} ({job['ligand_count']} ligand(s))"
+        col_check, col_load = st.columns([4, 1])
+        with col_check:
+            if st.checkbox(label, key=f"job_sel_{job['job_id']}"):
+                selected.append(job["job_dir"])
+        with col_load:
+            if st.button("Load", key=f"job_load_{job['job_id']}"):
+                st.session_state.viewed_job_id = job["job_id"]
+                st.rerun()
 
     if len(selected) >= 2 and st.button("Compare selected jobs"):
         try:
@@ -499,10 +562,10 @@ def _render_docking_box() -> None:
 
 def render_results_panel() -> None:
     st.subheader("Results")
-    tab_current, tab_compare = st.tabs(["Current Job", "Compare Jobs"])
+    tab_job, tab_compare = st.tabs(["Job Viewer", "Compare Jobs"])
 
-    with tab_current:
-        _render_current_job()
+    with tab_job:
+        _render_job_results()
 
     with tab_compare:
         comparison = st.session_state.get("comparison")
@@ -512,15 +575,40 @@ def render_results_panel() -> None:
             st.caption("Select 2+ completed jobs in the sidebar and click Compare.")
 
 
-def _render_current_job() -> None:
-    bridge: OrchestratorBridge = st.session_state.bridge
-    job_id = st.session_state.job_id
+def _load_workflow_results(job_id: str) -> dict | None:
+    """Read workflow_results.json straight from disk for a completed job.
 
-    if bridge and bridge.is_running():
-        st.info(f"Job `{job_id}` is running...")
+    Used to view jobs loaded from history (or run in a previous session /
+    via the CLI), which have no in-memory OrchestratorBridge to poll.
+    """
+    results_file = OUTPUT_BASE / job_id / "workflow_results.json"
+    if not results_file.exists():
+        return None
+    try:
+        return json.loads(results_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _render_job_results() -> None:
+    bridge: OrchestratorBridge = st.session_state.bridge
+    active_job_id = st.session_state.job_id
+    viewed_job_id = st.session_state.get("viewed_job_id") or active_job_id
+
+    if not viewed_job_id:
+        st.caption(
+            "No job selected yet. Configure parameters and click Run Docking, "
+            "or click Load next to a job in the sidebar's Job History."
+        )
         return
 
-    if bridge:
+    # The job currently tracked by the live bridge takes priority — it may
+    # still be running, in which case there's nothing on disk to fall back to.
+    if bridge and viewed_job_id == active_job_id:
+        if bridge.is_running():
+            st.info(f"Job `{viewed_job_id}` is running...")
+            return
+
         result = bridge.get_result()
         error = bridge.get_error()
 
@@ -529,13 +617,23 @@ def _render_current_job() -> None:
             return
 
         if result and result.get("status") == "completed":
-            st.success(f"Job `{job_id}` completed")
+            st.success(f"Job `{viewed_job_id}` completed")
             _render_affinity_chart(result)
-            _render_visualization(result)
-            _render_file_downloads(job_id)
+            _render_visualization(result, viewed_job_id)
+            _render_file_downloads(viewed_job_id)
             return
 
-    st.caption("No job running yet. Configure parameters and click Run Docking.")
+    # Otherwise, view a completed job by reading its results straight from disk
+    # — covers jobs Loaded from history and jobs with no live bridge.
+    result = _load_workflow_results(viewed_job_id)
+    if result and result.get("status") == "completed":
+        st.info(f"Viewing job `{viewed_job_id}`")
+        _render_affinity_chart(result)
+        _render_visualization(result, viewed_job_id)
+        _render_file_downloads(viewed_job_id)
+        return
+
+    st.caption("No results found for this job.")
 
 
 def _render_affinity_chart(result: dict) -> None:
@@ -579,7 +677,7 @@ def _resolve_container_path(path: str) -> Path:
         return p
 
 
-def _render_visualization(result: dict) -> None:
+def _render_visualization(result: dict, job_id: str) -> None:
     raw_path = result.get("results", {}).get("visualize", {}).get("image_path")
     if not raw_path:
         return
@@ -593,7 +691,7 @@ def _render_visualization(result: dict) -> None:
         with open(png_path, "rb") as f:
             st.download_button("Download PNG", f, file_name="docking.png", mime="image/png")
     with tab_pymol:
-        ok, msg = _load_job_in_pymol(st.session_state.get("job_id"))
+        ok, msg = _load_job_in_pymol(job_id)
         if ok:
             st.success(msg, icon="✅")
         else:
@@ -621,17 +719,7 @@ def _render_file_downloads(job_id: str) -> None:
 
 
 def _render_comparison_table(comparison: dict) -> None:
-    import pandas as pd
-
-    df = pd.DataFrame(
-        comparison["affinities"],
-        index=comparison["ligands"],
-        columns=comparison["jobs"],
-    )
-    st.dataframe(
-        df.style.highlight_min(axis=1, color="lightgreen", props="color: black;"),
-        use_container_width=True,
-    )
+    st.markdown(build_comparison_html(comparison), unsafe_allow_html=True)
     st.caption("Green = strongest predicted binding (most negative kcal/mol). N/A = not docked in that job.")
 
 

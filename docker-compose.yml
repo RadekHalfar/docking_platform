@@ -255,6 +255,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - DOCKING_PLATFORM_SETTINGS_FILE=/workspace/cache/.docking_platform_settings.json
       - MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
       - MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
       - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003

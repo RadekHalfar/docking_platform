@@ -1,10 +1,9 @@
 """Session state initialization and parameter helpers."""
-import os
-
 import streamlit as st
 
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.workflow_parser import WorkflowParser
+from ui.settings import load_settings, save_settings
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
 _WIDGET_DEFAULTS = {
@@ -39,14 +38,11 @@ def init() -> None:
     if "parser" not in st.session_state:
         st.session_state.parser = WorkflowParser()
 
+    if "settings" not in st.session_state:
+        st.session_state.settings = load_settings()
+
     if "llm_client" not in st.session_state:
-        st.session_state.llm_client = create_llm_client(
-            provider=os.getenv("LLM_PROVIDER", "ollama"),
-            endpoint=os.getenv("LLM_ENDPOINT", "http://localhost:11434"),
-            model=os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M"),
-            api_key=os.getenv("LLM_API_KEY"),
-            base_url=os.getenv("LLM_BASE_URL"),
-        )
+        st.session_state.llm_client = _build_llm_client(st.session_state.settings)
 
     if "params" not in st.session_state:
         st.session_state.params = {}
@@ -60,12 +56,35 @@ def init() -> None:
     if "job_id" not in st.session_state:
         st.session_state.job_id = None
 
+    if "viewed_job_id" not in st.session_state:
+        st.session_state.viewed_job_id = None
+
     if "comparison" not in st.session_state:
         st.session_state.comparison = None
 
     for key, default in _WIDGET_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = default
+
+
+def _build_llm_client(settings: dict):
+    return create_llm_client(
+        provider=settings["provider"],
+        endpoint=settings["endpoint"],
+        model=settings["model"],
+        api_key=settings.get("api_key"),
+        base_url=settings.get("base_url"),
+    )
+
+
+def apply_settings(new_settings: dict) -> None:
+    """Persist settings to disk and rebuild the LLM client for the current session.
+
+    api_key is kept in session state for immediate use but never written to disk.
+    """
+    st.session_state.settings = new_settings
+    save_settings(new_settings)
+    st.session_state.llm_client = _build_llm_client(new_settings)
 
 
 def get_params() -> dict:

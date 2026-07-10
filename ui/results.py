@@ -1,6 +1,9 @@
 """Pure data-processing helpers for the results panel (no Streamlit dependency)."""
 from __future__ import annotations
 
+import html as _html
+from typing import Any, Dict
+
 
 def prepare_affinity_data(dock_results: list) -> list[tuple[str, float]] | None:
     """Extract and sort (ligand_id, affinity) pairs from dock results.
@@ -45,3 +48,63 @@ def make_affinity_chart_figure(dock_results: list):
         margin=dict(l=10, r=10, t=40, b=40),
     )
     return fig
+
+
+def build_comparison_dataframe(comparison: Dict[str, Any]):
+    """Build a ligand x job affinity table from job_comparator.compare_jobs() output.
+
+    Requires pandas — only available in the UI image, not the base image.
+    """
+    import pandas as pd
+
+    return pd.DataFrame(
+        comparison["affinities"],
+        index=comparison["ligands"],
+        columns=comparison["jobs"],
+    )
+
+
+def build_comparison_html(comparison: Dict[str, Any]) -> str:
+    """Render a ligand x job affinity table as a self-contained HTML string.
+
+    Built as raw HTML/inline-CSS rather than a pandas Styler passed to
+    st.dataframe: Streamlit's interactive dataframe grid draws on a <canvas>
+    and does not reliably apply Styler background colors across the
+    light/dark theme toggle — it was rendering highlighted cells as black
+    text on a black background in dark mode. Plain st.markdown content
+    follows normal DOM/CSS and inherits the app's theme correctly, so only
+    the highlighted "best" cells need an explicit (theme-independent)
+    background + text color; all other cells are left unstyled and inherit
+    the correct default color for whichever theme is active.
+    """
+    df = build_comparison_dataframe(comparison)
+    best_per_ligand = comparison.get("best_per_ligand", {})
+
+    border = "border-bottom:1px solid rgba(128,128,128,0.4);"
+    header_cells = "".join(
+        f"<th style='text-align:left;padding:4px 10px;{border}'>{_html.escape(str(col))}</th>"
+        for col in df.columns
+    )
+    rows = [
+        f"<tr><th style='text-align:left;padding:4px 10px;{border}'>Ligand</th>{header_cells}</tr>"
+    ]
+
+    for ligand in df.index:
+        best_job = best_per_ligand.get(ligand, (None, None))[0]
+        cells = [f"<td style='padding:4px 10px;font-weight:600;{border}'>{_html.escape(str(ligand))}</td>"]
+        for job in df.columns:
+            val = df.loc[ligand, job]
+            is_valid = val is not None and val == val  # excludes None and NaN
+            text = f"{val:.2f}" if is_valid else "N/A"
+            style = f"padding:4px 10px;{border}"
+            if is_valid and job == best_job:
+                style += "background-color:#90ee90;color:#111;font-weight:700;"
+            cells.append(f"<td style='{style}'>{_html.escape(text)}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    return (
+        "<div style='overflow-x:auto;'>"
+        "<table style='border-collapse:collapse;width:100%;font-size:0.9rem;'>"
+        f"{''.join(rows)}"
+        "</table></div>"
+    )

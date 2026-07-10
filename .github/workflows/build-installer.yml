@@ -1,0 +1,35 @@
+name: Build Installer
+
+# Builds the single-file installer executable (installer/install.py) for
+# Windows, Mac, and Linux via PyInstaller. Does not run on ordinary pushes —
+# only on a manual trigger or when a version tag is pushed.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build installer
+        run: pyinstaller --onefile --name docking-platform-installer installer/install.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docking-platform-installer-${{ matrix.os }}
+          path: dist/docking-platform-installer*

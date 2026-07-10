@@ -21,6 +21,77 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 
 ---
 
+## Installer Script (Convenience Wrapper — Requires a Clone)
+
+`installer/install.py` automates the steps above **for people who already
+have this repo cloned**: it checks for Docker (installing it if missing),
+builds the platform's images (`docker compose build`), starts the stack,
+waits for the GUI to become healthy, opens your browser to it, and writes a
+launcher script (`docking-platform.bat` / `.command` / `.sh`) into the repo
+so you can double-click that next time instead of re-running the installer.
+
+**It is not a zero-dependency, no-clone download.** The platform's own images
+(`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
+`pymol-visualizer`, `pymol-interactive`, `ui`) are only ever built locally
+from the Dockerfiles in this repo — they are not published to any container
+registry — so the installer needs the Dockerfiles alongside `docker-compose.yml`,
+which means a git clone. (Only the Ollama LLM image is pulled from a public
+registry; that happens automatically as part of `docker compose up`.)
+
+Run it from the repo root — it's a single, dependency-free Python script, no
+`pip install` needed to run it from source:
+
+```bash
+# See the steps it would take without actually doing anything:
+python installer/install.py --dry-run
+
+# Run for real (installs Docker if needed, builds images, starts the stack,
+# opens the browser). Must be run from inside the clone:
+python installer/install.py
+
+# Or point it at a compose file explicitly, e.g. from another directory:
+python installer/install.py --compose-file /path/to/docking_platform/docker-compose.yml
+```
+
+**System requirements:** 8 GB RAM, 10 GB free disk space, a Docker-compatible
+OS (Windows 10/11, macOS, or Linux).
+
+**Building a standalone binary:** if you'd rather double-click an `.exe` than
+run a Python script, freeze it with PyInstaller via `installer/build.sh` (or
+the `Build Installer` GitHub Actions workflow, which builds it for Windows,
+Mac, and Linux). This produces `dist/docking-platform-installer[.exe]`. Copy
+it into the repo root (or always pass `--compose-file`) before running it —
+double-clicking it from an arbitrary folder with no `docker-compose.yml`
+nearby will fail with a clear "not found, run this from inside a clone"
+message rather than doing anything unexpected.
+
+**Troubleshooting:**
+- *"docker-compose.yml not found"*: you're not running the installer from
+  inside a clone of this repo. `cd` into it, or pass `--compose-file`.
+- *Docker Desktop won't start / installer hangs at step [2/5]*: start Docker
+  Desktop manually and re-run the installer — it will skip straight to
+  building images once the daemon is reachable.
+- *`docker compose build` fails at step [3/5]*: make sure you have the full
+  repo checked out (the `Dockerfile*` files must be present, not just
+  `docker-compose.yml`).
+- *`docker compose up` fails at step [4/5]* with a container-name conflict:
+  another instance of the stack is already running (e.g. started manually
+  elsewhere) — stop it first with `docker compose down`.
+- *Port 3000 already in use*: stop whatever else is bound to it, or edit
+  `docker-compose.yml`'s `ui.ports` mapping and re-run
+  `docker compose up -d`.
+- *Ollama not running / chat parsing fails*: the bundled `ollama` service
+  should start automatically with the stack; check `docker compose logs
+  ollama` if it doesn't.
+- *Installer times out at step [5/5]*: run `docker compose logs` to see
+  which service failed to become healthy.
+
+This installer is a build-it-yourself tool today — there isn't yet a
+published one-click download. Until then, prefer the Docker deployment
+steps above.
+
+---
+
 ## Alternative: Local Installation (Development Only)
 
 Only use local installation for development or when Docker is unavailable.

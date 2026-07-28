@@ -293,9 +293,10 @@ def render_chat() -> None:
         if new_lines and st.session_state.messages:
             st.session_state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    with st.container(height=1000):
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
     # Handle job completion between polls.
     if bridge and not bridge.is_running():

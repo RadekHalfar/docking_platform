@@ -22,12 +22,26 @@ import subprocess
 import logging
 import shutil
 import tempfile
+import json
+from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath, PurePosixPath
 from typing import Dict, List, Optional, Any, Tuple
 
 from common.utils import ensure_directory, compute_file_checksum
 
 logger = logging.getLogger(__name__)
+
+
+def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
+    """Atomically write docking_progress.json so readers never see a partial write."""
+    path = os.path.join(output_dir, "docking_progress.json")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning(f"Failed to write docking progress file: {e}")
 
 
 class MoldinaRunner:
@@ -291,8 +305,28 @@ size_z = {box_size[2]}
         results: List[Dict[str, Any]] = []
         errors: List[str] = []
 
-        for ligand_path in ligand_paths:
+        total = len(ligand_paths)
+        completed = 0
+        _write_docking_progress(output_dir, {
+            "total": total,
+            "completed": 0,
+            "current_ligand": None,
+            "current_index": 0,
+            "status": "running",
+            "current_started_at": None,
+        })
+
+        for idx, ligand_path in enumerate(ligand_paths, start=1):
             ligand_id = Path(ligand_path).stem
+
+            _write_docking_progress(output_dir, {
+                "total": total,
+                "completed": completed,
+                "current_ligand": ligand_id,
+                "current_index": idx,
+                "status": "running",
+                "current_started_at": datetime.now(timezone.utc).isoformat(),
+            })
 
             if self.is_windows:
                 ligand_wsl = self._windows_path_to_wsl(ligand_path)
@@ -333,6 +367,15 @@ size_z = {box_size[2]}
             except subprocess.TimeoutExpired:
                 logger.error(f"Moldina timed out for {ligand_id} (>1 hour)")
                 errors.append(f"{ligand_id}: docking timed out (>1 hour)")
+                completed += 1
+                _write_docking_progress(output_dir, {
+                    "total": total,
+                    "completed": completed,
+                    "current_ligand": ligand_id,
+                    "current_index": idx,
+                    "status": "running",
+                    "current_started_at": None,
+                })
                 continue
 
             # Save stdout/stderr as a per-ligand log file unconditionally, so a
@@ -354,9 +397,36 @@ size_z = {box_size[2]}
                     f"{ligand_id}: exit {result.returncode}: "
                     f"{result.stderr or result.stdout or '(no output captured)'}"
                 )
+                completed += 1
+                _write_docking_progress(output_dir, {
+                    "total": total,
+                    "completed": completed,
+                    "current_ligand": ligand_id,
+                    "current_index": idx,
+                    "status": "running",
+                    "current_started_at": None,
+                })
                 continue
 
             results.append(self._build_ligand_result(ligand_path, output_dir, result.stdout))
+            completed += 1
+            _write_docking_progress(output_dir, {
+                "total": total,
+                "completed": completed,
+                "current_ligand": ligand_id,
+                "current_index": idx,
+                "status": "running",
+                "current_started_at": None,
+            })
+
+        _write_docking_progress(output_dir, {
+            "total": total,
+            "completed": completed,
+            "current_ligand": None,
+            "current_index": total,
+            "status": "done",
+            "current_started_at": None,
+        })
 
         if not results:
             raise RuntimeError(

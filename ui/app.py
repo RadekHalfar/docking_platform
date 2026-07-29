@@ -1,6 +1,7 @@
 """Streamlit front-end for the Molecular Docking Platform."""
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -591,6 +592,38 @@ def _load_workflow_results(job_id: str) -> dict | None:
         return None
 
 
+def _read_docking_progress(job_id: str) -> dict | None:
+    path = OUTPUT_BASE / job_id / "docking_results" / "docking_progress.json"
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _render_docking_progress(job_id: str) -> None:
+    progress = _read_docking_progress(job_id)
+    if not progress or progress.get("status") != "running":
+        return
+
+    total = progress.get("total") or 0
+    completed = progress.get("completed") or 0
+    if total:
+        st.progress(completed / total, text=f"{completed} / {total} ligands docked")
+
+    current_ligand = progress.get("current_ligand")
+    if current_ligand:
+        started_at = progress.get("current_started_at")
+        elapsed_str = ""
+        if started_at:
+            try:
+                started = datetime.fromisoformat(started_at)
+                elapsed = int((datetime.now(timezone.utc) - started).total_seconds())
+                elapsed_str = f" (running {elapsed}s)"
+            except ValueError:
+                pass
+        st.caption(f"Currently docking: `{current_ligand}`{elapsed_str}")
+
+
 def _render_job_results() -> None:
     bridge: OrchestratorBridge = st.session_state.bridge
     active_job_id = st.session_state.job_id
@@ -608,6 +641,7 @@ def _render_job_results() -> None:
     if bridge and viewed_job_id == active_job_id:
         if bridge.is_running():
             st.info(f"Job `{viewed_job_id}` is running...")
+            _render_docking_progress(viewed_job_id)
             return
 
         result = bridge.get_result()

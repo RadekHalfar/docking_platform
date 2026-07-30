@@ -73,7 +73,10 @@ Once a job's results are showing, you get:
 - An affinity bar chart (best binder first).
 - An **Image** / **PyMOL** tab: the PNG visualization, and a live PyMOL
   session (via `pymol-interactive`'s noVNC iframe) with that job's protein
-  and ligand structures loaded automatically.
+  and ligand structures loaded automatically. Loading happens in the
+  background, so for a large batch the PyMOL tab may briefly show a
+  "Loading job into PyMOL..." status before the structures appear — the page
+  keeps refreshing on its own until the load finishes, no action needed.
 - Download buttons for the job's `.pdbqt`, `.pml`, `.json`, and `.png` files.
 
 ## Comparing Jobs

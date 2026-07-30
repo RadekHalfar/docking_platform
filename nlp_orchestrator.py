@@ -1429,15 +1429,36 @@ def _integrate_with_pymol_interactive(results: dict) -> None:
             print(f"   Then open: {no_vnc_url}")
             return
 
+    # /api/load_job kicks off the load in the background and returns
+    # immediately (a real batch can take longer than any fixed HTTP
+    # timeout) — poll /api/load_status until it actually finishes instead of
+    # assuming success as soon as the kickoff request returns.
     try:
         response = requests.post(
             f"{base_url}/api/load_job",
             json={"job_id": job_id},
             timeout=15,
         )
-        if response.status_code != 200:
+        if response.status_code not in (200, 202):
             print("\n⚠️  pymol_interactive is running, but failed to auto-load job.")
             print(f"   API response: {response.text}")
+            print(f"   Open noVNC: {no_vnc_url}")
+            return
+
+        deadline = time.monotonic() + 120  # generous cap; large batches can take a while
+        final_status = None
+        while time.monotonic() < deadline:
+            status_response = requests.get(f"{base_url}/api/load_status", timeout=10)
+            status_response.raise_for_status()
+            final_status = status_response.json()
+            if final_status.get("status") in ("done", "error"):
+                break
+            time.sleep(2)
+
+        if final_status is None or final_status.get("status") != "done":
+            error = (final_status or {}).get("error", "timed out waiting for PyMOL to finish loading")
+            print("\n⚠️  pymol_interactive is running, but failed to auto-load job.")
+            print(f"   {error}")
             print(f"   Open noVNC: {no_vnc_url}")
             return
 

@@ -12,6 +12,7 @@ from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_ll
 from ui.job_history import list_completed_jobs
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
+from ui.pymol_client import get_load_status, kickoff_load_job
 from ui.results import build_comparison_html, make_affinity_chart_figure
 from ui.session_state import DETECTED_CPU_COUNT, apply_parsed_params, apply_settings, get_params, init
 
@@ -714,26 +715,50 @@ def _render_affinity_chart(result: dict) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
-def _load_job_in_pymol(job_id: str | None) -> tuple[bool, str]:
+def _load_job_in_pymol(job_id: str | None) -> tuple[str, str]:
     """Ask the pymol-interactive helper API to load job structures.
 
-    Returns (success, message) for display in the PyMOL tab.
+    Loading is asynchronous server-side (a real batch can take longer than
+    any single fixed HTTP timeout), so this kicks off a load and/or polls
+    for completion rather than blocking on one long request.
+
+    Returns (state, message) for display in the PyMOL tab, where state is
+    one of "done", "running", "error".
     """
     if not job_id:
-        return False, "No job selected."
-    already_loaded = st.session_state.get("_pymol_loaded_job")
-    if already_loaded == job_id:
-        return True, f"Loaded job `{job_id}`."
-    try:
-        import requests as _req
-        api_url = os.getenv("PYMOL_INTERACTIVE_URL", "http://pymol-interactive:8090")
-        resp = _req.post(f"{api_url}/api/load_job", json={"job_id": job_id}, timeout=10)
-        if resp.ok:
-            st.session_state["_pymol_loaded_job"] = job_id
-            return True, f"Loaded job `{job_id}` into PyMOL."
-        return False, f"load_job failed ({resp.status_code}): {resp.text[:200]}"
-    except Exception as exc:
-        return False, f"Cannot reach PyMOL helper API: {exc}"
+        return "error", "No job selected."
+
+    if st.session_state.get("_pymol_loaded_job") == job_id:
+        return "done", f"Loaded job `{job_id}` into PyMOL."
+
+    api_url = os.getenv("PYMOL_INTERACTIVE_URL", "http://pymol-interactive:8090")
+    status = get_load_status(api_url)
+    current_status = status.get("status")
+    current_job = status.get("job_id")
+
+    if current_status == "done" and current_job == job_id:
+        st.session_state["_pymol_loaded_job"] = job_id
+        st.session_state["_pymol_load_pending"] = False
+        return "done", f"Loaded job `{job_id}` into PyMOL."
+
+    if current_status == "running":
+        st.session_state["_pymol_load_pending"] = True
+        if current_job == job_id:
+            return "running", f"Loading job `{job_id}` into PyMOL..."
+        return "running", "PyMOL is busy loading another job — this job will load once it's free."
+
+    if current_status == "error" and current_job == job_id:
+        st.session_state["_pymol_load_pending"] = False
+        return "error", f"Failed to load job `{job_id}` into PyMOL: {status.get('error')}"
+
+    # idle, or the last load was for/errored on a different job — start fresh.
+    kicked_off = kickoff_load_job(api_url, job_id)
+    if kicked_off.get("status") in ("started", "already_running"):
+        st.session_state["_pymol_load_pending"] = True
+        return "running", f"Loading job `{job_id}` into PyMOL..."
+
+    st.session_state["_pymol_load_pending"] = False
+    return "error", kicked_off.get("error", "Unknown error starting PyMOL load.")
 
 
 def _resolve_container_path(path: str) -> Path:
@@ -762,9 +787,11 @@ def _render_visualization(result: dict, job_id: str) -> None:
         with open(png_path, "rb") as f:
             st.download_button("Download PNG", f, file_name="docking.png", mime="image/png")
     with tab_pymol:
-        ok, msg = _load_job_in_pymol(job_id)
-        if ok:
+        state, msg = _load_job_in_pymol(job_id)
+        if state == "done":
             st.success(msg, icon="✅")
+        elif state == "running":
+            st.info(msg, icon="⏳")
         else:
             st.error(msg)
         novnc_url = os.getenv("PYMOL_NOVNC_URL", "http://localhost:6080") + "/vnc_auto.html"
@@ -809,8 +836,10 @@ with params_col:
 with results_col:
     render_results_panel()
 
-# Keep polling while a job is running — 2 s delay avoids spinning the CPU.
-if st.session_state.bridge and st.session_state.bridge.is_running():
+# Keep polling while a docking job or a PyMOL load is in progress — 2 s
+# delay avoids spinning the CPU.
+if (st.session_state.bridge and st.session_state.bridge.is_running()) or \
+        st.session_state.get("_pymol_load_pending"):
     import time
     time.sleep(2)
     st.rerun()

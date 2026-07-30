@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from xmlrpc.client import ServerProxy
@@ -20,6 +22,24 @@ app = Flask(__name__)
 OUTPUT_ROOT = Path(os.getenv("ORCHESTRATOR_OUTPUT_DIR", "/app/orchestrator_output")).resolve()
 RPC_URL = os.getenv("PYMOL_RPC_URL", "http://127.0.0.1:9123")
 EXTENT_TMP = Path("/tmp/pymol_extent.json")
+
+# Serializes every PyMOL command sequence (loading a job, deriving a box from
+# a selection) so a background load and a concurrent request can never
+# interleave commands into the one live PyMOL session.
+_pymol_lock = threading.Lock()
+
+# Guards _load_status only — deliberately a *separate*, fast lock so a status
+# poll is never blocked behind an in-flight load (which holds _pymol_lock for
+# as long as PyMOL takes to process a whole batch).
+_status_lock = threading.Lock()
+_load_status: dict[str, Any] = {
+    "status": "idle",  # "idle" | "running" | "done" | "error"
+    "job_id": None,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+_current_load_thread: threading.Thread | None = None
 
 
 def _rpc() -> ServerProxy:
@@ -58,20 +78,59 @@ def _pymol_do(command: str) -> None:
 
 
 def _load_into_pymol(receptor_path: str, ligand_paths: list[str]) -> None:
-    _pymol_do("reinitialize")
-    _pymol_do(f"load {receptor_path}, receptor")
-    _pymol_do("hide everything")
-    _pymol_do("show cartoon, receptor")
-    _pymol_do("color slate, receptor")
+    """Load a receptor + ligand set into the live PyMOL session.
 
+    Issues a single consolidated RPC call (PyMOL's `do()` accepts
+    semicolon-separated multi-statement scripts) instead of one call per
+    command per ligand — for a batch of N ligands that's one round-trip
+    instead of 5 + 3N, removing per-call RPC/connection overhead. Caller is
+    responsible for holding _pymol_lock around this.
+    """
+    commands = [
+        "reinitialize",
+        f"load {receptor_path}, receptor",
+        "hide everything",
+        "show cartoon, receptor",
+        "color slate, receptor",
+    ]
     for idx, ligand in enumerate(ligand_paths, start=1):
         obj = f"ligand_{idx}"
-        _pymol_do(f"load {ligand}, {obj}")
-        _pymol_do(f"show sticks, {obj}")
-        _pymol_do(f"color yellow, {obj}")
+        commands.append(f"load {ligand}, {obj}")
+        commands.append(f"show sticks, {obj}")
+        commands.append(f"color yellow, {obj}")
+    commands.append("bg_color white")
+    commands.append("orient")
+    _pymol_do("; ".join(commands))
 
-    _pymol_do("bg_color white")
-    _pymol_do("orient")
+
+def _set_load_status(**updates: Any) -> None:
+    with _status_lock:
+        _load_status.update(updates)
+
+
+def _get_load_status() -> dict[str, Any]:
+    with _status_lock:
+        return dict(_load_status)
+
+
+def _run_load_job(job_id: str, receptor_path: str, ligand_paths: list[str]) -> None:
+    """Background-thread target: does the actual (potentially slow) PyMOL
+    load under _pymol_lock, then records the outcome in _load_status."""
+    try:
+        with _pymol_lock:
+            _load_into_pymol(receptor_path, ligand_paths)
+    except Exception as exc:
+        _set_load_status(
+            status="error",
+            error=str(exc),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    else:
+        _set_load_status(
+            status="done",
+            error=None,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def _extent_from_selection(selection: str) -> tuple[list[float], list[float]]:
@@ -134,6 +193,7 @@ def index() -> str:
         "<p>Use API endpoints:</p>"
         "<ul>"
         "<li>POST /api/load_job</li>"
+        "<li>GET /api/load_status</li>"
         "<li>POST /api/box/from_selection</li>"
         "<li>POST /api/box/from_corners</li>"
         "</ul>"
@@ -148,6 +208,12 @@ def list_jobs() -> Any:
 
 @app.post("/api/load_job")
 def load_job() -> Any:
+    """Kick off loading a job into the live PyMOL session in the background
+    and return immediately — for a real batch, doing this inline could take
+    far longer than any client's HTTP timeout. Poll GET /api/load_status for
+    the outcome."""
+    global _current_load_thread
+
     payload = request.get_json(silent=True) or {}
     job_id = payload.get("job_id")
     if not job_id:
@@ -166,19 +232,31 @@ def load_job() -> Any:
     if not ligand_paths:
         return jsonify({"error": "Could not find ligand files in job outputs"}), 400
 
-    try:
-        _load_into_pymol(receptor_path, ligand_paths)
-    except Exception as exc:
-        return jsonify({"error": f"Failed to load in PyMOL session: {exc}"}), 500
+    current = _get_load_status()
+    if current["status"] == "running":
+        return jsonify({"status": "already_running", "job_id": current["job_id"]}), 200
 
-    return jsonify(
-        {
-            "status": "ok",
-            "job_id": job_id,
-            "receptor_path": receptor_path,
-            "ligand_paths": ligand_paths,
-        }
+    _set_load_status(
+        status="running",
+        job_id=job_id,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        finished_at=None,
+        error=None,
     )
+    _current_load_thread = threading.Thread(
+        target=_run_load_job,
+        args=(job_id, receptor_path, ligand_paths),
+        daemon=True,
+        name=f"pymol-load-{job_id}",
+    )
+    _current_load_thread.start()
+
+    return jsonify({"status": "started", "job_id": job_id}), 202
+
+
+@app.get("/api/load_status")
+def load_status() -> Any:
+    return jsonify(_get_load_status())
 
 
 @app.post("/api/box/from_selection")
@@ -191,14 +269,18 @@ def box_from_selection() -> Any:
         return jsonify({"error": "Missing required field: job_id"}), 400
 
     try:
-        min_corner, max_corner = _extent_from_selection(selection)
-        center, box_size = _center_size_from_min_max(min_corner, max_corner)
-        out_file = _save_box(job_id, center, box_size)
-        # Draw/update visual box for confirmation.
-        _pymol_do(
-            f"pseudoatom box_center, pos=[{center[0]},{center[1]},{center[2]}];"
-            "show spheres, box_center; color red, box_center"
-        )
+        # Held for the whole PyMOL sequence (extent lookup + marker draw), not
+        # just the individual calls, so a concurrent background /api/load_job
+        # can't reinitialize the session mid-selection and invalidate this.
+        with _pymol_lock:
+            min_corner, max_corner = _extent_from_selection(selection)
+            center, box_size = _center_size_from_min_max(min_corner, max_corner)
+            out_file = _save_box(job_id, center, box_size)
+            # Draw/update visual box for confirmation.
+            _pymol_do(
+                f"pseudoatom box_center, pos=[{center[0]},{center[1]},{center[2]}];"
+                "show spheres, box_center; color red, box_center"
+            )
     except Exception as exc:
         return jsonify({"error": f"Failed to derive docking box from selection '{selection}': {exc}"}), 500
 
@@ -248,4 +330,6 @@ def box_from_corners() -> Any:
 if __name__ == "__main__":
     host = os.getenv("PYMOL_INTERACTIVE_HOST", "0.0.0.0")
     port = int(os.getenv("PYMOL_INTERACTIVE_PORT", "8090"))
-    app.run(host=host, port=port)
+    # threaded=True so a status poll is never queued behind an in-flight
+    # request (e.g. the background-load kickoff itself, or box selection).
+    app.run(host=host, port=port, threaded=True)

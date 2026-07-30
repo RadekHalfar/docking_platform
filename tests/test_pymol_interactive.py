@@ -1,5 +1,7 @@
 """Tests for interactive PyMOL helper API."""
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -9,8 +11,21 @@ from services.pymol_interactive import server
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """Flask test client with isolated output root."""
+    """Flask test client with isolated output root and reset load state.
+
+    _load_status/_current_load_thread are module-level globals — reset them
+    for every test so a background thread or status left over from one test
+    can't leak into the next.
+    """
     monkeypatch.setattr(server, "OUTPUT_ROOT", tmp_path)
+    monkeypatch.setattr(server, "_load_status", {
+        "status": "idle",
+        "job_id": None,
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+    })
+    monkeypatch.setattr(server, "_current_load_thread", None)
     server.app.config["TESTING"] = True
     return server.app.test_client()
 
@@ -22,6 +37,15 @@ def _make_job(tmp_path: Path, job_id: str = "job_100") -> Path:
     prepared.mkdir(parents=True, exist_ok=True)
     docking.mkdir(parents=True, exist_ok=True)
     return job_dir
+
+
+def _make_loadable_job(tmp_path: Path, job_id: str) -> tuple[Path, Path]:
+    job_dir = _make_job(tmp_path, job_id)
+    receptor = job_dir / "prepared" / "6LU7.pdbqt"
+    ligand = job_dir / "docking_results" / "docking_output.pdbqt"
+    receptor.write_text("RECEPTOR", encoding="utf-8")
+    ligand.write_text("LIGAND", encoding="utf-8")
+    return receptor, ligand
 
 
 class TestHealth:
@@ -65,6 +89,52 @@ class TestListJobs:
         assert response.get_json()["jobs"] == ["job_2", "job_10"]
 
 
+class TestLoadIntoPymolConsolidation:
+    """The load sequence must be a single consolidated RPC call, not one
+    call per command per ligand -- that's the whole fix for the timeout."""
+
+    def test_load_into_pymol_issues_single_consolidated_command(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(server, "_pymol_do", lambda cmd: calls.append(cmd))
+
+        server._load_into_pymol(
+            "/data/receptor.pdbqt", ["/data/lig1.pdbqt", "/data/lig2.pdbqt"]
+        )
+
+        assert len(calls) == 1
+        command = calls[0]
+        for fragment in [
+            "reinitialize",
+            "load /data/receptor.pdbqt, receptor",
+            "hide everything",
+            "show cartoon, receptor",
+            "color slate, receptor",
+            "load /data/lig1.pdbqt, ligand_1",
+            "show sticks, ligand_1",
+            "color yellow, ligand_1",
+            "load /data/lig2.pdbqt, ligand_2",
+            "show sticks, ligand_2",
+            "color yellow, ligand_2",
+            "bg_color white",
+            "orient",
+        ]:
+            assert fragment in command
+
+        # Order matters: reinitialize first, orient last, ligands in order.
+        assert command.index("reinitialize") < command.index("load /data/receptor.pdbqt, receptor")
+        assert command.index("load /data/lig1.pdbqt, ligand_1") < command.index("load /data/lig2.pdbqt, ligand_2")
+        assert command.rindex("orient") > command.index("load /data/lig2.pdbqt, ligand_2")
+
+    def test_load_into_pymol_with_no_ligands_still_single_call(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(server, "_pymol_do", lambda cmd: calls.append(cmd))
+
+        server._load_into_pymol("/data/receptor.pdbqt", [])
+
+        assert len(calls) == 1
+        assert "load /data/receptor.pdbqt, receptor" in calls[0]
+
+
 class TestLoadJob:
     def test_load_job_requires_job_id(self, client):
         response = client.post("/api/load_job", json={})
@@ -86,12 +156,8 @@ class TestLoadJob:
         assert response.status_code == 400
         assert "Could not find receptor file" in response.get_json()["error"]
 
-    def test_load_job_success(self, client, tmp_path, monkeypatch):
-        job_dir = _make_job(tmp_path, "job_300")
-        receptor = job_dir / "prepared" / "6LU7.pdbqt"
-        ligand = job_dir / "docking_results" / "docking_output.pdbqt"
-        receptor.write_text("RECEPTOR", encoding="utf-8")
-        ligand.write_text("LIGAND", encoding="utf-8")
+    def test_load_job_starts_in_background_and_returns_immediately(self, client, tmp_path, monkeypatch):
+        receptor, ligand = _make_loadable_job(tmp_path, "job_300")
 
         called = {"value": False}
 
@@ -104,23 +170,127 @@ class TestLoadJob:
 
         response = client.post("/api/load_job", json={"job_id": "job_300"})
 
-        assert response.status_code == 200
+        # Kickoff returns before the load necessarily finishes.
+        assert response.status_code == 202
         payload = response.get_json()
-        assert payload["status"] == "ok"
+        assert payload["status"] == "started"
         assert payload["job_id"] == "job_300"
+
+        server._current_load_thread.join(timeout=5)
         assert called["value"] is True
 
-    def test_load_job_handles_pymol_error(self, client, tmp_path, monkeypatch):
-        job_dir = _make_job(tmp_path, "job_301")
-        (job_dir / "prepared" / "6LU7.pdbqt").write_text("RECEPTOR", encoding="utf-8")
-        (job_dir / "docking_results" / "docking_output.pdbqt").write_text("LIGAND", encoding="utf-8")
+        status_payload = client.get("/api/load_status").get_json()
+        assert status_payload["status"] == "done"
+        assert status_payload["job_id"] == "job_300"
+        assert status_payload["error"] is None
 
-        monkeypatch.setattr(server, "_load_into_pymol", lambda *_: (_ for _ in ()).throw(RuntimeError("rpc refused")))
+    def test_load_job_error_surfaces_via_status_not_kickoff_response(self, client, tmp_path, monkeypatch):
+        _make_loadable_job(tmp_path, "job_301")
+
+        monkeypatch.setattr(
+            server, "_load_into_pymol",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("rpc refused")),
+        )
 
         response = client.post("/api/load_job", json={"job_id": "job_301"})
 
-        assert response.status_code == 500
-        assert "Failed to load in PyMOL session" in response.get_json()["error"]
+        # The kickoff itself still succeeds -- spawning the thread didn't fail.
+        assert response.status_code == 202
+
+        server._current_load_thread.join(timeout=5)
+
+        status_payload = client.get("/api/load_status").get_json()
+        assert status_payload["status"] == "error"
+        assert "rpc refused" in status_payload["error"]
+        assert status_payload["job_id"] == "job_301"
+
+    def test_load_status_starts_idle(self, client):
+        payload = client.get("/api/load_status").get_json()
+        assert payload["status"] == "idle"
+        assert payload["job_id"] is None
+
+
+class TestLoadJobConcurrency:
+    """Only one load may run against the single live PyMOL session at a time."""
+
+    def test_second_load_while_running_is_rejected_not_double_spawned(self, client, tmp_path, monkeypatch):
+        _make_loadable_job(tmp_path, "job_600")
+
+        release = threading.Event()
+        started = threading.Event()
+
+        def _blocking_load(receptor_path, ligand_paths):
+            started.set()
+            assert release.wait(timeout=5), "test setup error: release was never set"
+
+        monkeypatch.setattr(server, "_load_into_pymol", _blocking_load)
+
+        first = client.post("/api/load_job", json={"job_id": "job_600"})
+        assert first.status_code == 202
+        assert started.wait(timeout=5)
+        first_thread = server._current_load_thread
+
+        second = client.post("/api/load_job", json={"job_id": "job_600"})
+        assert second.status_code == 200
+        assert second.get_json() == {"status": "already_running", "job_id": "job_600"}
+        # No second thread was spawned -- still the same thread object as the first call.
+        assert server._current_load_thread is first_thread
+
+        release.set()
+        first_thread.join(timeout=5)
+
+        status_payload = client.get("/api/load_status").get_json()
+        assert status_payload["status"] == "done"
+
+    def test_box_from_selection_waits_for_in_flight_load(self, client, tmp_path, monkeypatch):
+        """A box-selection request arriving while a load is in progress must
+        not interleave PyMOL commands with the load -- it has to wait for
+        the same lock, not run concurrently against the live session."""
+        _make_loadable_job(tmp_path, "job_700")
+
+        release = threading.Event()
+        started = threading.Event()
+        order: list[str] = []
+
+        def _blocking_load(receptor_path, ligand_paths):
+            started.set()
+            assert release.wait(timeout=5), "test setup error: release was never set"
+            order.append("load_finished")
+
+        def _fake_extent(_selection):
+            order.append("selection_ran")
+            return [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
+
+        monkeypatch.setattr(server, "_load_into_pymol", _blocking_load)
+        monkeypatch.setattr(server, "_extent_from_selection", _fake_extent)
+        monkeypatch.setattr(server, "_pymol_do", lambda _cmd: None)
+
+        client.post("/api/load_job", json={"job_id": "job_700"})
+        assert started.wait(timeout=5)
+        load_thread = server._current_load_thread
+
+        result: dict = {}
+
+        def _run_box_selection():
+            result["response"] = client.post(
+                "/api/box/from_selection", json={"job_id": "job_700", "selection": "sele"}
+            )
+
+        box_thread = threading.Thread(target=_run_box_selection)
+        box_thread.start()
+        # Give the box-selection thread a realistic chance to reach (and
+        # block on) the shared lock before we let the load finish. The
+        # assertions below are deterministic regardless of exact timing here
+        # -- box_from_selection cannot acquire the lock until release.set()
+        # allows the load to release it.
+        time.sleep(0.2)
+
+        release.set()
+        box_thread.join(timeout=5)
+        load_thread.join(timeout=5)
+
+        assert order == ["load_finished", "selection_ran"]
+        assert result["response"].status_code == 200
 
 
 class TestDockingBox:

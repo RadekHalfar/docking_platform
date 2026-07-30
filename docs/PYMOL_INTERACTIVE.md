@@ -21,7 +21,8 @@ Typical flow:
 
 1. Run workflow preparation (download + prepare)
 2. Open interactive PyMOL desktop in browser
-3. Load the job with `POST /api/load_job`
+3. Load the job with `POST /api/load_job` (returns immediately; poll
+   `GET /api/load_status` until it's done)
 4. Select residues/region in PyMOL (`sele` or custom selection)
 5. Derive docking box with `POST /api/box/from_selection`
 6. Save generated box to `<job_dir>/docking_box.json`
@@ -71,6 +72,13 @@ Jobs are discovered from `ORCHESTRATOR_OUTPUT_DIR` (default `/app/orchestrator_o
 
 `POST /api/load_job`
 
+This is **asynchronous**: the request validates the job and, if nothing else
+is already loading, starts the load in a background thread and returns
+immediately — it does not wait for PyMOL to finish. For a batch of many
+ligands, doing the whole load inline could easily take longer than any
+caller's HTTP timeout; poll `GET /api/load_status` (below) for the actual
+outcome.
+
 Request:
 
 ```json
@@ -79,16 +87,22 @@ Request:
 }
 ```
 
-Response:
+Response (`202`) — the load has started:
 
 ```json
 {
-  "status": "ok",
-  "job_id": "job_1774883373879",
-  "receptor_path": "/app/orchestrator_output/job_1774883373879/prepared/6lu7.pdbqt",
-  "ligand_paths": [
-    "/app/orchestrator_output/job_1774883373879/docking_results/ATP_docking.pdbqt"
-  ]
+  "status": "started",
+  "job_id": "job_1774883373879"
+}
+```
+
+Response (`200`) — a load was already in progress (for this job or another);
+no second load was started:
+
+```json
+{
+  "status": "already_running",
+  "job_id": "job_1774883373879"
 }
 ```
 
@@ -96,17 +110,49 @@ Behavior:
 
 1. Locates receptor in `<job>/prepared` (`*.pdbqt` preferred, then `*.pdb`)
 2. Locates ligands in `<job>/docking_results/*.pdbqt`, fallback to prepared ligands
-3. Reinitializes PyMOL session
-4. Loads receptor as object `receptor`
-5. Loads ligands as `ligand_1`, `ligand_2`, ...
-6. Applies basic styling (cartoon/sticks/colors)
+3. In the background: reinitializes the PyMOL session, loads the receptor as
+   object `receptor`, loads ligands as `ligand_1`, `ligand_2`, ..., and
+   applies basic styling (cartoon/sticks/colors) — all issued as a **single**
+   consolidated PyMOL command (`cmd.do("cmd1; cmd2; ...")`) rather than one
+   round-trip per command, to minimize RPC overhead for large batches
+4. Only one load can run at a time against the single live PyMOL session —
+   a load request while another is in-flight is rejected with
+   `"already_running"` rather than starting a second, interleaving load.
+   `POST /api/box/from_selection` shares the same internal lock, so it waits
+   for an in-flight load to finish rather than corrupting it.
 
-Possible errors:
+Possible errors on the kickoff request itself:
 
 - `400` missing `job_id`
 - `404` unknown job directory
 - `400` receptor/ligands not found
-- `500` PyMOL loading failure
+
+A failure *during* the load (e.g. a PyMOL RPC error) does not show up here —
+it surfaces via `GET /api/load_status` instead, since the kickoff request has
+already returned by the time the load actually runs.
+
+### Load Status
+
+`GET /api/load_status`
+
+Poll this after `POST /api/load_job` until `status` is `"done"` or `"error"`.
+
+Response:
+
+```json
+{
+  "status": "running",
+  "job_id": "job_1774883373879",
+  "started_at": "2026-07-30T12:00:00+00:00",
+  "finished_at": null,
+  "error": null
+}
+```
+
+- `status`: `"idle"` (nothing loaded/loading yet), `"running"`, `"done"`, or `"error"`.
+- `error`: the exception message if `status == "error"`, otherwise `null`.
+- This reflects the state of the *single* live PyMOL session, not a
+  per-job queue — there is at most one load in flight at a time.
 
 ### Derive Docking Box From Selection
 
@@ -219,14 +265,21 @@ Open browser desktop:
 # 1) Ensure interactive service is running
 docker compose --profile interactive up -d pymol-interactive
 
-# 2) Load job into live PyMOL
+# 2) Kick off the load (returns immediately, doesn't wait for PyMOL)
 curl -X POST http://localhost:8090/api/load_job \
   -H "Content-Type: application/json" \
   -d '{"job_id":"job_1774883373879"}'
+# -> {"status": "started", "job_id": "job_1774883373879"}
 
-# 3) In noVNC PyMOL, create/select region (e.g., sele)
+# 3) Poll until it's done (or errors) -- for a large batch this can take a
+#    while, since PyMOL still has to load/render every object server-side
+until curl -s http://localhost:8090/api/load_status | grep -q '"status": *"done"'; do
+  sleep 2
+done
 
-# 4) Generate docking box from selection
+# 4) In noVNC PyMOL, create/select region (e.g., sele)
+
+# 5) Generate docking box from selection
 curl -X POST http://localhost:8090/api/box/from_selection \
   -H "Content-Type: application/json" \
   -d '{"job_id":"job_1774883373879","selection":"sele"}'

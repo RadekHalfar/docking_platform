@@ -530,7 +530,7 @@ networks:
 
 ### Resource Limits
 
-Adjust limits in docker-compose.yml:
+Adjust limits in docker-compose.yml (current values shown):
 
 ```yaml
 services:
@@ -538,12 +538,19 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '8'
+          cpus: '10'
           memory: 8G
         reservations:
-          cpus: '4'
-          memory: 4G
+          cpus: '2'
+          memory: 2G
 ```
+
+`limits` is the enforced ceiling (a hard cgroup CPU quota / memory cap); `reservations`
+is only a soft scheduling hint that isn't strongly enforced outside Swarm mode. Raising
+`limits.cpus` also raises the ceiling the GUI's "Max parallel workers" control and the
+`moldina_runner` service itself clamp to for [parallel docking](BATCH_DOCKING.md#optional-parallel-docking)
+— but doesn't guarantee that many real cores if deployed on smaller hardware than the
+quota assumes (both sides account for this, see the linked section for why).
 
 ### Multi-Stage Builds
 

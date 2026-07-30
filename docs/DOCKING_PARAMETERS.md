@@ -206,11 +206,13 @@ Complete overview of all parameters used in the molecular docking workflow acros
 | `output_dir` | string | **Yes** | - | Directory for docking output files |
 | `center` | array | **Yes** | - | Search box center `[x, y, z]` in Angstroms |
 | `box_size` | array | **Yes** | - | Search box dimensions `[x, y, z]` in Angstroms |
-| `cpu` | integer | No | `4` | Number of CPU cores to use |
+| `cpu` | integer | No | `1` | Number of CPU cores to use per ligand |
 | `population` | integer | No | `500` | PSO population size (min: 5) |
 | `exhaustiveness` | integer | No | `8` | Search exhaustiveness |
 | `num_modes` | integer | No | `15` | Maximum number of binding modes |
 | `energy_range` | number | No | `100.0` | Max energy difference for modes (kcal/mol) |
+| `parallel` | boolean | No | `false` | Dock up to `max_workers` ligands concurrently instead of one at a time |
+| `max_workers` | integer | No | `1` | Max ligands docked concurrently when `parallel` is true |
 
 ### Critical Parameters
 
@@ -241,9 +243,41 @@ Complete overview of all parameters used in the molecular docking workflow acros
 ### Performance Parameters
 
 #### `cpu` - CPU Cores
+- **Default/fixed via GUI:** `1` — not currently exposed as a GUI-tunable
+  setting (Moldina's own internal PSO parallelism isn't a priority right
+  now); only direct/CLI callers of `run_docking` can override it.
 - **Range:** 1 - number of available cores
-- **Impact:** Linear speedup with more cores
-- **Recommendation:** Use 4-8 cores for good balance
+- **Impact:** More cores speeds up a single ligand's own search
+
+#### `parallel` / `max_workers` - Concurrent Ligands
+- **Default:** `parallel=false` (sequential — one ligand docked at a time)
+- **Purpose:** Dock up to `max_workers` *different* ligands at the same time
+  (each still its own independent, single-`--cpu` Moldina process — not
+  batched into one invocation)
+- **GUI:** "Parallel ligand docking" checkbox + "Max parallel workers" number
+  input in the Advanced expander, pre-filled/capped from `moldina-runner`'s
+  configured `deploy.resources.limits.cpus` in `docker-compose.yml` (parsed
+  directly by `ui/session_state.py:_detect_moldina_worker_cap()`, since it's
+  bind-mounted into the `ui` container) — falls back to the `ui` container's
+  own `os.cpu_count()` only if the compose file can't be found/parsed. Either
+  way this is a convenience suggestion only, not authoritative (see below)
+- **Server-side safety clamp:** `max_workers` is capped to the number of
+  ligands in the batch and to `moldina-runner`'s real, schedulable CPU
+  budget — `min(cgroup CPU quota, os.cpu_count())`, via
+  `_detect_effective_cpu_count()`. Neither number is trusted alone: Docker
+  Compose's `deploy.resources.limits.cpus` is a scheduling quota, not a CPU
+  mask, so `os.cpu_count()` doesn't reflect it and can report far more
+  cores than are actually schedulable — but the configured quota isn't
+  trustworthy alone either, since deploying the same `cpus:` value on
+  smaller hardware than it assumes (e.g. `cpus: '10'` on a 4-core machine)
+  would let the quota claim more workers than physically exist if taken at
+  face value.
+- **Risk:** requesting more workers than the real CPU budget doesn't just
+  fail to help — benchmarking on this project showed wall-clock time getting
+  *worse* than sequential once concurrent workers meaningfully exceed the
+  quota (severe scheduling contention), not just a smaller-than-expected
+  speedup. Memory is a secondary, unquantified risk on top of that — start
+  modest and watch for failures on large batches.
 
 #### `population` - PSO Population Size
 - **Range:** 5 - 10000+
@@ -454,6 +488,11 @@ Complete overview of all parameters used in the molecular docking workflow acros
 3. **Paths**: Must be accessible to Docker containers (use volume mounts)
 
 ### Performance Optimization
+
+The `cpu` values below apply to direct/CLI callers of `run_docking` — the GUI itself
+fixes `cpu=1` and no longer exposes it, offering `parallel`/`max_workers` (dock several
+ligands concurrently) instead of a per-ligand core count. See
+[Optional parallel docking](BATCH_DOCKING.md#optional-parallel-docking).
 
 **Fast (testing):**
 ```json

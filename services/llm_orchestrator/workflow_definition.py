@@ -28,10 +28,12 @@ WORKFLOW_STEPS: List[str] = [
 DEFAULT_PARAMETERS: Dict[str, object] = {
     "ph": 7.4,
     "exhaustiveness": 8,
-    "cpu": 4,
+    "cpu": 1,
     "population": 500,
     "num_modes": 15,
     "energy_range": 100.0,
+    "parallel": False,
+    "max_workers": 1,
     "add_hydrogens": True,
     "remove_waters": True,
     "generate_3d": True,
@@ -65,6 +67,8 @@ PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
     "population": frozenset({"dock", "visualize"}),
     "num_modes": frozenset({"dock", "visualize"}),
     "energy_range": frozenset({"dock", "visualize"}),
+    "parallel": frozenset({"dock", "visualize"}),
+    "max_workers": frozenset({"dock", "visualize"}),
 }
 
 

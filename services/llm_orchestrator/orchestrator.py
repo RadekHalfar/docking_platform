@@ -6,6 +6,7 @@ Coordinates execution of molecular docking workflow across MCP services.
 import copy
 import json
 import logging
+import math
 import shutil
 import time
 import uuid
@@ -415,10 +416,17 @@ class WorkflowOrchestrator:
                     logger.info(f"  Exhaustiveness: {params.get('exhaustiveness', 8)}")
                     logger.info(f"  Population: {params.get('population', 500)}")
                 
-                # Moldina docks ligands strictly sequentially (one subprocess per
-                # ligand), so the HTTP timeout must scale with batch size — a flat
-                # 300s cap silently fails any batch of more than a couple ligands.
-                dock_timeout = max(300, 120 * len(self.workflow_state["prepared_ligands"]))
+                # Moldina docks ligands one subprocess at a time by default (or up to
+                # max_workers concurrently when parallel is enabled), so the HTTP
+                # timeout must scale with batch size / parallelism — a flat 300s cap
+                # silently fails any sequential batch of more than a couple ligands.
+                parallel = bool(params.get("parallel", False))
+                max_workers = max(1, int(params.get("max_workers", 1)))
+                effective_workers = max_workers if parallel else 1
+                dock_timeout = max(
+                    300,
+                    math.ceil(120 * len(self.workflow_state["prepared_ligands"]) / effective_workers),
+                )
 
                 docking_result = self.call_mcp_tool(
                     self.services["moldina_runner"],
@@ -429,11 +437,13 @@ class WorkflowOrchestrator:
                         "output_dir": self.normalize_path(docking_dir),
                         "center": params["center"],
                         "box_size": params["box_size"],
-                        "cpu": params.get("cpu", 4),
+                        "cpu": params.get("cpu", 1),
                         "population": params.get("population", 500),
                         "exhaustiveness": params.get("exhaustiveness", 8),
                         "num_modes": params.get("num_modes", 15),
-                        "energy_range": params.get("energy_range", 100.0)
+                        "energy_range": params.get("energy_range", 100.0),
+                        "parallel": parallel,
+                        "max_workers": max_workers,
                     },
                     timeout=dock_timeout,
                 )

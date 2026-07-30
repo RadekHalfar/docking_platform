@@ -58,8 +58,12 @@ _TOOL_RESULTS = {
 }
 
 
-def _full_chain_fake_call(service_url, tool_name, arguments):
-    """Return synthetic MCP results keyed on tool_name."""
+def _full_chain_fake_call(service_url, tool_name, arguments, **kwargs):
+    """Return synthetic MCP results keyed on tool_name.
+
+    Accepts **kwargs (e.g. `timeout`) since call_mcp_tool's real signature
+    takes an optional timeout override that some steps (like dock) pass.
+    """
     factory = _TOOL_RESULTS.get(tool_name)
     if factory is None:
         raise KeyError(f"No fake result registered for tool '{tool_name}'")
@@ -87,9 +91,9 @@ def test_execute_workflow_full_chain_calls_services_in_order(tmp_path):
     orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
     call_log: list[str] = []
 
-    def recording_call(service_url, tool_name, arguments):
+    def recording_call(service_url, tool_name, arguments, **kwargs):
         call_log.append(tool_name)
-        return _full_chain_fake_call(service_url, tool_name, arguments)
+        return _full_chain_fake_call(service_url, tool_name, arguments, **kwargs)
 
     orchestrator.call_mcp_tool = Mock(side_effect=recording_call)
 

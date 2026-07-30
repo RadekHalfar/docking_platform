@@ -154,7 +154,7 @@ class TestWorkflowParser:
         result = parser.validate_workflow(workflow)
         
         assert result["parameters"]["exhaustiveness"] == 8
-        assert result["parameters"]["cpu"] == 4
+        assert result["parameters"]["cpu"] == 1
         assert result["parameters"]["population"] == 500
     
     def test_missing_required_parameters(self):

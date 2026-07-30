@@ -22,7 +22,9 @@ import subprocess
 import logging
 import shutil
 import tempfile
+import threading
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath, PurePosixPath
 from typing import Dict, List, Optional, Any, Tuple
@@ -30,6 +32,60 @@ from typing import Dict, List, Optional, Any, Tuple
 from common.utils import ensure_directory, compute_file_checksum
 
 logger = logging.getLogger(__name__)
+
+
+def _read_cgroup_cpu_quota() -> Optional[int]:
+    """Read the configured cgroup CPU quota (v2 first, then v1) as a whole
+    number of cores, or None if no quota is enforced / the files aren't
+    readable (e.g. running outside a container)."""
+    # cgroup v2: single file "<quota> <period>" in microseconds, or
+    # "max <period>" if no quota is enforced.
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            quota_str, period_str = f.read().split()
+        if quota_str != "max":
+            quota, period = int(quota_str), int(period_str)
+            if quota > 0 and period > 0:
+                return quota // period
+    except (OSError, ValueError):
+        pass
+
+    # cgroup v1: separate quota/period files; quota is -1 when unlimited.
+    try:
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+            quota = int(f.read().strip())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+            period = int(f.read().strip())
+        if quota > 0 and period > 0:
+            return quota // period
+    except (OSError, ValueError):
+        pass
+
+    return None
+
+
+def _detect_effective_cpu_count() -> int:
+    """Best-effort count of CPUs actually schedulable by this process/container.
+
+    os.cpu_count() reports how many logical CPUs the OS exposes, but a
+    Docker Compose `deploy.resources.limits.cpus` limit is enforced via a
+    cgroup CFS bandwidth quota, not a CPU affinity mask — os.cpu_count()
+    does not reflect it at all (confirmed in practice: a container limited
+    to cpus: '4' still reports the host's full core count).
+
+    Conversely, the configured quota alone isn't trustworthy either: the
+    same compose file might be deployed on smaller hardware than the quota
+    assumes (e.g. cpus: '10' run on a 4-core machine), where the quota
+    simply can't bind and the physical/logical core count is the real
+    ceiling. So this takes whichever of the two is smaller — never trusting
+    either number alone — and falls back to os.cpu_count() outright when no
+    quota is configured at all.
+    """
+    os_count = os.cpu_count() or 1
+    quota = _read_cgroup_cpu_quota()
+    if quota is None:
+        return os_count
+    return max(1, min(quota, os_count))
 
 
 def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
@@ -42,6 +98,56 @@ def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
         os.replace(tmp, path)
     except OSError as e:
         logger.warning(f"Failed to write docking progress file: {e}")
+
+
+class _DockingProgress:
+    """Thread-safe tracker for docking_progress.json.
+
+    Supports any number of ligands in flight at once (sequential docking is
+    just the special case where at most one is ever "in progress"), guarding
+    the shared in-memory state and the on-disk snapshot with one lock so
+    concurrent starts/finishes from multiple worker threads never race or
+    clobber each other.
+    """
+
+    def __init__(self, output_dir: str, total: int):
+        self._output_dir = output_dir
+        self._total = total
+        self._completed = 0
+        self._in_progress: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._write_snapshot("running")
+
+    def _write_snapshot(self, status: str) -> None:
+        payload = {
+            "total": self._total,
+            "completed": self._completed,
+            "status": status,
+            "in_progress": [
+                {"ligand": ligand_id, **info}
+                for ligand_id, info in self._in_progress.items()
+            ],
+        }
+        _write_docking_progress(self._output_dir, payload)
+
+    def start(self, ligand_id: str, index: int) -> None:
+        with self._lock:
+            self._in_progress[ligand_id] = {
+                "index": index,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._write_snapshot("running")
+
+    def finish(self, ligand_id: str) -> None:
+        with self._lock:
+            self._in_progress.pop(ligand_id, None)
+            self._completed += 1
+            self._write_snapshot("running")
+
+    def done(self) -> None:
+        with self._lock:
+            self._in_progress.clear()
+            self._write_snapshot("done")
 
 
 class MoldinaRunner:
@@ -221,6 +327,100 @@ class MoldinaRunner:
         
         return result
     
+    def _dock_one_ligand(
+        self,
+        ligand_path: str,
+        index: int,
+        receptor_wsl: str,
+        config_wsl: str,
+        output_dir: str,
+        cpu: int,
+        population: int,
+        exhaustiveness: int,
+        num_modes: int,
+        energy_range: float,
+        progress: "_DockingProgress",
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Dock a single ligand against the already-prepared receptor/config.
+
+        Safe to call concurrently from multiple threads for different ligands
+        in the same batch — every path this method touches (output PDBQT, log
+        file) is uniquely named per ligand_id, and it shares no mutable state
+        with other concurrent calls besides `progress`, which is internally
+        locked.
+
+        Returns (result, None) on success, or (None, error_message) on failure.
+        """
+        ligand_id = Path(ligand_path).stem
+        progress.start(ligand_id, index)
+
+        if self.is_windows:
+            ligand_wsl = self._windows_path_to_wsl(ligand_path)
+        else:
+            ligand_wsl = os.path.abspath(ligand_path)
+
+        output_prefix = os.path.join(output_dir, f"{ligand_id}_out.pdbqt")
+        if self.is_windows:
+            output_prefix_wsl = self._windows_path_to_wsl(output_prefix)
+        else:
+            output_prefix_wsl = os.path.abspath(output_prefix)
+
+        moldina_cmd = [
+            self.moldina_path,
+            '--receptor', receptor_wsl,
+            '--ligand', ligand_wsl,
+            '--config', config_wsl,
+            '--out', output_prefix_wsl,
+            '--cpu', str(cpu),
+            '--population', str(population),
+            '--exhaustiveness', str(exhaustiveness),
+            '--num_modes', str(num_modes),
+            '--energy_range', str(energy_range),
+            '--search_alg_PSO',
+        ]
+
+        try:
+            if self.is_windows:
+                moldina_cmd_str = ' '.join([shlex.quote(arg) for arg in moldina_cmd])
+                result = self._run_wsl_command(['bash', '-lc', moldina_cmd_str])
+            else:
+                result = subprocess.run(
+                    moldina_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=3600
+                )
+        except subprocess.TimeoutExpired:
+            logger.error(f"Moldina timed out for {ligand_id} (>1 hour)")
+            progress.finish(ligand_id)
+            return None, f"{ligand_id}: docking timed out (>1 hour)"
+
+        # Save stdout/stderr as a per-ligand log file unconditionally, so a
+        # failure is still debuggable from disk (the error text is often on
+        # stdout, not stderr).
+        log_file = os.path.join(output_dir, f"{ligand_id}_moldina_output.log")
+        with open(log_file, 'w') as f:
+            f.write("=== STDOUT ===\n")
+            f.write(result.stdout)
+            f.write("\n\n=== STDERR ===\n")
+            f.write(result.stderr)
+
+        if result.returncode != 0:
+            logger.error(
+                f"Moldina failed for {ligand_id} (exit {result.returncode}): "
+                f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
+            progress.finish(ligand_id)
+            return None, (
+                f"{ligand_id}: exit {result.returncode}: "
+                f"{result.stderr or result.stdout or '(no output captured)'}"
+            )
+
+        ligand_result = self._build_ligand_result(ligand_path, output_dir, result.stdout)
+        progress.finish(ligand_id)
+        return ligand_result, None
+
     def run_moldina_docking(
         self,
         receptor_path: str,
@@ -232,32 +432,42 @@ class MoldinaRunner:
         population: int = 500,
         exhaustiveness: int = 8,
         num_modes: int = 15,
-        energy_range: float = 100.0
+        energy_range: float = 100.0,
+        parallel: bool = False,
+        max_workers: int = 1
     ) -> Dict[str, Any]:
         """
         Run Moldina docking.
-        
+
         Args:
             receptor_path: Path to receptor PDBQT file
             ligand_paths: List of paths to ligand PDBQT files
             output_dir: Directory for output files
             center: (x, y, z) coordinates of search box center
             box_size: (x, y, z) dimensions of search box in Angstroms
-            cpu: Number of CPUs to use
+            cpu: Number of CPUs to use per ligand
             population: Population size for PSO (minimum 5)
             exhaustiveness: Search exhaustiveness
             num_modes: Maximum number of binding modes
             energy_range: Maximum energy difference for modes (kcal/mol)
-            
+            parallel: Dock up to max_workers ligands concurrently instead of
+                one at a time (default: False, i.e. sequential)
+            max_workers: Maximum number of ligands to dock concurrently when
+                parallel is True — clamped to this process's own CPU count
+                and to the number of ligands, whichever is smaller
+
         Returns:
             Dictionary with docking results
 
-        Note: ligands are docked one at a time (one Moldina invocation per ligand)
-        rather than batched into a single invocation. This keeps memory usage flat
-        regardless of batch size and stops one bad ligand from killing the whole
-        run — batching all ligands into a single process previously triggered the
-        Linux OOM killer (SIGKILL / exit -9) once the container's memory limit was
-        exceeded.
+        Note: ligands are docked one Moldina invocation at a time per worker
+        (never batched into a single invocation). This keeps per-invocation
+        memory usage flat regardless of batch size and stops one bad ligand
+        from killing the whole run — batching all ligands into a single
+        process previously triggered the Linux OOM killer (SIGKILL / exit -9)
+        once the container's memory limit was exceeded. Running several
+        single-ligand invocations concurrently (parallel=True) carries a
+        similar-but-smaller memory risk, which is why the worker count is
+        opt-in and capped rather than unbounded.
         """
         ensure_directory(output_dir)
 
@@ -300,133 +510,59 @@ size_z = {box_size[2]}
             f.write(f"energy_range = {energy_range}\n")
             f.write(f"search_alg_PSO\n")
 
-        logger.info(f"Running Moldina docking for {len(ligand_paths)} ligand(s), one at a time")
-
         results: List[Dict[str, Any]] = []
         errors: List[str] = []
+        results_lock = threading.Lock()
 
-        total = len(ligand_paths)
-        completed = 0
-        _write_docking_progress(output_dir, {
-            "total": total,
-            "completed": 0,
-            "current_ligand": None,
-            "current_index": 0,
-            "status": "running",
-            "current_started_at": None,
-        })
-
-        for idx, ligand_path in enumerate(ligand_paths, start=1):
-            ligand_id = Path(ligand_path).stem
-
-            _write_docking_progress(output_dir, {
-                "total": total,
-                "completed": completed,
-                "current_ligand": ligand_id,
-                "current_index": idx,
-                "status": "running",
-                "current_started_at": datetime.now(timezone.utc).isoformat(),
-            })
-
-            if self.is_windows:
-                ligand_wsl = self._windows_path_to_wsl(ligand_path)
-            else:
-                ligand_wsl = os.path.abspath(ligand_path)
-
-            output_prefix = os.path.join(output_dir, f"{ligand_id}_out.pdbqt")
-            if self.is_windows:
-                output_prefix_wsl = self._windows_path_to_wsl(output_prefix)
-            else:
-                output_prefix_wsl = os.path.abspath(output_prefix)
-
-            moldina_cmd = [
-                self.moldina_path,
-                '--receptor', receptor_wsl,
-                '--ligand', ligand_wsl,
-                '--config', config_wsl,
-                '--out', output_prefix_wsl,
-                '--cpu', str(cpu),
-                '--population', str(population),
-                '--exhaustiveness', str(exhaustiveness),
-                '--num_modes', str(num_modes),
-                '--energy_range', str(energy_range),
-                '--search_alg_PSO',
-            ]
-
-            try:
-                if self.is_windows:
-                    moldina_cmd_str = ' '.join([shlex.quote(arg) for arg in moldina_cmd])
-                    result = self._run_wsl_command(['bash', '-lc', moldina_cmd_str])
+        def _record(ligand_result: Optional[Dict[str, Any]], error: Optional[str]) -> None:
+            with results_lock:
+                if error is not None:
+                    errors.append(error)
                 else:
-                    result = subprocess.run(
-                        moldina_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=3600
+                    results.append(ligand_result)
+
+        # Clamped to this container's real, schedulable CPU budget (not
+        # whatever the caller guessed, and not os.cpu_count() — see
+        # _detect_effective_cpu_count()'s docstring for why that's unsafe)
+        # and to the number of ligands — no point spinning up more workers
+        # than either allows.
+        workers = (
+            max(1, min(max_workers, _detect_effective_cpu_count(), len(ligand_paths)))
+            if parallel and len(ligand_paths) > 1
+            else 1
+        )
+
+        logger.info(
+            f"Running Moldina docking for {len(ligand_paths)} ligand(s), "
+            + (f"up to {workers} at a time" if workers > 1 else "one at a time")
+        )
+
+        progress = _DockingProgress(output_dir, total=len(ligand_paths))
+
+        if workers <= 1:
+            for idx, ligand_path in enumerate(ligand_paths, start=1):
+                ligand_result, error = self._dock_one_ligand(
+                    ligand_path, idx, receptor_wsl, config_wsl, output_dir,
+                    cpu, population, exhaustiveness, num_modes, energy_range,
+                    progress,
+                )
+                _record(ligand_result, error)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(
+                        self._dock_one_ligand,
+                        ligand_path, idx, receptor_wsl, config_wsl, output_dir,
+                        cpu, population, exhaustiveness, num_modes, energy_range,
+                        progress,
                     )
-            except subprocess.TimeoutExpired:
-                logger.error(f"Moldina timed out for {ligand_id} (>1 hour)")
-                errors.append(f"{ligand_id}: docking timed out (>1 hour)")
-                completed += 1
-                _write_docking_progress(output_dir, {
-                    "total": total,
-                    "completed": completed,
-                    "current_ligand": ligand_id,
-                    "current_index": idx,
-                    "status": "running",
-                    "current_started_at": None,
-                })
-                continue
+                    for idx, ligand_path in enumerate(ligand_paths, start=1)
+                ]
+                for future in as_completed(futures):
+                    ligand_result, error = future.result()
+                    _record(ligand_result, error)
 
-            # Save stdout/stderr as a per-ligand log file unconditionally, so a
-            # failure is still debuggable from disk (the error text is often on
-            # stdout, not stderr).
-            log_file = os.path.join(output_dir, f"{ligand_id}_moldina_output.log")
-            with open(log_file, 'w') as f:
-                f.write("=== STDOUT ===\n")
-                f.write(result.stdout)
-                f.write("\n\n=== STDERR ===\n")
-                f.write(result.stderr)
-
-            if result.returncode != 0:
-                logger.error(
-                    f"Moldina failed for {ligand_id} (exit {result.returncode}): "
-                    f"stdout={result.stdout!r} stderr={result.stderr!r}"
-                )
-                errors.append(
-                    f"{ligand_id}: exit {result.returncode}: "
-                    f"{result.stderr or result.stdout or '(no output captured)'}"
-                )
-                completed += 1
-                _write_docking_progress(output_dir, {
-                    "total": total,
-                    "completed": completed,
-                    "current_ligand": ligand_id,
-                    "current_index": idx,
-                    "status": "running",
-                    "current_started_at": None,
-                })
-                continue
-
-            results.append(self._build_ligand_result(ligand_path, output_dir, result.stdout))
-            completed += 1
-            _write_docking_progress(output_dir, {
-                "total": total,
-                "completed": completed,
-                "current_ligand": ligand_id,
-                "current_index": idx,
-                "status": "running",
-                "current_started_at": None,
-            })
-
-        _write_docking_progress(output_dir, {
-            "total": total,
-            "completed": completed,
-            "current_ligand": None,
-            "current_index": total,
-            "status": "done",
-            "current_started_at": None,
-        })
+        progress.done()
 
         if not results:
             raise RuntimeError(

@@ -182,9 +182,12 @@ result = response.json()
 #### Performance Parameters
 
 - **cpu** (default: 1)
-  - Number of CPU cores to use
-  - More CPUs = faster (but diminishing returns)
-  - Recommended: 4-8 cores
+  - Number of CPU cores to use for a single ligand's own search
+  - Not exposed in the GUI (fixed at 1) — only direct/CLI callers of
+    `run_docking` can override it
+  - To speed up a *batch*, use `parallel`/`max_workers` instead (dock several
+    ligands concurrently rather than giving one ligand more cores) — see
+    `docs/BATCH_DOCKING.md#optional-parallel-docking`
 
 ## Search Box Configuration
 

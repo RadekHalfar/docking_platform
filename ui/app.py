@@ -13,7 +13,7 @@ from ui.job_history import list_completed_jobs
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
 from ui.results import build_comparison_html, make_affinity_chart_figure
-from ui.session_state import apply_parsed_params, apply_settings, get_params, init
+from ui.session_state import DETECTED_CPU_COUNT, apply_parsed_params, apply_settings, get_params, init
 
 st.set_page_config(
     layout="wide",
@@ -75,12 +75,18 @@ def _collect_form_params() -> dict:
     for key, default, cast in [
         ("ph", "7.4", float),
         ("exhaustiveness", "8", int),
-        ("cpu", "4", int),
+        ("cpu", "1", int),
     ]:
         try:
             params[key] = cast(st.session_state.get(f"param_{key}", default))
         except (ValueError, TypeError):
             pass
+
+    params["parallel"] = bool(st.session_state.get("param_parallel", False))
+    try:
+        params["max_workers"] = max(1, int(st.session_state.get("param_max_workers", 1)))
+    except (ValueError, TypeError):
+        params["max_workers"] = 1
 
     return params
 
@@ -392,13 +398,25 @@ def render_parameters_panel() -> None:
     _render_docking_box()
 
     with st.expander("Advanced"):
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             st.text_input("pH", key="param_ph")
         with col2:
             st.text_input("Exhaustiveness", key="param_exhaustiveness")
-        with col3:
-            st.text_input("CPUs", key="param_cpu")
+
+        st.checkbox("Parallel ligand docking", key="param_parallel")
+        st.number_input(
+            "Max parallel workers",
+            key="param_max_workers",
+            min_value=1,
+            max_value=DETECTED_CPU_COUNT,
+            disabled=not st.session_state.get("param_parallel", False),
+        )
+        st.caption(
+            f"{DETECTED_CPU_COUNT} CPU core(s) detected on this machine. Running many "
+            "ligands in parallel increases memory usage — lower this if docking jobs "
+            "start failing unexpectedly."
+        )
 
     st.divider()
     col_run, col_reset = st.columns(2)
@@ -612,9 +630,11 @@ def _render_docking_progress(job_id: str) -> None:
     if total:
         st.progress(completed / total, text=f"{completed} / {total} ligands docked")
 
-    current_ligand = progress.get("current_ligand")
-    if current_ligand:
-        started_at = progress.get("current_started_at")
+    for entry in progress.get("in_progress") or []:
+        ligand = entry.get("ligand")
+        if not ligand:
+            continue
+        started_at = entry.get("started_at")
         elapsed_str = ""
         if started_at:
             try:
@@ -623,7 +643,7 @@ def _render_docking_progress(job_id: str) -> None:
                 elapsed_str = f" (running {elapsed}s)"
             except ValueError:
                 pass
-        st.caption(f"Currently docking: `{current_ligand}`{elapsed_str}")
+        st.caption(f"Currently docking: `{ligand}`{elapsed_str}")
 
 
 def _render_workflow_failure(job_id: str, result: dict) -> None:

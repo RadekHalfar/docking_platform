@@ -44,7 +44,9 @@ class MoldinaRunnerServer(MCPServer):
             population: int = 500,
             exhaustiveness: int = 8,
             num_modes: int = 15,
-            energy_range: float = 100.0
+            energy_range: float = 100.0,
+            parallel: bool = False,
+            max_workers: int = 1
         ) -> dict:
             """Handler for run_docking tool."""
             # Initialize runner if needed
@@ -76,7 +78,9 @@ class MoldinaRunnerServer(MCPServer):
                 population=population,
                 exhaustiveness=exhaustiveness,
                 num_modes=num_modes,
-                energy_range=energy_range
+                energy_range=energy_range,
+                parallel=parallel,
+                max_workers=max_workers
             )
             
             return results
@@ -84,7 +88,11 @@ class MoldinaRunnerServer(MCPServer):
         register_mcp_tool(
             self,
             name="run_docking",
-            description="Run Moldina molecular docking with PSO optimization",
+            description=(
+                "Run Moldina molecular docking with PSO optimization. Ligands are docked "
+                "one at a time by default; set parallel=true to dock up to max_workers "
+                "ligands concurrently instead."
+            ),
             handler=run_docking_handler,
             parameters=build_tool_parameters([
                 ("receptor_path", "string", "Path to receptor PDBQT file", True),
@@ -97,6 +105,8 @@ class MoldinaRunnerServer(MCPServer):
                 ("exhaustiveness", "number", "Search exhaustiveness (default: 8)"),
                 ("num_modes", "number", "Maximum number of binding modes (default: 15)"),
                 ("energy_range", "number", "Maximum energy difference for modes in kcal/mol (default: 100.0)"),
+                ("parallel", "boolean", "Dock ligands concurrently, up to max_workers at a time, instead of one at a time (default: false)"),
+                ("max_workers", "number", "Maximum number of ligands to dock concurrently when parallel is true (default: 1)"),
             ]),
         )
 

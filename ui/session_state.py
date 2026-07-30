@@ -1,9 +1,47 @@
 """Session state initialization and parameter helpers."""
+import os
+from pathlib import Path
+
 import streamlit as st
 
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.settings import load_settings, save_settings
+
+
+def _detect_moldina_worker_cap() -> int:
+    """Best-effort real ceiling for the GUI's "Max parallel workers" control.
+
+    os.cpu_count() here reflects the *ui* container's own CPU visibility,
+    which is unrestricted — moldina-runner is a different container with its
+    own `deploy.resources.limits.cpus` cgroup quota, the number that actually
+    matters (see MoldinaRunner._detect_effective_cpu_count()). Read that
+    quota straight out of docker-compose.yml (bind-mounted into this
+    container alongside the rest of the repo) instead of guessing from this
+    container's own core count, so the GUI doesn't invite worker counts that
+    just get silently clamped down server-side anyway. Falls back to
+    os.cpu_count() if the compose file can't be found/parsed/read, or no
+    limit is configured there — never lets a parsing failure block startup.
+    """
+    fallback = os.cpu_count() or 1
+    try:
+        import yaml
+
+        compose_path = Path(__file__).resolve().parent.parent / "docker-compose.yml"
+        with open(compose_path) as f:
+            compose = yaml.safe_load(f)
+        cpus = compose["services"]["moldina-runner"]["deploy"]["resources"]["limits"]["cpus"]
+        limit = int(float(cpus))
+        if limit > 0:
+            return limit
+    except Exception:
+        pass
+    return fallback
+
+
+# Detected once at import time — used to pre-fill/cap the "max parallel
+# workers" control with a reasonable, machine-appropriate default.
+DETECTED_CPU_COUNT = _detect_moldina_worker_cap()
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
 _WIDGET_DEFAULTS = {
@@ -18,7 +56,9 @@ _WIDGET_DEFAULTS = {
     "param_box_z": "",
     "param_ph": "7.4",
     "param_exhaustiveness": "8",
-    "param_cpu": "4",
+    "param_cpu": "1",
+    "param_parallel": False,
+    "param_max_workers": DETECTED_CPU_COUNT,
 }
 
 

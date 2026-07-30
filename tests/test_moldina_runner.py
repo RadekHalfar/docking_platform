@@ -8,15 +8,18 @@ Tests the Moldina runner functionality including:
 - Moldina execution (mocked)
 - Results parsing
 """
+import json
 import os
 import platform
 import pytest
 import tempfile
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, mock_open
 
-from services.moldina_runner import MoldinaRunner
+from services.moldina_runner import MoldinaRunner, _detect_effective_cpu_count
 
 
 # Skip all tests if running on CI without WSL
@@ -521,3 +524,344 @@ class TestMoldinaRunnerIntegration:
                 center=(0, 0, 0),
                 box_size=(20, 20, 20)
             )
+
+
+class TestDetectEffectiveCpuCount:
+    """Tests for the cgroup-aware CPU budget detection used to clamp
+    max_workers. os.cpu_count() does not reflect a Docker Compose
+    `deploy.resources.limits.cpus` quota (confirmed in practice: a
+    container limited to cpus: '4' still reports the host's full core
+    count via os.cpu_count()), so this reads the cgroup files directly."""
+
+    @staticmethod
+    def _opener_for(paths: dict):
+        """paths: {file_path: content}. Any other path raises FileNotFoundError,
+        matching what happens when a given cgroup v1/v2 file doesn't exist."""
+        def _open(path, *args, **kwargs):
+            if path not in paths:
+                raise FileNotFoundError(path)
+            return mock_open(read_data=paths[path])(*args, **kwargs)
+        return _open
+
+    def test_cgroup_v2_quota_present(self):
+        """cgroup v2 cpu.max with a real quota lower than os.cpu_count() returns
+        the effective (quota-limited) core count."""
+        opener = self._opener_for({"/sys/fs/cgroup/cpu.max": "400000 100000\n"})
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=20):
+            assert _detect_effective_cpu_count() == 4
+
+    def test_cgroup_v2_fractional_quota_rounds_down(self):
+        """A quota that doesn't divide evenly rounds down — never claim more
+        schedulable CPU than is actually guaranteed."""
+        opener = self._opener_for({"/sys/fs/cgroup/cpu.max": "350000 100000\n"})
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=20):
+            assert _detect_effective_cpu_count() == 3
+
+    def test_cgroup_v2_unlimited_falls_back_to_os_cpu_count(self):
+        """cgroup v2 'max' quota means no limit enforced — fall back to os.cpu_count()."""
+        opener = self._opener_for({"/sys/fs/cgroup/cpu.max": "max 100000\n"})
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=16):
+            assert _detect_effective_cpu_count() == 16
+
+    def test_cgroup_v1_quota_present(self):
+        """Falls back to cgroup v1 quota/period files when v2's cpu.max is absent."""
+        opener = self._opener_for({
+            "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "200000\n",
+            "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+        })
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=20):
+            assert _detect_effective_cpu_count() == 2
+
+    def test_cgroup_v1_unlimited_falls_back_to_os_cpu_count(self):
+        """cgroup v1 quota of -1 means unlimited — fall back to os.cpu_count()."""
+        opener = self._opener_for({
+            "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "-1\n",
+            "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+        })
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=8):
+            assert _detect_effective_cpu_count() == 8
+
+    def test_no_cgroup_files_falls_back_to_os_cpu_count(self):
+        """Neither cgroup v1 nor v2 files exist (e.g. not running in a container) —
+        fall back to os.cpu_count()."""
+        with patch('builtins.open', side_effect=FileNotFoundError), \
+                patch('services.moldina_runner.os.cpu_count', return_value=12):
+            assert _detect_effective_cpu_count() == 12
+
+    def test_quota_higher_than_real_hardware_clamps_to_os_cpu_count(self):
+        """If the configured quota assumes more cores than this machine actually
+        has (e.g. `cpus: '10'` in docker-compose.yml, deployed on a 4-core box),
+        the real hardware limit wins — the quota alone is never trusted blindly."""
+        opener = self._opener_for({"/sys/fs/cgroup/cpu.max": "1000000 100000\n"})  # quota = 10
+        with patch('builtins.open', side_effect=opener), \
+                patch('services.moldina_runner.os.cpu_count', return_value=4):
+            assert _detect_effective_cpu_count() == 4
+
+
+class TestMoldinaRunnerParallel:
+    """Tests for optional concurrent (parallel=True) ligand docking."""
+
+    @pytest.fixture
+    def runner(self, temp_dir, mock_platform_linux):
+        """Create runner"""
+        with patch.object(MoldinaRunner, '_find_moldina_executable', return_value='/usr/bin/Moldina'):
+            return MoldinaRunner(cache_dir=temp_dir)
+
+    @staticmethod
+    def _write_success_outputs(output_dir, ligand_id, affinity=-8.5):
+        out_file = os.path.join(output_dir, f"{ligand_id}_out.pdbqt")
+        log_file = os.path.join(output_dir, f"{ligand_id}_out.log")
+        Path(out_file).write_text("MODEL 1\nREMARK VINA RESULT: -8.5\nENDMDL\n")
+        Path(log_file).write_text(
+            "mode |   affinity | dist from best mode\n"
+            "     | (kcal/mol) | rmsd l.b.| rmsd u.b.\n"
+            "-----+------------+----------+----------\n"
+            f"   1       {affinity}      0.000      0.000\n"
+        )
+
+    def test_parallel_false_stays_sequential(self, runner, temp_dir, mock_subprocess):
+        """parallel defaults to False — behavior is unchanged from before this feature."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand1 = os.path.join(temp_dir, "ligand1.pdbqt")
+        ligand2 = os.path.join(temp_dir, "ligand2.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        for path in [receptor, ligand1, ligand2]:
+            Path(path).touch()
+
+        with patch('services.moldina_runner.ThreadPoolExecutor') as mock_pool:
+            mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+            runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=[ligand1, ligand2],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+            )
+
+        mock_pool.assert_not_called()
+        assert mock_subprocess.run.call_count == 2
+
+    def test_parallel_all_ligands_docked(self, runner, temp_dir, mock_subprocess):
+        """With parallel=True, every ligand still gets docked and results are complete."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand_paths = []
+        for i in range(3):
+            p = os.path.join(temp_dir, f"ligand{i}.pdbqt")
+            Path(p).touch()
+            ligand_paths.append(p)
+        Path(receptor).touch()
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        def mock_moldina_run(cmd, *args, **kwargs):
+            ligand_arg = cmd[cmd.index('--ligand') + 1]
+            ligand_id = Path(ligand_arg).stem
+            self._write_success_outputs(output_dir, ligand_id)
+            return Mock(returncode=0, stdout='Moldina completed', stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        with patch('services.moldina_runner.os.cpu_count', return_value=4):
+            results = runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=ligand_paths,
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                parallel=True,
+                max_workers=3,
+            )
+
+        assert results["status"] == "ok"
+        assert results["total"] == 3
+        assert results["successful"] == 3
+        assert results["failed"] == 0
+        assert {r["ligand_id"] for r in results["results"]} == {"ligand0", "ligand1", "ligand2"}
+        # Every ligand's own PDBQT/log survived — none overwrote another's.
+        for i in range(3):
+            assert os.path.exists(os.path.join(output_dir, f"ligand{i}_out.pdbqt"))
+
+    def test_parallel_one_bad_ligand_does_not_kill_batch(self, runner, temp_dir, mock_subprocess):
+        """Same resilience guarantee as sequential mode: one failing ligand doesn't
+        abort the rest of a concurrent batch."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        good_ligand = os.path.join(temp_dir, "good.pdbqt")
+        bad_ligand = os.path.join(temp_dir, "bad.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+
+        Path(receptor).touch()
+        Path(good_ligand).touch()
+        Path(bad_ligand).touch()
+        os.makedirs(output_dir, exist_ok=True)
+
+        def mock_moldina_run(cmd, *args, **kwargs):
+            ligand_arg = cmd[cmd.index('--ligand') + 1]
+            if "bad" in ligand_arg:
+                return Mock(returncode=-9, stdout='', stderr='')
+            self._write_success_outputs(output_dir, "good")
+            return Mock(returncode=0, stdout='Moldina completed', stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        with patch('services.moldina_runner.os.cpu_count', return_value=4):
+            results = runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=[good_ligand, bad_ligand],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                parallel=True,
+                max_workers=2,
+            )
+
+        assert results["status"] == "ok"
+        assert results["successful"] == 1
+        assert results["failed"] == 1
+        assert results["results"][0]["ligand_id"] == "good"
+        assert any("bad" in err for err in results["errors"])
+
+    def test_parallel_workers_clamped_to_ligand_count(self, runner, temp_dir, mock_subprocess):
+        """Requesting more workers than ligands doesn't over-provision the thread pool."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand1 = os.path.join(temp_dir, "ligand1.pdbqt")
+        ligand2 = os.path.join(temp_dir, "ligand2.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        for path in [receptor, ligand1, ligand2]:
+            Path(path).touch()
+
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        with patch('services.moldina_runner.ThreadPoolExecutor', wraps=ThreadPoolExecutor) as mock_pool, \
+                patch('services.moldina_runner.os.cpu_count', return_value=8):
+            runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=[ligand1, ligand2],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                parallel=True,
+                max_workers=10,
+            )
+
+        mock_pool.assert_called_once_with(max_workers=2)
+
+    def test_parallel_workers_clamped_to_cpu_count(self, runner, temp_dir, mock_subprocess):
+        """Requesting more workers than the container's real CPU budget clamps to
+        whatever _detect_effective_cpu_count() reports, regardless of what the
+        caller asked for. Patches the detector directly rather than os.cpu_count()
+        so this stays correct even when run inside a real cgroup-limited container
+        (where cgroup files would otherwise take precedence over an os.cpu_count()
+        mock — see TestDetectEffectiveCpuCount for that logic in isolation)."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        ligand_paths = []
+        for i in range(5):
+            p = os.path.join(temp_dir, f"ligand{i}.pdbqt")
+            Path(p).touch()
+            ligand_paths.append(p)
+        Path(receptor).touch()
+
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        with patch('services.moldina_runner.ThreadPoolExecutor', wraps=ThreadPoolExecutor) as mock_pool, \
+                patch('services.moldina_runner._detect_effective_cpu_count', return_value=2):
+            runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=ligand_paths,
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                parallel=True,
+                max_workers=10,
+            )
+
+        mock_pool.assert_called_once_with(max_workers=2)
+
+    def test_parallel_ligands_genuinely_overlap(self, runner, temp_dir, mock_subprocess):
+        """Two ligands are actually in flight at the same time under parallel=True —
+        proven by reading docking_progress.json while both invocations are still
+        blocked mid-flight, rather than relying on timing/sleep."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand1 = os.path.join(temp_dir, "ligand1.pdbqt")
+        ligand2 = os.path.join(temp_dir, "ligand2.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        for path in [receptor, ligand1, ligand2]:
+            Path(path).touch()
+        os.makedirs(output_dir, exist_ok=True)
+
+        both_started = threading.Event()
+        seen_lock = threading.Lock()
+        seen = set()
+        progress_path = os.path.join(output_dir, "docking_progress.json")
+        in_progress_snapshot = []
+
+        def mock_moldina_run(cmd, *args, **kwargs):
+            ligand_arg = cmd[cmd.index('--ligand') + 1]
+            with seen_lock:
+                seen.add(ligand_arg)
+                if len(seen) == 2:
+                    with open(progress_path) as f:
+                        payload = json.load(f)
+                    in_progress_snapshot.append(len(payload["in_progress"]))
+                    both_started.set()
+            # Neither call proceeds to "finish" until both have started, so
+            # completion can never race ahead of the overlap check above.
+            both_started.wait(timeout=5)
+
+            ligand_id = Path(ligand_arg).stem
+            self._write_success_outputs(output_dir, ligand_id)
+            return Mock(returncode=0, stdout='Moldina completed', stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        with patch('services.moldina_runner.os.cpu_count', return_value=4):
+            results = runner.run_moldina_docking(
+                receptor_path=receptor,
+                ligand_paths=[ligand1, ligand2],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                parallel=True,
+                max_workers=2,
+            )
+
+        assert both_started.is_set(), "both ligands should have started concurrently"
+        assert in_progress_snapshot == [2]
+        assert results["successful"] == 2
+
+    def test_docking_progress_schema_has_in_progress_list(self, runner, temp_dir, mock_subprocess):
+        """docking_progress.json uses the list-based in_progress schema for both
+        sequential and parallel runs, ending in a 'done' status with an empty list."""
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand = os.path.join(temp_dir, "ligand.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        Path(receptor).touch()
+        Path(ligand).touch()
+        os.makedirs(output_dir, exist_ok=True)
+
+        def mock_moldina_run(cmd, *args, **kwargs):
+            self._write_success_outputs(output_dir, "ligand")
+            return Mock(returncode=0, stdout='Moldina completed', stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        runner.run_moldina_docking(
+            receptor_path=receptor,
+            ligand_paths=[ligand],
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20),
+        )
+
+        with open(os.path.join(output_dir, "docking_progress.json")) as f:
+            payload = json.load(f)
+
+        assert payload["status"] == "done"
+        assert payload["total"] == 1
+        assert payload["completed"] == 1
+        assert payload["in_progress"] == []

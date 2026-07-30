@@ -193,7 +193,10 @@ class MCPServer(ABC):
         self.setup_tools()
         self.logger.info(f"Starting {self.name} on {self.host}:{self.port}")
         self.logger.info(f"Registered tools: {list(self.tools.keys())}")
-        self.app.run(host=self.host, port=self.port)
+        # threaded=True so the /health endpoint stays responsive while a
+        # long-running tool call (e.g. docking a large batch) is in flight —
+        # otherwise Docker's healthcheck flaps the container to "unhealthy".
+        self.app.run(host=self.host, port=self.port, threaded=True)
 
 
 # Standard JSON-RPC error codes

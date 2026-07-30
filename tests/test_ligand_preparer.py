@@ -244,6 +244,124 @@ def test_prepare_ligands_all_fail(preparer, tmp_path):
     assert result["failed"] == 1
 
 
+def test_prepare_ligands_from_file_single_molecule_sdf_unchanged_naming(preparer, fixtures_dir, tmp_path):
+    """A single-molecule SDF through prepare_ligands_from_file() keeps the
+    same id/filenames as prepare_ligand() — no "_1" suffix added."""
+    sdf_file = fixtures_dir / "benzene.sdf"
+    if not sdf_file.exists():
+        pytest.skip("Fixture file not available")
+
+    output_dir = tmp_path / "single_via_multi"
+    results, errors = preparer.prepare_ligands_from_file(str(sdf_file), str(output_dir))
+
+    assert errors == []
+    assert len(results) == 1
+    assert results[0]["id"] == "benzene"
+    assert os.path.exists(results[0]["pdbqt_path"])
+
+
+def test_prepare_ligands_from_file_multi_molecule_sdf(preparer, fixtures_dir, tmp_path):
+    """A multi-molecule SDF expands into one prepared ligand per molecule,
+    each with a unique id and output files."""
+    sdf_file = fixtures_dir / "multi_ligand.sdf"
+    if not sdf_file.exists():
+        pytest.skip("Fixture file not available")
+
+    output_dir = tmp_path / "multi_expand"
+    results, errors = preparer.prepare_ligands_from_file(str(sdf_file), str(output_dir))
+
+    assert errors == []
+    assert len(results) == 3
+
+    ids = [r["id"] for r in results]
+    assert ids == ["multi_ligand_1", "multi_ligand_2", "multi_ligand_3"]
+
+    pdbqt_paths = [r["pdbqt_path"] for r in results]
+    assert len(set(pdbqt_paths)) == 3, "prepared ligands must have unique output files"
+    for path in pdbqt_paths:
+        assert os.path.exists(path)
+
+    for i, r in enumerate(results, start=1):
+        assert r["molecule_index"] == i
+        assert r["molecule_count"] == 3
+        assert r["source_file"] == str(sdf_file)
+
+    # First record's title line is "benzene"; water.sdf's title line is
+    # blank (name lives in an SD tag we don't read), so it falls back to None.
+    assert results[0]["sdf_title"] == "benzene"
+    assert results[1]["sdf_title"] is None
+    assert results[2]["sdf_title"] == "methane"
+
+
+def test_prepare_ligands_from_file_skips_unparseable_records(preparer, fixtures_dir, tmp_path):
+    """A malformed record inside an otherwise-valid multi-molecule SDF is
+    silently skipped during parsing (pre-existing SDMolSupplier behavior),
+    the same way a single-molecule bad SDF is already tolerated elsewhere."""
+    sdf_file = fixtures_dir / "multi_ligand_with_unparseable.sdf"
+    if not sdf_file.exists():
+        pytest.skip("Fixture file not available")
+
+    output_dir = tmp_path / "multi_with_garbage"
+    results, errors = preparer.prepare_ligands_from_file(str(sdf_file), str(output_dir))
+
+    assert errors == []
+    assert len(results) == 2
+    assert [r["id"] for r in results] == [
+        "multi_ligand_with_unparseable_1",
+        "multi_ligand_with_unparseable_2",
+    ]
+
+
+def test_prepare_ligands_from_file_partial_failure(preparer, fixtures_dir, tmp_path):
+    """If one molecule fails during preparation, the others still succeed
+    and the failure is reported with its position in the file."""
+    sdf_file = fixtures_dir / "multi_ligand.sdf"
+    if not sdf_file.exists():
+        pytest.skip("Fixture file not available")
+
+    output_dir = tmp_path / "multi_partial_fail"
+
+    with patch.object(preparer, "_prepare_mol") as mock_prepare_mol:
+        mock_prepare_mol.side_effect = [
+            {"id": "multi_ligand_1"},
+            RuntimeError("simulated preparation failure"),
+            {"id": "multi_ligand_3"},
+        ]
+        results, errors = preparer.prepare_ligands_from_file(str(sdf_file), str(output_dir))
+
+    assert len(results) == 2
+    assert [r["id"] for r in results] == ["multi_ligand_1", "multi_ligand_3"]
+    assert len(errors) == 1
+    assert "molecule 2/3" in errors[0]["ligand"]
+    assert "simulated preparation failure" in errors[0]["error"]
+
+
+def test_prepare_ligands_multiple_with_multi_molecule_sdf(preparer, fixtures_dir, tmp_path):
+    """The MCP-facing batch method expands multi-molecule SDFs too, while
+    'total' keeps counting input files and 'total_ligands' reflects the
+    post-expansion molecule count."""
+    multi_file = fixtures_dir / "multi_ligand.sdf"
+    benzene_file = fixtures_dir / "benzene.sdf"
+    if not (multi_file.exists() and benzene_file.exists()):
+        pytest.skip("Fixture files not available")
+
+    output_dir = tmp_path / "batch_with_expansion"
+    result = preparer.prepare_ligands(
+        [str(multi_file), str(benzene_file)],
+        str(output_dir),
+    )
+
+    assert result["status"] == "ok"
+    assert result["total"] == 2  # input files
+    assert result["total_ligands"] == 4  # 3 from multi_ligand.sdf + 1 from benzene.sdf
+    assert result["successful"] == 4
+    assert result["failed"] == 0
+    assert len(result["prepared_ligands"]) == 4
+
+    pdbqt_paths = [r["pdbqt_path"] for r in result["prepared_ligands"]]
+    assert len(set(pdbqt_paths)) == 4, "no two prepared ligands may share an output file"
+
+
 def test_count_rotatable_bonds_from_pdbqt(preparer, tmp_path):
     """Test extracting TORSDOF from PDBQT."""
     pdbqt_file = tmp_path / "test.pdbqt"

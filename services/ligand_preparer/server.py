@@ -47,10 +47,14 @@ class LigandPreparerServer(MCPServer):
         register_mcp_tool(
             self,
             name="prepare_ligands",
-            description="Prepare ligand molecules for AutoDock Vina docking (convert to PDBQT with proper charges and hydrogens)",
+            description=(
+                "Prepare ligand molecules for AutoDock Vina docking (convert to PDBQT with "
+                "proper charges and hydrogens). A multi-molecule SDF file (multiple "
+                "$$$$-delimited records) expands into one prepared ligand per molecule."
+            ),
             handler=prepare_ligands_handler,
             parameters=build_tool_parameters([
-                ("ligand_paths", "array", "List of paths to ligand files (SDF, MOL, MOL2)", True),
+                ("ligand_paths", "array", "List of paths to ligand files (SDF, MOL, MOL2). A single SDF path may contain multiple molecules, each of which is prepared separately.", True),
                 ("output_dir", "string", "Directory to save prepared ligands"),
                 ("ph", "number", "pH for protonation state (default: 7.4)"),
                 ("add_hydrogens", "boolean", "Add explicit hydrogens (default: true)"),
@@ -60,6 +64,7 @@ class LigandPreparerServer(MCPServer):
             returns={
                 "prepared_ligands": "array",
                 "total": "number",
+                "total_ligands": "number",
                 "successful": "number",
                 "failed": "number",
                 "errors": "array",

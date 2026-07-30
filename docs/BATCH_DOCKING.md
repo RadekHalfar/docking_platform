@@ -97,9 +97,13 @@ same reason — paths passed to the orchestrator are always container-side paths
 
 ## Expected result structure
 
-Every matching file in the folder becomes one entry in `results.dock.results` of
-`workflow_results.json` — one docking result per ligand file, same as if each had been
-passed individually via `--ligand-files`.
+Every matching file in the folder becomes one or more entries in `results.dock.results` of
+`workflow_results.json` — one docking result per ligand *molecule*, same as if each had been
+passed individually via `--ligand-files`. For `.mol`, `.mol2`, and `.pdbqt` files, and for
+single-molecule `.sdf` files, that's exactly one result per file. A `.sdf` file containing
+multiple `$$$$`-delimited molecules expands into one result per molecule (e.g. a 5-compound
+`screen.sdf` produces 5 entries, named `screen_1` … `screen_5`) — see
+[Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files) for details.
 
 ## Performance guidance
 
@@ -107,3 +111,10 @@ Each ligand is prepared and docked independently. A folder with more than ~20 li
 take many minutes end-to-end, since `exhaustiveness` and `cpu` settings apply per ligand,
 not to the batch as a whole. For large batches, consider lowering `--exhaustiveness` or
 increasing `--cpu` if more cores are available.
+
+Docking itself is **strictly sequential** — one Moldina invocation per ligand, never
+parallelized within a batch (see [Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files)
+for why). A very large batch (hundreds of ligands — e.g. an entire multi-molecule SDF
+screen) can therefore take hours, and the whole `dock` step is one long-running call with
+no incremental result visibility until it completes or errors: you won't see any docking
+results until every ligand in the batch has finished.

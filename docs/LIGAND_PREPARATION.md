@@ -16,19 +16,22 @@ AutoDock Vina requires ligands in PDBQT format, which includes:
 ## Preparation Pipeline
 
 ### 1. Input Formats Supported
-- **SDF** (Structure Data Format) - Most common for small molecules
-- **MOL** (MDL Molfile)
-- **MOL2** (Tripos Mol2)
+- **SDF** (Structure Data Format) - Most common for small molecules. A single
+  SDF file may contain multiple `$$$$`-delimited molecule records — see
+  [Multi-Molecule SDF Files](#multi-molecule-sdf-files) below.
+- **MOL** (MDL Molfile) - always exactly one molecule
+- **MOL2** (Tripos Mol2) - always exactly one molecule
 
 ### 2. Processing Steps
 
 **Step 1: Read and Sanitize**
 ```python
-mol = Chem.MolFromSDF(file_path)
-Chem.SanitizeMol(mol)
+supplier = Chem.SDMolSupplier(file_path, removeHs=False)
+mols = [mol for mol in supplier if mol is not None]
 ```
-- Validates chemical structure
-- Checks valence and aromaticity
+- `SDMolSupplier` parses every record in the file; invalid records are
+  skipped (yielded as `None`) rather than raising
+- Validates chemical structure, checks valence and aromaticity
 - Corrects common issues
 
 **Step 2: Add Hydrogens**
@@ -102,6 +105,39 @@ PDBQT is an extended PDB format required by AutoDock Vina. The name stands for:
 - **PDB** - Protein Data Bank format (coordinates)
 - **Q** - Partial atomic charges
 - **T** - Atom types (AutoDock-specific)
+
+## Multi-Molecule SDF Files
+
+A single `.sdf` file may contain more than one molecule, each separated by a
+`$$$$` line. `prepare_ligands_from_file()` (used internally by the batch
+`prepare_ligands()` MCP tool) prepares **every valid molecule** in the file,
+not just the first one:
+
+- **Single-molecule SDF** (the common case): behaves exactly as before — the
+  output is named from the input filename, e.g. `aspirin.sdf` →
+  `aspirin.pdbqt`.
+- **Multi-molecule SDF**: each molecule gets a unique id
+  `{filename_stem}_{index}` (1-based), so a 10-compound `screen.sdf` produces
+  `screen_1.pdbqt` … `screen_10.pdbqt`. This guarantees output files never
+  overwrite each other.
+- Each prepared-ligand result also includes `source_file` (the original SDF
+  path), `molecule_index`/`molecule_count` (position within the file), and
+  `sdf_title` (the molecule's title-line name from the SDF, if present —
+  `None` if the record's title line was blank).
+- A molecule that fails during preparation (e.g. 3D embedding or PDBQT
+  conversion fails) is recorded as an error and does **not** stop the rest of
+  the file from being processed — you get every molecule that succeeded, plus
+  an `errors` entry naming which molecule (e.g. `"molecule 4/10"`) failed and
+  why.
+- A record RDKit cannot parse at all (malformed connection table, etc.) is
+  silently skipped during reading, the same way a single bad molecule in an
+  otherwise-fine file has always been tolerated — it simply isn't counted
+  among the file's molecules.
+
+The batch `prepare_ligands()` response distinguishes input files from output
+ligands: `total` is the number of input file paths given, while
+`total_ligands` is the number of ligands actually produced (which can exceed
+`total` when a multi-molecule SDF was expanded).
 
 ### Why Two Files? PDB vs PDBQT
 
@@ -269,6 +305,28 @@ result = preparer.prepare_ligand(
 print(f"Output: {result['pdbqt_path']}")
 print(f"Rotatable bonds: {result['rotatable_bonds']}")
 # Expected: 3 rotatable bonds (ester linkage + carboxyl)
+```
+
+## Example: Preparing a Multi-Molecule SDF (Compound Screen)
+
+```python
+from services.ligand_preparer import LigandPreparer
+
+preparer = LigandPreparer()
+
+# Input: screen.sdf, containing 10 compounds separated by $$$$
+results, errors = preparer.prepare_ligands_from_file(
+    "screen.sdf",
+    output_dir="./prepared",
+    ph=7.4,
+)
+
+print(f"Prepared {len(results)} of 10 molecules")
+for r in results:
+    print(f"  {r['id']}: {r['pdbqt_path']} ({r['rotatable_bonds']} rotatable bonds)")
+for e in errors:
+    print(f"  FAILED {e['ligand']}: {e['error']}")
+# Output ids: screen_1, screen_2, ..., screen_10
 ```
 
 ## References

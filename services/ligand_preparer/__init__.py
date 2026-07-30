@@ -20,7 +20,7 @@ import os
 import logging
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rdkit import Chem
@@ -64,37 +64,54 @@ class LigandPreparer:
         if cache_dir:
             ensure_directory(cache_dir)
     
+    def _read_sdf_records(self, file_path: str) -> List[Any]:
+        """
+        Read all valid molecule records from an SDF file.
+
+        Unlike read_ligand(), this does not discard extra records — an SDF
+        with multiple `$$$$`-delimited molecules yields one Chem.Mol per
+        valid record, in file order.
+
+        Raises:
+            ValueError: If no valid molecules are found in the file
+        """
+        supplier = Chem.SDMolSupplier(file_path, removeHs=False)
+        mols = [mol for mol in supplier if mol is not None]
+        if not mols:
+            raise ValueError(f"No valid molecules in {file_path}")
+        return mols
+
     def read_ligand(self, file_path: str) -> Any:
         """
-        Read ligand from file.
-        
+        Read a single representative ligand molecule from file.
+
+        For multi-molecule SDF files this intentionally returns only the
+        first record — use prepare_ligands_from_file() to process every
+        molecule in a multi-molecule SDF.
+
         Args:
             file_path: Path to ligand file (SDF, MOL, MOL2)
-            
+
         Returns:
             RDKit molecule object (Chem.Mol)
-            
+
         Raises:
             ValueError: If file cannot be read or format unsupported
         """
         file_ext = Path(file_path).suffix.lower()
-        
+
         if file_ext == '.sdf':
-            supplier = Chem.SDMolSupplier(file_path, removeHs=False)
-            mols = [mol for mol in supplier if mol is not None]
-            if not mols:
-                raise ValueError(f"No valid molecules in {file_path}")
-            mol = mols[0]  # Take first molecule
+            mol = self._read_sdf_records(file_path)[0]
         elif file_ext == '.mol':
             mol = Chem.MolFromMolFile(file_path, removeHs=False)
         elif file_ext == '.mol2':
             mol = Chem.MolFromMol2File(file_path, removeHs=False)
         else:
             raise ValueError(f"Unsupported file format: {file_ext}")
-        
+
         if mol is None:
             raise ValueError(f"Failed to read molecule from {file_path}")
-        
+
         return mol
     
     def prepare_molecule(
@@ -359,56 +376,42 @@ class LigandPreparer:
             pass
         return 0
     
-    def prepare_ligand(
+    def _prepare_mol(
         self,
+        mol: Any,
+        ligand_id: str,
         input_path: str,
         output_dir: str,
-        ph: float = 7.4,
-        add_hydrogens: bool = True,
-        generate_3d: bool = True,
-        optimize: bool = True
+        ph: float,
+        add_hydrogens: bool,
+        generate_3d: bool,
+        optimize: bool,
+        extra: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Prepare a single ligand for docking.
-        
-        Args:
-            input_path: Path to input ligand file
-            output_dir: Directory for output files
-            ph: pH for protonation
-            add_hydrogens: Add explicit hydrogens
-            generate_3d: Generate 3D coordinates if missing
-            optimize: Optimize geometry
-            
-        Returns:
-            Dictionary with prepared ligand info
+        Prepare an already-read RDKit Mol into PDB + PDBQT + a result dict.
+
+        Shared by prepare_ligand() (single molecule per file) and
+        prepare_ligands_from_file() (one or more molecules per file).
         """
-        ensure_directory(output_dir)
-        
-        # Read ligand
-        logger.info(f"Reading ligand from {input_path}")
-        mol = self.read_ligand(input_path)
-        
-        # Get ligand name
-        ligand_name = Path(input_path).stem
-        ligand_name_clean = sanitize_filename(ligand_name)
-        
-        # Prepare molecule
-        logger.info(f"Preparing {ligand_name}")
+        ligand_id_clean = sanitize_filename(ligand_id)
+
+        logger.info(f"Preparing {ligand_id}")
         mol = self.prepare_molecule(mol, ph, add_hydrogens, generate_3d, optimize)
-        
+
         # Save intermediate PDB
-        pdb_path = os.path.join(output_dir, f"{ligand_name_clean}_prepared.pdb")
+        pdb_path = os.path.join(output_dir, f"{ligand_id_clean}_prepared.pdb")
         self.save_as_pdb(mol, pdb_path)
-        
+
         # Convert to PDBQT
-        pdbqt_path = os.path.join(output_dir, f"{ligand_name_clean}.pdbqt")
+        pdbqt_path = os.path.join(output_dir, f"{ligand_id_clean}.pdbqt")
         conversion_info = self.convert_to_pdbqt_meeko(pdb_path, pdbqt_path)
-        
+
         # Compute checksum
         checksum = compute_file_checksum(pdbqt_path)
-        
+
         result = {
-            "id": ligand_name,
+            "id": ligand_id,
             "input_path": input_path,
             "pdb_path": pdb_path,
             "pdbqt_path": pdbqt_path,
@@ -422,9 +425,122 @@ class LigandPreparer:
                 "optimize": optimize
             }
         }
-        
+        if extra:
+            result.update(extra)
+
         return result
-    
+
+    def prepare_ligand(
+        self,
+        input_path: str,
+        output_dir: str,
+        ph: float = 7.4,
+        add_hydrogens: bool = True,
+        generate_3d: bool = True,
+        optimize: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Prepare a single ligand for docking.
+
+        For multi-molecule SDF files this only prepares the first molecule —
+        use prepare_ligands_from_file() to prepare every molecule in a file.
+
+        Args:
+            input_path: Path to input ligand file
+            output_dir: Directory for output files
+            ph: pH for protonation
+            add_hydrogens: Add explicit hydrogens
+            generate_3d: Generate 3D coordinates if missing
+            optimize: Optimize geometry
+
+        Returns:
+            Dictionary with prepared ligand info
+        """
+        ensure_directory(output_dir)
+
+        logger.info(f"Reading ligand from {input_path}")
+        mol = self.read_ligand(input_path)
+        ligand_name = Path(input_path).stem
+
+        return self._prepare_mol(
+            mol, ligand_name, input_path, output_dir,
+            ph, add_hydrogens, generate_3d, optimize
+        )
+
+    def prepare_ligands_from_file(
+        self,
+        input_path: str,
+        output_dir: str,
+        ph: float = 7.4,
+        add_hydrogens: bool = True,
+        generate_3d: bool = True,
+        optimize: bool = True
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Prepare every ligand molecule contained in a single input file.
+
+        For .mol/.mol2 (always one molecule) and single-molecule SDF files,
+        this behaves exactly like prepare_ligand() and returns one result
+        with the same id/filenames as before. For an SDF containing multiple
+        `$$$$`-delimited molecules, each valid molecule is prepared with a
+        unique id ("{stem}_{index}") so output files never collide; a
+        molecule that fails to prepare is recorded as an error without
+        aborting the rest of the file.
+
+        Returns:
+            (results, errors) — results is a list of prepared-ligand dicts
+            (possibly empty), errors is a list of {"ligand", "error"} dicts
+            for molecules that failed to prepare.
+        """
+        ensure_directory(output_dir)
+
+        file_ext = Path(input_path).suffix.lower()
+        stem = Path(input_path).stem
+
+        if file_ext != '.sdf':
+            result = self.prepare_ligand(
+                input_path, output_dir, ph, add_hydrogens, generate_3d, optimize
+            )
+            return [result], []
+
+        mols = self._read_sdf_records(input_path)
+
+        if len(mols) == 1:
+            result = self._prepare_mol(
+                mols[0], stem, input_path, output_dir,
+                ph, add_hydrogens, generate_3d, optimize
+            )
+            return [result], []
+
+        results: List[Dict[str, Any]] = []
+        errors: List[Dict[str, Any]] = []
+        total = len(mols)
+        for index, mol in enumerate(mols, start=1):
+            ligand_id = f"{stem}_{index}"
+            sdf_title = mol.GetProp("_Name") if mol.HasProp("_Name") else ""
+            try:
+                result = self._prepare_mol(
+                    mol, ligand_id, input_path, output_dir,
+                    ph, add_hydrogens, generate_3d, optimize,
+                    extra={
+                        "source_file": input_path,
+                        "molecule_index": index,
+                        "molecule_count": total,
+                        "sdf_title": sdf_title or None,
+                    }
+                )
+                results.append(result)
+            except Exception as e:
+                logger.error(
+                    f"Failed to prepare molecule {index}/{total} from {input_path}: {e}"
+                )
+                errors.append({
+                    "ligand": f"{input_path} (molecule {index}/{total})",
+                    "error": str(e)
+                })
+
+        return results, errors
+
     def prepare_ligands(
         self,
         ligand_paths: List[str],
@@ -436,9 +552,11 @@ class LigandPreparer:
     ) -> Dict[str, Any]:
         """
         Prepare multiple ligands for docking.
-        
-        This is the main tool method exposed via MCP.
-        
+
+        This is the main tool method exposed via MCP. A single input path
+        pointing at a multi-molecule SDF file expands into multiple prepared
+        ligands — see prepare_ligands_from_file().
+
         Args:
             ligand_paths: List of paths to ligand files
             output_dir: Directory for output files
@@ -446,32 +564,34 @@ class LigandPreparer:
             add_hydrogens: Add explicit hydrogens
             generate_3d: Generate 3D coordinates if missing
             optimize: Optimize geometry
-            
+
         Returns:
             Dictionary with preparation results
         """
         ensure_directory(output_dir)
-        
+
         prepared_ligands = []
         errors = []
-        
+
         for ligand_path in ligand_paths:
             try:
-                result = self.prepare_ligand(
+                mol_results, mol_errors = self.prepare_ligands_from_file(
                     ligand_path, output_dir, ph, add_hydrogens, generate_3d, optimize
                 )
-                prepared_ligands.append(result)
+                prepared_ligands.extend(mol_results)
+                errors.extend(mol_errors)
             except Exception as e:
                 logger.error(f"Failed to prepare {ligand_path}: {e}")
                 errors.append({
                     "ligand": ligand_path,
                     "error": str(e)
                 })
-        
+
         # Prepare response
         response = {
             "prepared_ligands": prepared_ligands,
             "total": len(ligand_paths),
+            "total_ligands": len(prepared_ligands),
             "successful": len(prepared_ligands),
             "failed": len(errors),
             "errors": errors,

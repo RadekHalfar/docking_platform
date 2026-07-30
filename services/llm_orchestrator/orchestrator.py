@@ -69,15 +69,16 @@ class WorkflowOrchestrator:
                 health[name] = False
         return health
     
-    def call_mcp_tool(self, service_url: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def call_mcp_tool(self, service_url: str, tool_name: str, arguments: Dict[str, Any], timeout: int = 300) -> Dict[str, Any]:
         """
         Call an MCP tool via JSON-RPC 2.0.
-        
+
         Args:
             service_url: URL of the MCP service
             tool_name: Name of the tool to call
             arguments: Tool arguments
-            
+            timeout: HTTP request timeout in seconds (default: 300)
+
         Returns:
             Tool result
         """
@@ -110,7 +111,7 @@ class WorkflowOrchestrator:
             logger.debug(f"Arguments: {json.dumps(arguments, indent=2)}")
         
         try:
-            response = requests.post(f"{service_url}/mcp", json=payload, timeout=300)
+            response = requests.post(f"{service_url}/mcp", json=payload, timeout=timeout)
             response.raise_for_status()
             
             data = response.json()
@@ -414,6 +415,11 @@ class WorkflowOrchestrator:
                     logger.info(f"  Exhaustiveness: {params.get('exhaustiveness', 8)}")
                     logger.info(f"  Population: {params.get('population', 500)}")
                 
+                # Moldina docks ligands strictly sequentially (one subprocess per
+                # ligand), so the HTTP timeout must scale with batch size — a flat
+                # 300s cap silently fails any batch of more than a couple ligands.
+                dock_timeout = max(300, 120 * len(self.workflow_state["prepared_ligands"]))
+
                 docking_result = self.call_mcp_tool(
                     self.services["moldina_runner"],
                     "run_docking",
@@ -428,7 +434,8 @@ class WorkflowOrchestrator:
                         "exhaustiveness": params.get("exhaustiveness", 8),
                         "num_modes": params.get("num_modes", 15),
                         "energy_range": params.get("energy_range", 100.0)
-                    }
+                    },
+                    timeout=dock_timeout,
                 )
                 
                 results["results"]["dock"] = docking_result
@@ -463,7 +470,10 @@ class WorkflowOrchestrator:
                     for ligand_result in self.workflow_state["docking_results"].get("results", []):
                         if ligand_result.get("output_path"):
                             docked_ligands.append(ligand_result["output_path"])
-                            affinities.append(ligand_result.get("best_affinity", 0.0))
+                            # None (not 0.0) when a ligand produced no parseable score —
+                            # defaulting to 0.0 would make an unscored ligand look like
+                            # the best binder in the batch.
+                            affinities.append(ligand_result.get("best_affinity"))
                 
                 if not docked_ligands:
                     if self.verbosity != VERBOSITY_LOW:

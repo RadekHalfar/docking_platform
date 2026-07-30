@@ -179,6 +179,11 @@ Accepted protein extensions: `.pdb`, `.cif`. Accepted ligand extensions: `.sdf`,
 `.mol2`, `.pdbqt`. An invalid extension or a path that doesn't exist is reported as a
 missing/invalid parameter the same way an unresolvable PDB ID would be.
 
+A single `.sdf` path given to `--ligand-files` may itself contain multiple molecules
+(`$$$$`-delimited records) — all of them are docked, not just the first. See
+[Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files) for naming and
+partial-failure behavior.
+
 These flags also work with `--interactive` mode and apply to every `new_workflow` request
 issued in that session.
 

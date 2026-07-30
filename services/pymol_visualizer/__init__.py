@@ -200,24 +200,32 @@ class PyMOLVisualizer:
         script_lines.append("set stick_radius, 0.2, ligand_*")
         script_lines.append("")
         
-        # Color ligands by affinity (if provided)
-        if affinities:
+        # Color ligands by affinity (if provided). Some ligands may have no
+        # parseable affinity (None) — they still get a (neutral) color rather
+        # than aborting the gradient for the whole batch.
+        numeric_affinities = [a for a in affinities if a is not None] if affinities else []
+        if numeric_affinities:
             script_lines.append("# Color by binding affinity")
             script_lines.append("# Best affinity = green, worst = red")
-            
+
             # Normalize affinities for color gradient
-            min_aff = min(affinities)
-            max_aff = max(affinities)
-            
+            min_aff = min(numeric_affinities)
+            max_aff = max(numeric_affinities)
+
             for i, affinity in enumerate(affinities):
                 ligand_name = f"ligand_{i+1}"
-                
+
+                if affinity is None:
+                    script_lines.append(f"color grey70, {ligand_name}")
+                    script_lines.append(f"# {ligand_name}: no affinity available")
+                    continue
+
                 # Calculate color: green (best) to red (worst)
                 if max_aff != min_aff:
                     ratio = (affinity - min_aff) / (max_aff - min_aff)
                 else:
                     ratio = 0.5
-                
+
                 # RGB gradient: green (0,1,0) to yellow (1,1,0) to red (1,0,0)
                 if ratio < 0.5:
                     r = ratio * 2
@@ -226,7 +234,7 @@ class PyMOLVisualizer:
                     r = 1.0
                     g = 2.0 * (1.0 - ratio)
                 b = 0.0
-                
+
                 script_lines.append(f"set_color affinity_color_{i+1}, [{r:.3f}, {g:.3f}, {b:.3f}]")
                 script_lines.append(f"color affinity_color_{i+1}, {ligand_name}")
                 script_lines.append(f"# {ligand_name}: {affinity:.2f} kcal/mol")

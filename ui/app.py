@@ -493,7 +493,8 @@ def _render_local_file_inputs() -> None:
         st.caption(f"Protein: {Path(st.session_state.params['protein_file']).name}")
 
     st.file_uploader(
-        "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt) — drag and drop or click to browse",
+        "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt) — drag and drop or click to browse. "
+        "A multi-molecule .sdf is split into one ligand per molecule.",
         type=["sdf", "mol", "mol2", "pdbqt"],
         accept_multiple_files=True,
         key="upload_ligands",
@@ -532,7 +533,8 @@ def _render_folder_inputs() -> None:
         on_change=_on_protein_id_change,
     )
     st.file_uploader(
-        "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt) — drag and drop or click to browse",
+        "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt) — drag and drop or click to browse. "
+        "A multi-molecule .sdf is split into one ligand per molecule.",
         type=["sdf", "mol", "mol2", "pdbqt"],
         accept_multiple_files=True,
         key="upload_folder_ligands",
@@ -624,6 +626,12 @@ def _render_docking_progress(job_id: str) -> None:
         st.caption(f"Currently docking: `{current_ligand}`{elapsed_str}")
 
 
+def _render_workflow_failure(job_id: str, result: dict) -> None:
+    st.error(f"Job `{job_id}` failed.")
+    for err in result.get("errors", []):
+        st.caption(str(err))
+
+
 def _render_job_results() -> None:
     bridge: OrchestratorBridge = st.session_state.bridge
     active_job_id = st.session_state.job_id
@@ -658,6 +666,10 @@ def _render_job_results() -> None:
             _render_file_downloads(viewed_job_id)
             return
 
+        if result and result.get("status") == "failed":
+            _render_workflow_failure(viewed_job_id, result)
+            return
+
     # Otherwise, view a completed job by reading its results straight from disk
     # — covers jobs Loaded from history and jobs with no live bridge.
     result = _load_workflow_results(viewed_job_id)
@@ -666,6 +678,10 @@ def _render_job_results() -> None:
         _render_affinity_chart(result)
         _render_visualization(result, viewed_job_id)
         _render_file_downloads(viewed_job_id)
+        return
+
+    if result and result.get("status") == "failed":
+        _render_workflow_failure(viewed_job_id, result)
         return
 
     st.caption("No results found for this job.")

@@ -53,6 +53,13 @@ cache/
 orchestrator_output/*
 demo_output/*
 
+# ...but small test fixtures of those same extensions are intentionally committed
+!tests/fixtures/*.pdb
+!tests/fixtures/*.pdbqt
+!tests/fixtures/*.sdf
+!tests/fixtures/*.mol
+!tests/fixtures/*.mol2
+
 # Logs
 *.log
 

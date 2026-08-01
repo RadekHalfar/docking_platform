@@ -628,28 +628,53 @@ jobs:
 
 ## Production Deployment
 
-### Security Considerations
+### Security Model: Single-Machine Deployment Only
 
-1. **Don't expose all ports publicly**:
-   ```yaml
-   ports:
-     - "127.0.0.1:8001:8001"  # Bind to localhost only
-   ```
+**This platform ships with no authentication on any service.** Every MCP service
+(`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
+`pymol-visualizer`, `pymol-interactive`), the Streamlit UI, and Ollama accept
+requests from anyone who can reach their port — there is no API key, login, or
+per-request auth check anywhere in `common/mcp_base.py` or the service servers.
 
-2. **Use secrets for sensitive data**:
+To keep this safe, `docker-compose.yml` binds every published port to
+`127.0.0.1` (loopback) instead of all network interfaces, e.g.:
+
+```yaml
+ports:
+  - "127.0.0.1:8001:8001"  # not reachable from other machines
+```
+
+This means the platform is only intended to be run **on a single trusted
+machine**, accessed by the person running Docker Compose on that machine. It is
+**not safe to deploy as-is** on a shared server, behind a reverse proxy exposed
+to a LAN/VPN, or anywhere another user or process could reach these ports —
+doing so would expose unauthenticated job execution, file read/write, and (for
+`pymol-interactive`) an unauthenticated remote desktop and known code-injection
+paths.
+
+If you need multi-user or remote/server deployment, do **not** simply remove
+the `127.0.0.1` binding. That requires additional hardening that is not yet
+implemented — a shared API-key/auth layer in front of every service, a VNC
+password for `pymol-interactive` (it currently runs `x11vnc -nopw`), hardening
+of user-supplied paths, and TLS via a reverse proxy. This work is tracked as a
+future phase in `dev_plan.md`.
+
+### Additional Hardening (once auth exists)
+
+1. **Use secrets for sensitive data**:
    ```yaml
    secrets:
      api_key:
        file: ./secrets/api_key.txt
    ```
 
-3. **Run as non-root user**:
+2. **Run as non-root user**:
    ```dockerfile
    RUN useradd -m appuser
    USER appuser
    ```
 
-4. **Enable TLS/SSL** with reverse proxy (nginx/traefik)
+3. **Enable TLS/SSL** with reverse proxy (nginx/traefik)
 
 ### Scaling Services
 

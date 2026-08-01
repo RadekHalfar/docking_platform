@@ -32,7 +32,7 @@ services:
       dockerfile: docker/rcsb_downloader.Dockerfile
     container_name: mcp-rcsb-downloader
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -50,7 +50,7 @@ services:
       dockerfile: docker/ligand_preparer.Dockerfile
     container_name: mcp-ligand-preparer
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -68,7 +68,7 @@ services:
       dockerfile: docker/protein_preparer.Dockerfile
     container_name: mcp-protein-preparer
     ports:
-      - "8003:8003"
+      - "127.0.0.1:8003:8003"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -86,7 +86,7 @@ services:
       dockerfile: docker/moldina_runner.Dockerfile
     container_name: mcp-moldina-runner
     ports:
-      - "8004:8004"
+      - "127.0.0.1:8004:8004"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
@@ -117,7 +117,7 @@ services:
       dockerfile: docker/pymol_visualizer.Dockerfile
     container_name: mcp-pymol-visualizer
     ports:
-      - "8005:8005"
+      - "127.0.0.1:8005:8005"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
@@ -139,8 +139,8 @@ services:
       dockerfile: docker/pymol_interactive.Dockerfile
     container_name: mcp-pymol-interactive
     ports:
-      - "6080:6080"  # noVNC web UI
-      - "8090:8090"  # helper API
+      - "127.0.0.1:6080:6080"  # noVNC web UI
+      - "127.0.0.1:8090:8090"  # helper API
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
@@ -160,7 +160,7 @@ services:
     image: ollama/ollama:latest
     container_name: mcp-llm
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     networks:
       - mcp-network
     volumes:
@@ -239,7 +239,7 @@ services:
     image: mcp-docking-ui:latest
     container_name: mcp-ui
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - mcp-network
     volumes:

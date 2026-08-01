@@ -414,6 +414,11 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 
 ## Important Notes
 
+### Security: Single-Machine Use Only
+- No service in this platform has authentication — every port is only safe to run on a **trusted single machine**
+- `docker-compose.yml` binds all service ports to `127.0.0.1` for this reason; do not change this to expose ports on the network without adding auth first
+- See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md#production-deployment) for details and what's required before any shared/remote deployment
+
 ### Python Version
 - **Use `python3` command** (Python 3.12+) when `python` points to an incompatible interpreter
 - System `python` may be Python 2.7 (not compatible)

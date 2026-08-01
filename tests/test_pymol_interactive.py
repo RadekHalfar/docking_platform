@@ -345,3 +345,79 @@ class TestDockingBox:
 
         assert response.status_code == 400
         assert "Missing required field: job_id" in response.get_json()["error"]
+
+
+class TestJobIdPathTraversal:
+    """job_id must not be usable to escape OUTPUT_ROOT (e.g. onto arbitrary
+    host paths via '..' segments or an absolute path)."""
+
+    @pytest.mark.parametrize(
+        "bad_job_id",
+        ["../evil", "..", "/etc/passwd", "a/b", "a\\b", "job/../../x", ""],
+    )
+    def test_resolve_job_dir_rejects_traversal(self, bad_job_id):
+        with pytest.raises(ValueError):
+            server._resolve_job_dir(bad_job_id)
+
+    def test_resolve_job_dir_accepts_normal_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(server, "OUTPUT_ROOT", tmp_path)
+        for good_id in ["job_20260630_131335_9bf765", "_benchmark_103c660e", "job_100"]:
+            assert server._resolve_job_dir(good_id) == tmp_path / good_id
+
+    def test_load_job_rejects_traversal_job_id(self, client):
+        response = client.post("/api/load_job", json={"job_id": "../../etc"})
+
+        assert response.status_code == 400
+        assert "Invalid job_id" in response.get_json()["error"]
+
+    def test_box_from_corners_rejects_traversal_job_id(self, client):
+        response = client.post(
+            "/api/box/from_corners",
+            json={"job_id": "../../etc", "min": [0, 0, 0], "max": [1, 1, 1]},
+        )
+
+        assert response.status_code == 400
+        assert "Invalid job_id" in response.get_json()["error"]
+
+    def test_box_from_selection_rejects_traversal_job_id(self, client):
+        response = client.post(
+            "/api/box/from_selection",
+            json={"job_id": "../../etc", "selection": "sele"},
+        )
+
+        assert response.status_code == 400
+        assert "Invalid job_id" in response.get_json()["error"]
+
+
+class TestExtentFromSelectionRpc:
+    """selection must be passed as a real RPC argument, never spliced into a
+    Python source string executed via cmd.do() -- that was the RCE vector."""
+
+    def test_extent_from_selection_calls_get_extent_rpc_with_raw_selection(self, monkeypatch):
+        calls = []
+
+        class _FakeRpc:
+            def get_extent(self, selection):
+                calls.append(selection)
+                return {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}
+
+        monkeypatch.setattr(server, "_rpc", lambda: _FakeRpc())
+
+        # A payload that would have broken out of the old string-literal
+        # splice (quote + newline + Python statement).
+        malicious = "x')\nimport os; os.system('id')\n#"
+        min_corner, max_corner = server._extent_from_selection(malicious)
+
+        assert calls == [malicious]
+        assert min_corner == [0.0, 0.0, 0.0]
+        assert max_corner == [1.0, 1.0, 1.0]
+
+    def test_extent_from_selection_wraps_rpc_failure(self, monkeypatch):
+        class _FailingRpc:
+            def get_extent(self, selection):
+                raise RuntimeError("invalid selection")
+
+        monkeypatch.setattr(server, "_rpc", lambda: _FailingRpc())
+
+        with pytest.raises(RuntimeError, match="Could not retrieve extent"):
+            server._extent_from_selection("bogus")

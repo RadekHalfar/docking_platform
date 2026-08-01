@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,23 @@ app = Flask(__name__)
 
 OUTPUT_ROOT = Path(os.getenv("ORCHESTRATOR_OUTPUT_DIR", "/app/orchestrator_output")).resolve()
 RPC_URL = os.getenv("PYMOL_RPC_URL", "http://127.0.0.1:9123")
-EXTENT_TMP = Path("/tmp/pymol_extent.json")
+
+# job_id always identifies one existing job directory under OUTPUT_ROOT --
+# unlike a user-chosen output path, there's no legitimate reason for it to
+# contain path separators or "..", so it's allowlisted rather than escaped.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _resolve_job_dir(job_id: str) -> Path:
+    """Resolve job_id to a directory strictly inside OUTPUT_ROOT.
+
+    Raises ValueError for anything that isn't a bare directory-name-shaped
+    id, closing off path traversal (e.g. job_id="../../etc").
+    """
+    if not job_id or not _JOB_ID_RE.match(job_id):
+        raise ValueError(f"Invalid job_id: {job_id!r}")
+    return OUTPUT_ROOT / job_id
+
 
 # Serializes every PyMOL command sequence (loading a job, deriving a box from
 # a selection) so a background load and a concurrent request can never
@@ -134,25 +151,15 @@ def _run_load_job(job_id: str, receptor_path: str, ligand_paths: list[str]) -> N
 
 
 def _extent_from_selection(selection: str) -> tuple[list[float], list[float]]:
-    if EXTENT_TMP.exists():
-        EXTENT_TMP.unlink(missing_ok=True)
-
-    escaped = selection.replace("'", "\\'")
-    python_block = (
-        "python\n"
-        "import json\n"
-        "from pymol import cmd\n"
-        f"mn,mx=cmd.get_extent('{escaped}')\n"
-        f"open('{EXTENT_TMP.as_posix()}','w').write(json.dumps({{'min':mn,'max':mx}}))\n"
-        "python end"
-    )
-    _pymol_do(python_block)
-
-    if not EXTENT_TMP.exists():
-        raise RuntimeError("Could not retrieve extent from PyMOL selection")
-
-    data = json.loads(EXTENT_TMP.read_text(encoding="utf-8"))
-    return data["min"], data["max"]
+    # Passed as a real XML-RPC string argument to a dedicated get_extent()
+    # RPC method (see docker/pymol_rpc_server.py), not spliced into a Python
+    # source block -- selection can contain quotes/newlines/anything without
+    # any risk of breaking out of a string literal.
+    try:
+        result = _rpc().get_extent(selection)
+    except Exception as exc:
+        raise RuntimeError(f"Could not retrieve extent from PyMOL selection: {exc}") from exc
+    return result["min"], result["max"]
 
 
 def _center_size_from_min_max(min_corner: list[float], max_corner: list[float]) -> tuple[list[float], list[float]]:
@@ -162,7 +169,7 @@ def _center_size_from_min_max(min_corner: list[float], max_corner: list[float]) 
 
 
 def _save_box(job_id: str, center: list[float], box_size: list[float]) -> str:
-    job_dir = OUTPUT_ROOT / job_id
+    job_dir = _resolve_job_dir(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "job_id": job_id,
@@ -219,7 +226,10 @@ def load_job() -> Any:
     if not job_id:
         return jsonify({"error": "Missing required field: job_id"}), 400
 
-    job_dir = OUTPUT_ROOT / job_id
+    try:
+        job_dir = _resolve_job_dir(job_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not job_dir.exists():
         return jsonify({"error": f"Job not found: {job_id}"}), 404
 
@@ -267,6 +277,8 @@ def box_from_selection() -> Any:
 
     if not job_id:
         return jsonify({"error": "Missing required field: job_id"}), 400
+    if not _JOB_ID_RE.match(job_id):
+        return jsonify({"error": f"Invalid job_id: {job_id!r}"}), 400
 
     try:
         # Held for the whole PyMOL sequence (extent lookup + marker draw), not
@@ -305,6 +317,8 @@ def box_from_corners() -> Any:
 
     if not job_id:
         return jsonify({"error": "Missing required field: job_id"}), 400
+    if not _JOB_ID_RE.match(job_id):
+        return jsonify({"error": f"Invalid job_id: {job_id!r}"}), 400
     if not isinstance(min_corner, list) or not isinstance(max_corner, list) or len(min_corner) != 3 or len(max_corner) != 3:
         return jsonify({"error": "Fields 'min' and 'max' must be 3-element arrays"}), 400
 

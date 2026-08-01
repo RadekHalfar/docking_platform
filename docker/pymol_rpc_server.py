@@ -21,6 +21,15 @@ class _PyMOLRPC:
         from pymol import cmd
         return str(cmd.get_version())
 
+    def get_extent(self, selection):
+        # Calls cmd.get_extent() as a real function argument (safely marshalled
+        # by XML-RPC), instead of splicing the selection string into a Python
+        # source block executed via do() -- that pattern let a crafted
+        # selection break out of the string literal and run arbitrary code.
+        from pymol import cmd
+        min_corner, max_corner = cmd.get_extent(str(selection))
+        return {"min": list(min_corner), "max": list(max_corner)}
+
 
 def _serve(port: int = 9123) -> None:
     srv = SimpleXMLRPCServer(

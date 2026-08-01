@@ -976,6 +976,66 @@ def test_run_compare_command_prints_table(tmp_path, capsys):
     assert "job_abc" in output
 
 
+
+# ---------------------------------------------------------------------------
+# `cleanup-jobs` subcommand
+# ---------------------------------------------------------------------------
+
+def _make_job(base, days_ago: int, suffix: str = "abc123"):
+    import datetime as dt
+    when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_ago)
+    job_id = f"job_{when.strftime('%Y%m%d_%H%M%S')}_{suffix}"
+    (base / job_id).mkdir(parents=True)
+    return job_id
+
+
+def test_run_cleanup_jobs_command_requires_a_filter(tmp_path, capsys):
+    """Neither --keep-last nor --older-than-days given must refuse to run,
+    rather than silently defaulting to 'everything is prunable'."""
+    exit_code = cli._run_cleanup_jobs_command(["--output-dir", str(tmp_path)])
+
+    assert exit_code == 1
+    assert "at least one" in capsys.readouterr().out
+
+
+def test_run_cleanup_jobs_command_dry_run_lists_without_deleting(tmp_path, capsys):
+    job_id = _make_job(tmp_path, days_ago=100)
+
+    exit_code = cli._run_cleanup_jobs_command(
+        ["--output-dir", str(tmp_path), "--older-than-days", "30"]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert job_id in output
+    assert "Dry run" in output
+    assert (tmp_path / job_id).exists()  # not deleted
+
+
+def test_run_cleanup_jobs_command_with_yes_actually_deletes(tmp_path, capsys):
+    job_id = _make_job(tmp_path, days_ago=100)
+
+    exit_code = cli._run_cleanup_jobs_command(
+        ["--output-dir", str(tmp_path), "--older-than-days", "30", "--yes"]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Deleted 1" in output
+    assert not (tmp_path / job_id).exists()
+
+
+def test_run_cleanup_jobs_command_no_matches(tmp_path, capsys):
+    _make_job(tmp_path, days_ago=1)  # too recent to match
+
+    exit_code = cli._run_cleanup_jobs_command(
+        ["--output-dir", str(tmp_path), "--older-than-days", "30"]
+    )
+
+    assert exit_code == 0
+    assert "No jobs match" in capsys.readouterr().out
+
+
 def test_format_comparison_table_shows_na_for_missing_values():
     """Ligands missing from a job should render as N/A rather than crashing."""
     comparison = {

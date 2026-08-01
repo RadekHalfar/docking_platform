@@ -435,6 +435,16 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - Rendered `.png` images created in Docker automatically
 - Paths are relative, work on host and in containers
 
+### Job Output Cleanup
+`orchestrator_output/` is never pruned automatically. To list (dry run) or delete old jobs:
+```bash
+# List jobs older than 30 days without deleting anything
+python nlp_orchestrator.py cleanup-jobs --older-than-days 30
+
+# Keep only the 20 most recent jobs, actually delete the rest
+python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
+```
+
 ## Documentation
 
 - **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - Guide to verbosity levels (`low`, `normal`, `mcp_demo`)

@@ -29,6 +29,11 @@ SERVICE_PORT_ENV_VARS: dict[str, str] = {
 CACHE_DIR_ENV = "CACHE_DIR"
 CACHE_DIR_DEFAULT = "./cache"
 
+# Per-tool-call timeout, shared by every MCP service (see common/mcp_base.py).
+# Was already documented in .env.example but never actually read anywhere.
+MAX_TOOL_RUNTIME_ENV = "MAX_JOB_RUNTIME_SECONDS"
+MAX_TOOL_RUNTIME_DEFAULT = 3600
+
 
 def get_service_port(service_name: str) -> int:
     """Return the port for *service_name*, respecting env-var override."""
@@ -44,3 +49,12 @@ def get_service_port(service_name: str) -> int:
 def get_cache_dir() -> str:
     """Return the cache directory path, respecting CACHE_DIR env override."""
     return os.getenv(CACHE_DIR_ENV, CACHE_DIR_DEFAULT)
+
+
+def get_max_tool_runtime_seconds() -> int:
+    """Return the per-tool-call timeout, respecting MAX_JOB_RUNTIME_SECONDS override."""
+    raw = os.getenv(MAX_TOOL_RUNTIME_ENV, str(MAX_TOOL_RUNTIME_DEFAULT))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Invalid value for {MAX_TOOL_RUNTIME_ENV}: {raw!r}") from None

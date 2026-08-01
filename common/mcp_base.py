@@ -11,8 +11,11 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Dict, List, Optional, Callable
 from flask import Flask, request, jsonify
+from common.config import get_max_tool_runtime_seconds
 from common.schemas import MCPToolDefinition, MCPToolParameter
 
 logger = logging.getLogger(__name__)
@@ -70,7 +73,21 @@ class MCPServer(ABC):
         self.port = port
         self.host = host
         self.tools: Dict[str, MCPTool] = {}
-        
+        self.tool_timeout_seconds = get_max_tool_runtime_seconds()
+
+        # Runs tool handlers off the request-handling thread so a call that
+        # exceeds tool_timeout_seconds can be answered with a timeout error
+        # instead of leaving the HTTP client hanging indefinitely. This does
+        # NOT cancel the handler itself -- Python can't safely force-kill a
+        # running thread -- so a runaway handler keeps consuming a worker
+        # slot in the background until it finishes on its own; the
+        # subprocess-level timeouts inside individual handlers (e.g.
+        # moldina_runner's own 3600s subprocess.run timeout) are what
+        # actually bound that.
+        self._tool_executor = ThreadPoolExecutor(
+            max_workers=MCP_SERVER_THREADS, thread_name_prefix=f"{name}-tool"
+        )
+
         # Setup Flask app
         self.app = Flask(name)
         self._setup_routes()
@@ -155,10 +172,22 @@ class MCPServer(ABC):
         if not valid:
             return self._error_response(request_id, -32602, error_msg)
         
-        # Execute tool
+        # Execute tool off-thread so a call that hangs past tool_timeout_seconds
+        # can be answered instead of leaving the client waiting indefinitely.
         try:
             self.logger.info(f"Executing tool: {tool_name} with args: {arguments}")
-            result = tool.handler(**arguments)
+            future = self._tool_executor.submit(tool.handler, **arguments)
+            try:
+                result = future.result(timeout=self.tool_timeout_seconds)
+            except FutureTimeoutError:
+                self.logger.error(
+                    f"Tool '{tool_name}' timed out after {self.tool_timeout_seconds}s "
+                    "(handler keeps running in the background; this response is a timeout, not a cancellation)"
+                )
+                return self._error_response(
+                    request_id, JSONRPCErrorCodes.TIMEOUT_ERROR,
+                    f"Tool '{tool_name}' timed out after {self.tool_timeout_seconds}s",
+                )
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,

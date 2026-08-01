@@ -1,14 +1,17 @@
 """Tests for installer/install.py (stdlib-only installer, run from a repo clone).
 
-install_docker/start_docker_daemon are intentionally not exercised here —
-they download and run real system installers, which is out of scope for a
-unit test and never something to run against the machine running pytest.
+install_docker/start_docker_daemon are never exercised against a real
+network or a real system installer — that's out of scope for a unit test.
+install_docker's own download/verify/execute branching is tested with
+urlretrieve and subprocess.run mocked out (see TestInstallDockerRefusesGarbageDownload).
 """
 import os
 import subprocess
 import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
 
 from installer import install
 
@@ -251,3 +254,81 @@ class TestDryRun:
         mock_run.assert_not_called()
         mock_urlretrieve.assert_not_called()
         mock_urlopen.assert_not_called()
+
+
+class TestDownloadAndVerify:
+    """_download_and_verify() sanity-checks a downloaded installer before
+    anything is allowed to execute it -- it can't pin a hash for Docker's
+    own upstream installers (they're versioned and change over time), so
+    this is the next-best defense: reject non-HTTPS, reject a suspiciously
+    small/corrupted download, and reject a shell script missing its shebang."""
+
+    def test_rejects_non_https_url(self, tmp_path):
+        with pytest.raises(ValueError, match="HTTPS"):
+            install._download_and_verify("http://example.com/x.sh", tmp_path / "x.sh")
+
+    @patch("installer.install.urllib.request.urlretrieve")
+    def test_rejects_download_smaller_than_min_size(self, mock_urlretrieve, tmp_path):
+        dest = tmp_path / "get-docker.sh"
+
+        def _fake_download(url, path):
+            Path(path).write_bytes(b"<html>captive portal</html>")
+
+        mock_urlretrieve.side_effect = _fake_download
+
+        with pytest.raises(RuntimeError, match="corrupted"):
+            install._download_and_verify(
+                "https://get.docker.com", dest, min_size=1024, expect_shebang=True
+            )
+
+    @patch("installer.install.urllib.request.urlretrieve")
+    def test_rejects_script_without_shebang(self, mock_urlretrieve, tmp_path):
+        dest = tmp_path / "get-docker.sh"
+
+        def _fake_download(url, path):
+            Path(path).write_bytes(b"not a shell script " * 100)
+
+        mock_urlretrieve.side_effect = _fake_download
+
+        with pytest.raises(RuntimeError, match="shebang"):
+            install._download_and_verify(
+                "https://get.docker.com", dest, min_size=10, expect_shebang=True
+            )
+
+    @patch("installer.install.urllib.request.urlretrieve")
+    def test_accepts_plausible_shell_script_and_prints_checksum(self, mock_urlretrieve, tmp_path, capsys):
+        dest = tmp_path / "get-docker.sh"
+
+        def _fake_download(url, path):
+            Path(path).write_bytes(b"#!/bin/sh\necho installing docker\n" * 50)
+
+        mock_urlretrieve.side_effect = _fake_download
+
+        install._download_and_verify(
+            "https://get.docker.com", dest, min_size=10, expect_shebang=True
+        )
+
+        out = capsys.readouterr().out
+        assert "sha256=" in out
+        assert "https://get.docker.com" in out
+
+
+class TestInstallDockerRefusesGarbageDownload:
+    """A corrupted/intercepted download must never reach subprocess.run."""
+
+    @patch("installer.install.subprocess.run")
+    @patch("installer.install.urllib.request.urlretrieve")
+    def test_linux_install_docker_aborts_before_running_garbage_script(
+        self, mock_urlretrieve, mock_run, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(install.tempfile, "gettempdir", lambda: str(tmp_path))
+
+        def _fake_download(url, path):
+            Path(path).write_bytes(b"tiny")
+
+        mock_urlretrieve.side_effect = _fake_download
+
+        with pytest.raises(RuntimeError):
+            install.install_docker("linux")
+
+        mock_run.assert_not_called()

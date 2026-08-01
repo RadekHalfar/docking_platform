@@ -36,6 +36,15 @@ services:
     # port (which the healthcheck below always targets at 8001).
     ports:
       - "127.0.0.1:${RCSB_DOWNLOADER_PORT:-8001}:8001"
+    # Lightweight, I/O-bound (network downloads) -- small budget is plenty.
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -56,6 +65,15 @@ services:
     # port fixed at 8002 to match the healthcheck.
     ports:
       - "127.0.0.1:${LIGAND_PREPARER_PORT:-8002}:8002"
+    # RDKit/OpenBabel conversion work -- moderate CPU/memory budget.
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -76,6 +94,15 @@ services:
     # port fixed at 8003 to match the healthcheck.
     ports:
       - "127.0.0.1:${PROTEIN_PREPARER_PORT:-8003}:8003"
+    # RDKit-based cleanup/protonation work -- moderate CPU/memory budget.
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -133,6 +160,15 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - DISPLAY=:99  # Virtual display for headless PyMOL
+    # Ray-traced rendering can be memory-hungry for large structures.
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
@@ -158,6 +194,16 @@ services:
       - DISPLAY=:99
       - ORCHESTRATOR_OUTPUT_DIR=/app/orchestrator_output
       - PYMOL_INTERACTIVE_PORT=8090
+    # Xvfb + full PyMOL GUI + noVNC stack -- give it more headroom than the
+    # headless visualizer since it's a whole desktop session, not one render.
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 768M
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health | grep -Eq '\"pymol_rpc\":[[:space:]]*true'"]
       interval: 30s

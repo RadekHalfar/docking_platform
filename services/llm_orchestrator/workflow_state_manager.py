@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.file_io import atomic_write_json, load_json_dict
+from common.file_io import FileLock, atomic_write_json, load_json_dict
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ class WorkflowStateManager:
         self.parameters_file = self.job_dir / "workflow_parameters.json"
         self.state_file = self.job_dir / "workflow_state.json"
         self.manifest_file = self.job_dir / "workflow_manifest.json"
+        self.manifest_lock_file = self.job_dir / ".workflow_manifest.lock"
         self.checkpoints_dir = self.job_dir / "checkpoints"
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
 
@@ -55,19 +56,26 @@ class WorkflowStateManager:
         return self.checkpoints_dir / f"rev_{revision:06d}_{suffix}.json"
 
     def _next_revision(self, event_type: str, details: Dict[str, Any]) -> int:
-        manifest = self._read_manifest()
-        revision = int(manifest.get("current_revision", 0)) + 1
-        manifest["current_revision"] = revision
+        # The read-modify-write below is not safe to interleave: two writers
+        # racing here would both compute the same "next" revision, and
+        # whichever writes last silently clobbers the other's event (its
+        # checkpoint file would still exist on disk but become permanently
+        # unreachable via list_revisions()/restore_revision()). This lock
+        # serializes it across both threads and separate processes.
+        with FileLock(self.manifest_lock_file):
+            manifest = self._read_manifest()
+            revision = int(manifest.get("current_revision", 0)) + 1
+            manifest["current_revision"] = revision
 
-        event = {
-            "revision": revision,
-            "timestamp": self._timestamp(),
-            "event_type": event_type,
-            "details": details,
-        }
-        events = manifest.setdefault("events", [])
-        events.append(event)
-        self._write_manifest(manifest)
+            event = {
+                "revision": revision,
+                "timestamp": self._timestamp(),
+                "event_type": event_type,
+                "details": details,
+            }
+            events = manifest.setdefault("events", [])
+            events.append(event)
+            self._write_manifest(manifest)
         return revision
 
     def get_current_revision(self) -> int:

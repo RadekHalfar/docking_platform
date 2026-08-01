@@ -15,6 +15,7 @@ Stdlib-only so it can be frozen into a single-file executable via PyInstaller
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import platform
 import subprocess
@@ -61,6 +62,47 @@ def is_docker_running() -> bool:
         return False
 
 
+def _download_and_verify(
+    url: str, dest: Path, *, min_size: int = 1024, expect_shebang: bool = False
+) -> None:
+    """Download url to dest and sanity-check it before it's ever executed.
+
+    This can't pin a hash: Docker's own installers (get.docker.com, Docker
+    Desktop) are versioned and change whenever Docker ships an update, so
+    there's no stable checksum to verify against without the pin breaking
+    future installs. What this does instead:
+    - refuses anything but HTTPS (urllib validates the TLS cert by default)
+    - confirms the download actually produced a plausible installer, not an
+      empty file or an HTML error page from a captive portal/proxy
+    - for shell scripts, checks for a `#!` shebang before running it as one
+    - prints the SHA-256 of exactly what's about to run, so there's an
+      audit trail in the installer's own output even though nothing here
+      blocks execution on it
+    """
+    if not url.startswith("https://"):
+        raise ValueError(f"Refusing to download over a non-HTTPS URL: {url}")
+
+    urllib.request.urlretrieve(url, dest)
+
+    size = dest.stat().st_size
+    if size < min_size:
+        raise RuntimeError(
+            f"Downloaded file from {url} is only {size} bytes — looks corrupted "
+            "or intercepted (e.g. a captive portal/proxy error page). Refusing to run it."
+        )
+
+    content = dest.read_bytes()
+    if expect_shebang and not content.startswith(b"#!"):
+        raise RuntimeError(
+            f"Downloaded file from {url} doesn't start with a shebang — doesn't "
+            "look like the expected shell script. Refusing to run it."
+        )
+
+    checksum = hashlib.sha256(content).hexdigest()
+    print(f"  Downloaded {url}")
+    print(f"  -> {dest} ({size:,} bytes, sha256={checksum})")
+
+
 def install_docker(os_name: str) -> None:
     """Download and run the Docker Desktop / Engine installer for os_name.
 
@@ -70,11 +112,11 @@ def install_docker(os_name: str) -> None:
     """
     if os_name == "windows":
         installer_path = Path(tempfile.gettempdir()) / "DockerDesktopInstaller.exe"
-        urllib.request.urlretrieve(DOCKER_WINDOWS_URL, installer_path)
+        _download_and_verify(DOCKER_WINDOWS_URL, installer_path, min_size=1_000_000)
         subprocess.run([str(installer_path), "install", "--quiet", "--accept-license"], check=True)
     elif os_name == "mac":
         dmg_path = Path(tempfile.gettempdir()) / "Docker.dmg"
-        urllib.request.urlretrieve(DOCKER_MAC_URL, dmg_path)
+        _download_and_verify(DOCKER_MAC_URL, dmg_path, min_size=1_000_000)
         mount_point = "/Volumes/Docker"
         subprocess.run(["hdiutil", "attach", str(dmg_path), "-mountpoint", mount_point], check=True)
         try:
@@ -83,7 +125,7 @@ def install_docker(os_name: str) -> None:
             subprocess.run(["hdiutil", "detach", mount_point], check=False)
     else:
         script_path = Path(tempfile.gettempdir()) / "get-docker.sh"
-        urllib.request.urlretrieve(DOCKER_LINUX_SCRIPT_URL, script_path)
+        _download_and_verify(DOCKER_LINUX_SCRIPT_URL, script_path, min_size=1024, expect_shebang=True)
         subprocess.run(["sh", str(script_path)], check=True)
 
 

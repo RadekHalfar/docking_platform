@@ -88,6 +88,48 @@ def _detect_effective_cpu_count() -> int:
     return max(1, min(quota, os_count))
 
 
+# (min, max) bounds for each run_docking numeric parameter. Values outside
+# these are clamped rather than rejected -- an LLM-parsed or slightly
+# out-of-range request shouldn't hard-fail a whole job, it should just not
+# be allowed to request pathological resource use or nonsensical Moldina
+# CLI arguments.
+_POPULATION_BOUNDS = (5, 5000)  # docstring's documented minimum is 5
+_EXHAUSTIVENESS_BOUNDS = (1, 64)
+_NUM_MODES_BOUNDS = (1, 50)
+_ENERGY_RANGE_BOUNDS = (0.1, 1000.0)
+
+
+def _clamp_docking_params(
+    cpu: int,
+    population: int,
+    exhaustiveness: int,
+    num_modes: int,
+    energy_range: float,
+) -> Tuple[int, int, int, int, float]:
+    """Clamp run_docking's numeric parameters to sane bounds.
+
+    cpu is clamped to this container's real schedulable CPU budget (see
+    _detect_effective_cpu_count()) the same way max_workers already is --
+    requesting more than that just contends with itself for no benefit.
+    """
+    clamped_cpu = max(1, min(int(cpu), _detect_effective_cpu_count()))
+    clamped_population = max(_POPULATION_BOUNDS[0], min(int(population), _POPULATION_BOUNDS[1]))
+    clamped_exhaustiveness = max(_EXHAUSTIVENESS_BOUNDS[0], min(int(exhaustiveness), _EXHAUSTIVENESS_BOUNDS[1]))
+    clamped_num_modes = max(_NUM_MODES_BOUNDS[0], min(int(num_modes), _NUM_MODES_BOUNDS[1]))
+    clamped_energy_range = max(_ENERGY_RANGE_BOUNDS[0], min(float(energy_range), _ENERGY_RANGE_BOUNDS[1]))
+
+    clamped = (clamped_cpu, clamped_population, clamped_exhaustiveness, clamped_num_modes, clamped_energy_range)
+    requested = (cpu, population, exhaustiveness, num_modes, energy_range)
+    if clamped != requested:
+        logger.warning(
+            "run_docking parameters clamped: requested cpu=%s population=%s exhaustiveness=%s "
+            "num_modes=%s energy_range=%s -> using cpu=%s population=%s exhaustiveness=%s "
+            "num_modes=%s energy_range=%s",
+            *requested, *clamped,
+        )
+    return clamped
+
+
 def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
     """Atomically write docking_progress.json so readers never see a partial write."""
     path = os.path.join(output_dir, "docking_progress.json")
@@ -470,6 +512,10 @@ class MoldinaRunner:
         opt-in and capped rather than unbounded.
         """
         ensure_directory(output_dir)
+
+        cpu, population, exhaustiveness, num_modes, energy_range = _clamp_docking_params(
+            cpu, population, exhaustiveness, num_modes, energy_range,
+        )
 
         # Convert Windows paths to WSL paths if needed
         if self.is_windows:

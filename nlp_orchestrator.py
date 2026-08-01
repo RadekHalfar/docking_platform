@@ -32,6 +32,8 @@ from services.llm_orchestrator import (
     save_results_bundle,
     validate_bundle_name,
     compare_jobs,
+    find_prunable_jobs,
+    delete_jobs,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP, CORE_PARAMS
@@ -767,10 +769,68 @@ def _run_compare_command(job_dirs: List[str]) -> int:
     return 0
 
 
+def _run_cleanup_jobs_command(argv: List[str]) -> int:
+    """Handle `nlp_orchestrator.py cleanup-jobs [options]`.
+
+    orchestrator_output/ has no automatic retention -- job directories
+    accumulate forever. This is a manual, opt-in tool for pruning old ones:
+    dry-run by default (just lists what matches), nothing is deleted
+    without --yes.
+    """
+    parser = argparse.ArgumentParser(
+        prog="nlp_orchestrator.py cleanup-jobs",
+        description="List (and optionally delete) old job directories under orchestrator_output/.",
+    )
+    parser.add_argument(
+        "--output-dir", default="./orchestrator_output",
+        help="Base directory to scan (default: ./orchestrator_output)",
+    )
+    parser.add_argument(
+        "--keep-last", type=int, default=None,
+        help="Keep the N most recent jobs; consider the rest for cleanup",
+    )
+    parser.add_argument(
+        "--older-than-days", type=float, default=None,
+        help="Only consider jobs older than this many days",
+    )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Actually delete the matched job directories (default: dry-run, just list them)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.keep_last is None and args.older_than_days is None:
+        print("Specify at least one of --keep-last N or --older-than-days D.")
+        return 1
+
+    prunable = find_prunable_jobs(
+        args.output_dir, keep_last=args.keep_last, older_than_days=args.older_than_days,
+    )
+    if not prunable:
+        print("No jobs match the given criteria.")
+        return 0
+
+    print(f"{len(prunable)} job(s) match:")
+    for job in prunable:
+        print(f"  {job['job_id']}  ({job['timestamp']})")
+
+    if not args.yes:
+        print("\nDry run -- nothing deleted. Re-run with --yes to actually delete these.")
+        return 0
+
+    deleted, errors = delete_jobs([job["job_dir"] for job in prunable])
+    print(f"\nDeleted {deleted} job director{'y' if deleted == 1 else 'ies'}.")
+    for err in errors:
+        print(f"  Failed: {err}")
+    return 1 if errors else 0
+
+
 def main():
     """Main entry point for orchestrator CLI."""
     if len(sys.argv) > 1 and sys.argv[1] == "compare":
         return _run_compare_command(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "cleanup-jobs":
+        return _run_cleanup_jobs_command(sys.argv[2:])
 
     parser = argparse.ArgumentParser(
         description="Natural Language Molecular Docking Workflow Orchestrator",
@@ -791,6 +851,12 @@ Examples:
   
   # Health check
   python nlp_orchestrator.py --check-health
+
+  # Compare results across jobs
+  python nlp_orchestrator.py compare orchestrator_output/job_A orchestrator_output/job_B
+
+  # List old jobs older than 30 days (dry run -- add --yes to actually delete)
+  python nlp_orchestrator.py cleanup-jobs --older-than-days 30
 """
     )
     

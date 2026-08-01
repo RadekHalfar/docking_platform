@@ -3,6 +3,7 @@ Unit tests for MCP base server.
 """
 import pytest
 import json
+import time
 from common.mcp_base import MCPServer, MCPTool, MCPToolParameter, JSONRPCErrorCodes
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 
@@ -220,6 +221,60 @@ def test_build_tool_parameters_short_and_long_specs():
     assert parameters[0].required is True
     assert parameters[1].name == "optional_value"
     assert parameters[1].required is False
+
+
+def test_tool_call_timeout_returns_error_without_blocking_forever(test_server, test_client):
+    """A handler that runs longer than tool_timeout_seconds must produce a
+    TIMEOUT_ERROR response instead of hanging the request indefinitely."""
+
+    def slow_handler() -> dict:
+        time.sleep(2)
+        return {"status": "ok"}
+
+    slow_tool = MCPTool(
+        name="slow",
+        description="A tool that never returns in time",
+        parameters=[],
+        handler=slow_handler,
+    )
+    test_server.register_tool(slow_tool)
+    test_server.tool_timeout_seconds = 0.2
+
+    request_data = {
+        "jsonrpc": "2.0",
+        "id": "timeout_test",
+        "method": "tool_call",
+        "params": {"name": "slow", "arguments": {}},
+    }
+    start = time.monotonic()
+    response = test_client.post('/mcp', data=json.dumps(request_data), content_type='application/json')
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0, "response must return at the timeout, not wait for the handler to finish"
+    data = json.loads(response.data)
+    assert "error" in data
+    assert data["error"]["code"] == JSONRPCErrorCodes.TIMEOUT_ERROR
+    assert "slow" in data["error"]["message"]
+    assert "0.2" in data["error"]["message"]
+
+
+def test_tool_call_within_timeout_still_succeeds(test_server, test_client):
+    def quick_handler() -> dict:
+        return {"status": "ok"}
+
+    quick_tool = MCPTool(name="quick", description="Fast tool", parameters=[], handler=quick_handler)
+    test_server.register_tool(quick_tool)
+    test_server.tool_timeout_seconds = 5
+
+    request_data = {
+        "jsonrpc": "2.0",
+        "id": "quick_test",
+        "method": "tool_call",
+        "params": {"name": "quick", "arguments": {}},
+    }
+    response = test_client.post('/mcp', data=json.dumps(request_data), content_type='application/json')
+    data = json.loads(response.data)
+    assert data["result"] == {"status": "ok"}
 
 
 def test_run_serves_via_waitress_not_flask_dev_server(test_server, monkeypatch):

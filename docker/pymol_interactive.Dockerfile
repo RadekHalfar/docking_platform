@@ -1,5 +1,15 @@
 # PyMOL Interactive Service Docker Image
 # Runs desktop PyMOL in Docker with noVNC browser access + helper API.
+#
+# Intentionally still runs as root (unlike rcsb_downloader/ligand_preparer/
+# protein_preparer/moldina_runner, which run as the non-root `appuser` from
+# base.Dockerfile). This service's Xvfb + x11vnc + openbox + conda-PyMOL
+# stack has documented history of being fragile (see git log for
+# "PyMOL interactive load timing out on batch jobs"); switching it to
+# non-root needs each of those to be verified working first (X11 authority
+# files, VNC socket permissions, conda env state under $HOME) rather than
+# risking a regression here without being able to fully exercise the noVNC
+# session end-to-end.
 
 FROM mcp-docking-base:latest
 

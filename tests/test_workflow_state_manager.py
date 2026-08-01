@@ -214,3 +214,44 @@ def test_load_latest_parameters_returns_none_when_no_checkpoint(mgr):
 def test_load_latest_state_returns_none_when_no_checkpoint(mgr):
     """load_latest_state() on a fresh manager must return None, not raise."""
     assert mgr.load_latest_state() is None
+
+
+# ---------------------------------------------------------------------------
+# Concurrent writers -- _next_revision race condition
+# ---------------------------------------------------------------------------
+
+def test_next_revision_is_safe_under_concurrent_writers(mgr):
+    """Two writers racing to save a checkpoint at the same time must not
+    clobber each other's revision bump. Before the FileLock fix, both could
+    read current_revision=N, both compute N+1, and the second writer's
+    manifest write would silently drop the first writer's event (though its
+    checkpoint file would still exist on disk, permanently orphaned)."""
+    import threading
+
+    n_threads = 8
+    barrier = threading.Barrier(n_threads)
+    revisions: list[int] = []
+    revisions_lock = threading.Lock()
+
+    def _save(i: int) -> None:
+        barrier.wait()  # maximize actual overlap of the read-modify-write window
+        rev = mgr.save_parameters_checkpoint({**PARAMS_A, "worker": i}, source=f"worker_{i}")
+        with revisions_lock:
+            revisions.append(rev)
+
+    threads = [threading.Thread(target=_save, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    # Every revision number handed out must be unique (no two writers got
+    # the same "next" revision) and dense from 1..n_threads (no gaps from a
+    # lost update), and the manifest's own counter must agree.
+    assert sorted(revisions) == list(range(1, n_threads + 1))
+    assert mgr.get_current_revision() == n_threads
+    assert len(mgr.list_revisions()) == n_threads
+
+    # No orphaned checkpoint files: every revision 1..n_threads has one.
+    available = mgr._available_revisions()
+    assert available == list(range(1, n_threads + 1))

@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, mock_open
 
-from services.moldina_runner import MoldinaRunner, _detect_effective_cpu_count
+from services.moldina_runner import MoldinaRunner, _detect_effective_cpu_count, _clamp_docking_params
 
 
 # Skip all tests if running on CI without WSL
@@ -222,6 +222,76 @@ class TestMoldinaExecution:
         assert 'receptor = ' in params_content
         assert 'search_alg_PSO' in params_content
     
+    def test_run_moldina_docking_clamps_out_of_range_params(self, runner_linux, temp_dir, mock_subprocess):
+        """run_docking's numeric parameters are clamped to sane bounds before
+        being passed to the Moldina CLI -- e.g. a caller-supplied
+        population=0 or exhaustiveness=999 must not reach the subprocess
+        call unmodified."""
+        receptor_path = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand_path = os.path.join(temp_dir, "ligand.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        Path(receptor_path).touch()
+        Path(ligand_path).touch()
+
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        with patch(
+            'services.moldina_runner._detect_effective_cpu_count', return_value=4,
+        ):
+            runner_linux.run_moldina_docking(
+                receptor_path=receptor_path,
+                ligand_paths=[ligand_path],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                cpu=999,           # clamp to detected CPU count (4)
+                population=0,      # clamp up to minimum (5)
+                exhaustiveness=999,  # clamp down to maximum (64)
+                num_modes=0,       # clamp up to minimum (1)
+                energy_range=-5.0,  # clamp up to minimum (0.1)
+            )
+
+        moldina_cmd = mock_subprocess.run.call_args[0][0]
+        assert moldina_cmd[moldina_cmd.index('--cpu') + 1] == '4'
+        assert moldina_cmd[moldina_cmd.index('--population') + 1] == '5'
+        assert moldina_cmd[moldina_cmd.index('--exhaustiveness') + 1] == '64'
+        assert moldina_cmd[moldina_cmd.index('--num_modes') + 1] == '1'
+        assert moldina_cmd[moldina_cmd.index('--energy_range') + 1] == '0.1'
+
+        params_content = Path(output_dir, "parameters.txt").read_text()
+        assert "population = 5" in params_content
+        assert "exhaustiveness = 64" in params_content
+
+    def test_run_moldina_docking_leaves_in_range_params_untouched(self, runner_linux, temp_dir, mock_subprocess):
+        receptor_path = os.path.join(temp_dir, "receptor.pdbqt")
+        ligand_path = os.path.join(temp_dir, "ligand.pdbqt")
+        output_dir = os.path.join(temp_dir, "output")
+        Path(receptor_path).touch()
+        Path(ligand_path).touch()
+
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=8):
+            runner_linux.run_moldina_docking(
+                receptor_path=receptor_path,
+                ligand_paths=[ligand_path],
+                output_dir=output_dir,
+                center=(0, 0, 0),
+                box_size=(20, 20, 20),
+                cpu=2,
+                population=500,
+                exhaustiveness=8,
+                num_modes=15,
+                energy_range=100.0,
+            )
+
+        moldina_cmd = mock_subprocess.run.call_args[0][0]
+        assert moldina_cmd[moldina_cmd.index('--cpu') + 1] == '2'
+        assert moldina_cmd[moldina_cmd.index('--population') + 1] == '500'
+        assert moldina_cmd[moldina_cmd.index('--exhaustiveness') + 1] == '8'
+        assert moldina_cmd[moldina_cmd.index('--num_modes') + 1] == '15'
+        assert moldina_cmd[moldina_cmd.index('--energy_range') + 1] == '100.0'
+
     def test_run_moldina_ligands_list(self, runner_linux, temp_dir, mock_subprocess):
         """Ligands are docked one at a time: each gets its own subprocess.run call
         containing only that ligand's path (not batched into a single invocation,
@@ -524,6 +594,32 @@ class TestMoldinaRunnerIntegration:
                 center=(0, 0, 0),
                 box_size=(20, 20, 20)
             )
+
+
+class TestClampDockingParams:
+    """Unit tests for the bounds-clamping helper itself, independent of the
+    subprocess plumbing exercised in TestMoldinaExecution."""
+
+    def test_in_range_values_pass_through_unchanged(self):
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=8):
+            result = _clamp_docking_params(
+                cpu=2, population=500, exhaustiveness=8, num_modes=15, energy_range=100.0,
+            )
+        assert result == (2, 500, 8, 15, 100.0)
+
+    def test_out_of_range_values_are_clamped(self):
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=4):
+            result = _clamp_docking_params(
+                cpu=999, population=0, exhaustiveness=999, num_modes=0, energy_range=-5.0,
+            )
+        assert result == (4, 5, 64, 1, 0.1)
+
+    def test_cpu_clamped_to_zero_or_negative_becomes_one(self):
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=4):
+            result = _clamp_docking_params(
+                cpu=0, population=500, exhaustiveness=8, num_modes=15, energy_range=100.0,
+            )
+        assert result[0] == 1
 
 
 class TestDetectEffectiveCpuCount:

@@ -216,6 +216,17 @@ def _cached_ollama_models(endpoint: str) -> list:
     return list_ollama_models(endpoint)
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _cached_completed_jobs(output_base: str) -> list:
+    # list_completed_jobs() does a full glob + JSON-parse of every job
+    # directory. The sidebar re-renders this on every Streamlit rerun,
+    # including the "while a job is active" 2s poll loop at the bottom of
+    # this file -- without caching, that's a full orchestrator_output/ scan
+    # every ~2 seconds for the entire duration of any running job, growing
+    # linearly with total historical job count.
+    return list_completed_jobs(output_base)
+
+
 def _render_settings_form() -> None:
     settings = st.session_state.settings
     labels = list(_PROVIDER_LABELS.values())
@@ -275,7 +286,7 @@ def _render_settings_form() -> None:
 
 
 def _render_job_history() -> None:
-    jobs = list_completed_jobs(str(OUTPUT_BASE))
+    jobs = _cached_completed_jobs(str(OUTPUT_BASE))
 
     if not jobs:
         st.caption("No completed jobs yet.")

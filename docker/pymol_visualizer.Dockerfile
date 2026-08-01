@@ -3,6 +3,13 @@
 #
 # Build with: docker build -f docker/pymol_visualizer.Dockerfile -t mcp-pymol-visualizer:latest .
 # Run with: docker run -p 8005:8005 -v ./output:/app/output mcp-pymol-visualizer:latest
+#
+# Intentionally still runs as root (unlike rcsb_downloader/ligand_preparer/
+# protein_preparer/moldina_runner, which run as the non-root `appuser` from
+# base.Dockerfile). xvfb-run + conda-installed PyMOL's runtime needs (X11
+# authority files, conda env state under $HOME) haven't been verified to
+# work cleanly as non-root yet -- do that verification before adding `USER
+# appuser` here.
 
 FROM mcp-docking-base:latest
 

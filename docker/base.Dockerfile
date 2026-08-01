@@ -48,9 +48,18 @@ RUN pip install -r /app/requirements.txt
 # Copy common modules
 COPY common/ /app/common/
 
-# Create cache and data directories
-RUN mkdir -p /app/cache /app/data /app/output && \
-    chmod -R 777 /app/cache /app/data /app/output
+# Non-root user for services that don't need extra root-level setup after
+# this point. Not switched to by default here -- some derived images
+# (pymol_visualizer, pymol_interactive) need their own root-level apt-get/
+# conda installs and stay root for the whole build; services that don't
+# need that opt in with `USER appuser` near the end of their own Dockerfile.
+# Root still bypasses these permission bits entirely, so tightening 777 to
+# 755 (owned by appuser) doesn't affect images that stay root -- it only
+# stops it being world-writable for images that switch to appuser.
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin appuser && \
+    mkdir -p /app/cache /app/data /app/output && \
+    chown -R appuser:appuser /app/cache /app/data /app/output && \
+    chmod -R 755 /app/cache /app/data /app/output
 
 # Health check disabled in base image; each service image or compose stanza provides its own.
 HEALTHCHECK NONE

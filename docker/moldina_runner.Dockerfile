@@ -52,6 +52,12 @@ EXPOSE 8004
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8004/health || exit 1
 
+# All root-level setup (apt-get, copying+chmodding the Moldina binary) is
+# above this point -- run the actual service as the non-root user created
+# in base.Dockerfile. /usr/local/bin/moldina is root-owned but world-
+# executable (chmod +x above), so appuser can still run it.
+USER appuser
+
 # Run the server with Moldina path
 CMD ["python", "-m", "services.moldina_runner.server", \
      "--host", "0.0.0.0", \

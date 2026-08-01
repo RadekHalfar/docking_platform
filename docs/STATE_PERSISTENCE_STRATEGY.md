@@ -135,15 +135,18 @@ Current implementation provides:
 - monotonic revisions
 - latest + immutable history
 - reload-before-step
+- explicit file locking across competing writers, via `FileLock`
+  (`common/file_io.py`) wrapping `WorkflowStateManager._next_revision()`'s
+  read-modify-write of the manifest. Optimistic concurrency checks (compare
+  the expected revision before writing) are unnecessary on top of this --
+  there's no race left for a compare-and-swap check to guard against once
+  writers are already serialized by the lock.
 
 Not yet implemented:
-- explicit file locking across competing writers
-- optimistic concurrency checks against expected revision before write
 - resuming a killed/crashed process from its checkpoints (undo/restore only
-  works within a live interactive session -- see Overview)
-
-These can be added if you want multi-process write contention protection or
-crash resume.
+  works within a live interactive session -- see Overview). Can be added if
+  you need it -- it's a different guarantee than what atomic writes +
+  locking already give you.
 
 ---
 

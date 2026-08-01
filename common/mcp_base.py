@@ -20,10 +20,22 @@ from common.schemas import MCPToolDefinition, MCPToolParameter
 
 logger = logging.getLogger(__name__)
 
-# Bounded worker pool for the production WSGI server (see MCPServer.run()).
-# A handful of ligands can be docked/prepared concurrently while still
-# leaving room for /health polls; override via env if a deployment needs more.
+# Bounded worker pool for tool execution (see MCPServer._tool_executor). A
+# handful of ligands can be docked/prepared concurrently; override via env
+# if a deployment needs more.
 MCP_SERVER_THREADS = int(os.environ.get("MCP_SERVER_THREADS", "8"))
+
+# waitress's own thread pool (see MCPServer.run()) must be sized *larger*
+# than MCP_SERVER_THREADS, not equal to it: every in-flight tool call
+# occupies one waitress thread (blocked on future.result(...)) *and* one
+# tool-executor thread at once, so if both pools were the same size, N
+# concurrent long-running tool calls would exhaust both simultaneously,
+# leaving zero waitress threads free to answer /health -- exactly the
+# healthcheck-flapping failure mode the timeout/executor split was meant to
+# prevent. This reserve keeps lightweight endpoints (/health, tools/list)
+# responsive regardless of how busy the tool executor is.
+MCP_HEALTH_RESERVE_THREADS = int(os.environ.get("MCP_HEALTH_RESERVE_THREADS", "4"))
+WAITRESS_THREADS = MCP_SERVER_THREADS + MCP_HEALTH_RESERVE_THREADS
 
 
 class MCPTool:
@@ -232,12 +244,13 @@ class MCPServer(ABC):
         # real traffic (single-process, and threaded=True spawns one thread
         # per request with no upper bound). waitress is a production-grade,
         # pure-Python/cross-platform WSGI server with a bounded thread pool —
-        # sized so /health can still be served promptly alongside a few
-        # long-running tool calls (e.g. docking a large batch) without
-        # accepting unlimited concurrent requests.
+        # sized (WAITRESS_THREADS, larger than MCP_SERVER_THREADS) so /health
+        # can still be served promptly even when every tool-executor slot is
+        # busy with a long-running call, without accepting unlimited
+        # concurrent requests.
         from waitress import serve
 
-        serve(self.app, host=self.host, port=self.port, threads=MCP_SERVER_THREADS)
+        serve(self.app, host=self.host, port=self.port, threads=WAITRESS_THREADS)
 
 
 # Standard JSON-RPC error codes

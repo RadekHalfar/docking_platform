@@ -1,12 +1,12 @@
 """Tests for the opt-in job-directory cleanup utility."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from services.llm_orchestrator.job_cleanup import delete_jobs, find_prunable_jobs
+from services.llm_orchestrator.job_cleanup import _job_timestamp, delete_jobs, find_prunable_jobs
 
 
 def _make_job(base: Path, when: datetime, suffix: str = "abc123") -> str:
@@ -17,11 +17,33 @@ def _make_job(base: Path, when: datetime, suffix: str = "abc123") -> str:
 
 @pytest.fixture
 def now() -> datetime:
-    # Real current time rather than a frozen/patched value -- older_than_days
-    # filtering compares against datetime.now(timezone.utc) internally, so
-    # anchoring test fixtures to the real clock keeps the math meaningful
-    # without needing to monkeypatch datetime itself.
-    return datetime.now(timezone.utc)
+    # Naive local time, not UTC -- matches generate_job_id() (and therefore
+    # _job_timestamp()/find_prunable_jobs()'s older_than_days comparison),
+    # which both build/compare against datetime.now() with no tzinfo.
+    # Real current time rather than a frozen/patched value keeps the math
+    # meaningful without needing to monkeypatch datetime itself.
+    return datetime.now()
+
+
+class TestJobTimestamp:
+    def test_returns_naive_datetime_not_utc(self):
+        """generate_job_id() (common/utils.py) builds this timestamp from
+        datetime.now() -- naive local time, not UTC. Regression test for a
+        bug where _job_timestamp() labeled it UTC, skewing every
+        older_than_days comparison by the host's UTC offset."""
+        ts = _job_timestamp("job_20260615_143000_abc123")
+        assert ts.tzinfo is None
+        assert ts == datetime(2026, 6, 15, 14, 30, 0)
+
+    def test_comparable_against_naive_datetime_now(self):
+        """The bug this guards against only ever raised on a UTC-aware vs.
+        naive comparison in some code paths and silently skewed results in
+        others; this just confirms the whole module stays in one
+        (naive-local) timezone frame end to end."""
+        ts = _job_timestamp("job_20260101_000000_abc123")
+        # Must not raise TypeError: can't compare offset-naive and
+        # offset-aware datetimes.
+        assert ts < datetime.now()
 
 
 class TestFindPrunableJobs:

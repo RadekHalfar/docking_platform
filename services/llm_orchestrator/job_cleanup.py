@@ -9,7 +9,7 @@ actually removing files requires an explicit --yes.
 """
 import re
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,14 +21,18 @@ _JOB_ID_TIMESTAMP_RE = re.compile(r"^job_(\d{8})_(\d{6})_")
 
 
 def _job_timestamp(job_id: str) -> Optional[datetime]:
-    """Parse the timestamp embedded in a job_id, or None if it doesn't match."""
+    """Parse the timestamp embedded in a job_id, or None if it doesn't match.
+
+    Returned as a naive datetime in the local timezone, not UTC:
+    common.utils.generate_job_id() builds this timestamp from
+    datetime.now() (naive local time), so labeling it UTC here would skew
+    every comparison by the host's UTC offset.
+    """
     match = _JOB_ID_TIMESTAMP_RE.match(job_id)
     if not match:
         return None
     try:
-        return datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S").replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S")
     except ValueError:
         return None
 
@@ -67,7 +71,10 @@ def find_prunable_jobs(
     candidates = dated[keep_last:] if keep_last is not None else dated
 
     if older_than_days is not None:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        # Naive local time, matching _job_timestamp() -- comparing against
+        # datetime.now(timezone.utc) here would be comparing two different
+        # clocks and skew the cutoff by the host's UTC offset.
+        cutoff = datetime.now() - timedelta(days=older_than_days)
         candidates = [(job_dir, ts) for job_dir, ts in candidates if ts < cutoff]
 
     return [

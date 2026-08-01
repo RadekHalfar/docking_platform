@@ -134,19 +134,6 @@ class TestWSLFunctionality:
         assert runner._windows_path_to_wsl(r"C:\Users\test\file.pdbqt") == "/mnt/c/Users/test/file.pdbqt"
         assert runner._windows_path_to_wsl(r"D:\Data\protein.pdb") == "/mnt/d/Data/protein.pdb"
     
-    def test_wsl_path_to_windows(self, mock_platform_windows, mock_subprocess):
-        """Test WSL to Windows path conversion"""
-        mock_subprocess.run.side_effect = [
-            Mock(returncode=0),  # WSL check
-            Mock(returncode=0, stdout='exists\n')  # Moldina check
-        ]
-        
-        runner = MoldinaRunner()
-        
-        # Test various WSL paths
-        assert runner._wsl_path_to_windows("/mnt/c/Users/test/file.pdbqt") == "C:\\Users\\test\\file.pdbqt"
-        assert runner._wsl_path_to_windows("/mnt/d/Data/protein.pdb") == "D:\\Data\\protein.pdb"
-    
     def test_run_wsl_command(self, mock_platform_windows, mock_subprocess):
         """Test running WSL command"""
         mock_subprocess.run.side_effect = [
@@ -193,18 +180,16 @@ class TestMoldinaExecution:
         # Mock subprocess for Moldina execution
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
         
-        # Mock _parse_moldina_results to avoid file checks
-        with patch.object(runner_linux, '_parse_moldina_results', return_value=[]):
-            runner_linux.run_moldina_docking(
-                receptor_path=receptor_path,
-                ligand_paths=[ligand_path],
-                output_dir=output_dir,
-                center=(0, 0, 0),
-                box_size=(20, 20, 20),
-                cpu=2,
-                population=100,
-                exhaustiveness=4
-            )
+        runner_linux.run_moldina_docking(
+            receptor_path=receptor_path,
+            ligand_paths=[ligand_path],
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20),
+            cpu=2,
+            population=100,
+            exhaustiveness=4
+        )
         
         # Check center/box config file
         center_path = os.path.join(output_dir, "center.txt")
@@ -438,46 +423,6 @@ mode |   affinity | dist from best mode
         assert results["best_affinity"] is None
         assert results["num_modes_found"] == 0
     
-    def test_parse_moldina_results(self, runner, temp_dir):
-        """Test parsing Moldina output files"""
-        ligand1 = os.path.join(temp_dir, "input", "ligand1.pdbqt")
-        ligand2 = os.path.join(temp_dir, "input", "ligand2.pdbqt")
-        
-        os.makedirs(os.path.join(temp_dir, "input"), exist_ok=True)
-        Path(ligand1).touch()
-        Path(ligand2).touch()
-        
-        output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Create output files
-        output1 = os.path.join(output_dir, "ligand1_out.pdbqt")
-        output2 = os.path.join(output_dir, "ligand2_out.pdbqt")
-        Path(output1).write_text("REMARK VINA RESULT:    -8.5      0.000      0.000\n")
-        Path(output2).write_text("REMARK VINA RESULT:    -7.2      0.000      0.000\n")
-        
-        # Create log files
-        log1 = os.path.join(output_dir, "ligand1_out.log")
-        log2 = os.path.join(output_dir, "ligand2_out.log")
-        
-        log_template = """mode |   affinity | dist from best mode
-     | (kcal/mol) | rmsd l.b.| rmsd u.b.
------+------------+----------+----------
-   1       {affinity}      0.000      0.000
-"""
-        Path(log1).write_text(log_template.format(affinity="-8.5"))
-        Path(log2).write_text(log_template.format(affinity="-7.2"))
-        
-        results = runner._parse_moldina_results(output_dir, [ligand1, ligand2])
-        
-        assert len(results) == 2
-        # Should be sorted by affinity (most negative first)
-        assert results[0]["ligand_id"] == "ligand1"
-        assert results[0]["best_affinity"] == -8.5
-        assert results[1]["ligand_id"] == "ligand2"
-        assert results[1]["best_affinity"] == -7.2
-
-
 class TestMoldinaRunnerIntegration:
     """Integration tests for full docking workflow"""
     

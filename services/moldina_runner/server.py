@@ -8,6 +8,7 @@ import os
 import logging
 
 from common.mcp_base import MCPServer
+from common.mcp_bootstrap import build_service_arg_parser, resolve_port
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.moldina_runner import MoldinaRunner
 logger = logging.getLogger(__name__)
@@ -113,12 +114,14 @@ class MoldinaRunnerServer(MCPServer):
 
 def main():
     """Run the MCP server"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Moldina Runner MCP Server")
-    parser.add_argument("--port", type=int, default=8004, help="Server port (default: 8004)")
-    parser.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
-    parser.add_argument("--cache-dir", default=None, help="Cache directory (default: ~/.docking_cache/moldina)")
+    parser = build_service_arg_parser(
+        "moldina_runner", "Moldina Runner MCP Server",
+        cache_dir_help="Cache directory (default: ~/.docking_cache/moldina)",
+    )
+    # --cache-dir's default is intentionally left as None here (not resolved
+    # via common.config.get_cache_dir()) -- MoldinaRunner's own default,
+    # ~/.docking_cache/moldina, differs from the other services' ./cache and
+    # is applied inside MoldinaRunnerServer/__init__ itself when None.
     parser.add_argument(
         "--moldina-path",
         dest="moldina_path",
@@ -131,12 +134,12 @@ def main():
         default=None,
         help="WSL distribution name (default: Ubuntu). Can also set env MOLDINA_WSL_DISTRO",
     )
-    
+
     args = parser.parse_args()
 
     server = MoldinaRunnerServer(
-        port=args.port,
         host=args.host,
+        port=resolve_port("moldina_runner", args.port),
         cache_dir=args.cache_dir,
         moldina_path=args.moldina_path,
         wsl_distro=args.wsl_distro,

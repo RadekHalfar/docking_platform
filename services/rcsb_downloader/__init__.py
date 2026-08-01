@@ -256,18 +256,27 @@ class RCSBDownloader:
             
         Returns:
             Dictionary with file_path, checksum, source_url
-            
+
         Raises:
+            ValueError: If ligand_id doesn't look like an RCSB chem_comp ID
             RuntimeError: If download fails
         """
+        # Validate ligand ID -- same check used for name-resolution elsewhere
+        # in this class (_is_probable_chem_comp_id), applied here too since
+        # this is the value actually spliced into the outbound RCSB URL
+        # below (sanitize_filename below only constrains the *local
+        # filename*, not what gets requested from files.rcsb.org).
+        if not self._is_probable_chem_comp_id(ligand_id):
+            raise ValueError(f"Invalid ligand ID: {ligand_id!r}")
+
         # Sanitize ligand ID
         ligand_id_clean = sanitize_filename(ligand_id)
-        
+
         # Normalize format
         file_format = file_format.lower()
         if file_format not in ["sdf", "mol"]:
             raise ValueError(f"Unsupported ligand format: {file_format}")
-        
+
         # Construct URL (RCSB ligand expo)
         ligand_id_upper = ligand_id.upper()
         url = f"{self.LIGAND_URL}/{ligand_id_upper}_ideal.{file_format}"
@@ -370,7 +379,7 @@ class RCSBDownloader:
                     ligand_id, save_dir, ligand_format
                 )
                 ligand_results.append(ligand_result)
-            except (requests.RequestException, RuntimeError) as e:
+            except (requests.RequestException, RuntimeError, ValueError) as e:
                 logger.error(f"Failed to download ligand {ligand_id}: {e}")
                 # Continue with other ligands
 

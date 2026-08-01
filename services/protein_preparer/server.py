@@ -3,12 +3,11 @@ Protein Preparer MCP Server
 
 This server provides an MCP tool to prepare proteins for AutoDock Vina docking.
 """
-import os
 import logging
 from typing import Optional
 
-from common.config import get_cache_dir
 from common.mcp_base import MCPServer
+from common.mcp_bootstrap import build_service_arg_parser, resolve_cache_dir, resolve_port
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.protein_preparer import ProteinPreparer
 logger = logging.getLogger(__name__)
@@ -68,16 +67,14 @@ class ProteinPreparerServer(MCPServer):
 
 def main():
     """Start the protein preparer MCP server."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Protein Preparer MCP Server")
-    parser.add_argument("--port", type=int, default=8003, help="Server port (default: 8003)")
-    parser.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
-    parser.add_argument("--cache-dir", default=get_cache_dir(), help="Cache directory (default from CACHE_DIR env or ./cache)")
-    
+    parser = build_service_arg_parser("protein_preparer", "Protein Preparer MCP Server")
     args = parser.parse_args()
 
-    server = ProteinPreparerServer(port=args.port, host=args.host, cache_dir=args.cache_dir)
+    server = ProteinPreparerServer(
+        host=args.host,
+        port=resolve_port("protein_preparer", args.port),
+        cache_dir=resolve_cache_dir(args.cache_dir),
+    )
     server.run()
 
 

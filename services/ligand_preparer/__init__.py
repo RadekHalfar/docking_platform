@@ -276,7 +276,11 @@ class LigandPreparer:
         Returns:
             Dictionary with conversion info
         """
-        # Try using OpenBabel command line
+        # Try using OpenBabel command line. Both "the binary is missing" and
+        # "the binary ran but failed" are the same underlying situation from
+        # the caller's perspective -- obabel didn't produce a usable
+        # PDBQT -- so both fall back to the manual converter the same way,
+        # rather than one falling back silently and the other raising.
         try:
             cmd = [
                 "obabel",
@@ -285,26 +289,27 @@ class LigandPreparer:
                 "-xh",  # Add hydrogens
                 "-p", "7.4"  # pH
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
             )
-            
+
             if result.returncode == 0:
                 return {
                     "method": "openbabel",
                     "rotatable_bonds": self._count_rotatable_bonds_from_pdbqt(output_path)
                 }
             else:
-                raise RuntimeError(f"OpenBabel failed: {result.stderr}")
-        
+                logger.error(f"OpenBabel failed (exit {result.returncode}): {result.stderr}")
+
         except FileNotFoundError:
             logger.error("OpenBabel not found. Please install: conda install -c conda-forge openbabel")
-            # Fallback: create a basic PDBQT from PDB
-            return self.convert_to_pdbqt_manual(pdb_path, output_path)
+
+        # Fallback: create a basic PDBQT from PDB
+        return self.convert_to_pdbqt_manual(pdb_path, output_path)
     
     def convert_to_pdbqt_manual(self, pdb_path: str, output_path: str) -> Dict[str, Any]:
         """

@@ -3,8 +3,8 @@ PyMOL Visualizer MCP Server
 
 Provides PyMOL visualization capabilities as an MCP service.
 """
-import argparse
 from common.mcp_base import MCPServer
+from common.mcp_bootstrap import build_service_arg_parser, resolve_port
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.pymol_visualizer import PyMOLVisualizer
 
@@ -80,16 +80,16 @@ class PyMOLVisualizerServer(MCPServer):
 
 def main():
     """Main entry point for the PyMOL Visualizer server."""
-    parser = argparse.ArgumentParser(description='PyMOL Visualizer MCP Server')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=8005, help='Port to bind to')
+    parser = build_service_arg_parser(
+        "pymol_visualizer", "PyMOL Visualizer MCP Server", include_cache_dir=False,
+    )
     parser.add_argument('--pymol-path', help='Path to PyMOL executable for rendering')
-    
+
     args = parser.parse_args()
-    
+
     server = PyMOLVisualizerServer(
         host=args.host,
-        port=args.port,
+        port=resolve_port("pymol_visualizer", args.port),
         pymol_path=args.pymol_path
     )
     server.run()

@@ -26,7 +26,7 @@ import threading
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path, PureWindowsPath, PurePosixPath
+from pathlib import Path, PureWindowsPath
 from typing import Dict, List, Optional, Any, Tuple
 
 from common.utils import ensure_directory, compute_file_checksum
@@ -325,25 +325,6 @@ class MoldinaRunner:
         path_without_drive = win_path.as_posix()[len(win_path.drive):]  # strip 'C:'
         wsl_path = f"/mnt/{drive}{path_without_drive}"
         
-        return wsl_path
-    
-    def _wsl_path_to_windows(self, wsl_path: str) -> str:
-        """
-        Convert WSL path to Windows path.
-        
-        Args:
-            wsl_path: WSL path (e.g., /mnt/c/Users/...)
-            
-        Returns:
-            Windows path (e.g., C:\\Users\\...)
-        """
-        if wsl_path.startswith('/mnt/'):
-            # /mnt/c/Users/... -> C:\Users\...
-            parts = wsl_path[5:].split('/')  # Remove '/mnt/' and split
-            drive = parts[0].upper()
-            path_parts = parts[1:]
-            windows_path = f"{drive}:\\" + "\\".join(path_parts)
-            return windows_path
         return wsl_path
     
     def _run_wsl_command(self, command: List[str], timeout: int = 3600) -> subprocess.CompletedProcess:
@@ -665,123 +646,6 @@ size_z = {box_size[2]}
             "checksum": compute_file_checksum(output_file) if os.path.exists(output_file) else None,
         }
 
-    def _parse_moldina_results(self, output_dir: str, ligand_paths: List[str], stdout: str = "") -> List[Dict[str, Any]]:
-        """
-        Parse Moldina output results.
-        
-        Args:
-            output_dir: Output directory with results
-            ligand_paths: List of input ligand paths
-            stdout: Moldina stdout containing affinity table
-            
-        Returns:
-            List of results dictionaries
-        """
-        results = []
-        
-        # Check if Moldina created a single batch output file
-        # When using "out" parameter with ligands list, Moldina creates one file
-        batch_output = os.path.join(output_dir, "docking_output.pdbqt")
-        batch_log = os.path.join(output_dir, "docking_output.pdbqt.log")
-        
-        if os.path.exists(batch_output):
-            # Moldina batched all ligands into one file
-            # Parse the single output file for all ligands
-            logger.info(f"Found batch output file: {batch_output}")
-            
-            # Parse affinity data from stdout
-            affinity_data = self._parse_moldina_stdout(stdout)
-            
-            # If no stdout, try log file
-            if not affinity_data["modes"] and os.path.exists(batch_log):
-                affinity_data = self._parse_vina_log(batch_log)
-            
-            results.append({
-                "ligand_id": "batch",
-                "ligand_path": ", ".join(ligand_paths),
-                "output_path": batch_output,
-                "log_path": os.path.join(output_dir, "moldina_output.log") if os.path.exists(os.path.join(output_dir, "moldina_output.log")) else None,
-                "best_affinity": affinity_data.get("best_affinity"),
-                "modes": affinity_data.get("modes", []),
-                "num_modes_found": affinity_data.get("num_modes_found", 0),
-                "checksum": compute_file_checksum(batch_output)
-            })
-            
-            return results
-        
-        # Otherwise, check for individual ligand output files
-        for ligand_path in ligand_paths:
-            ligand_id = Path(ligand_path).stem
-            ligand_dir = os.path.dirname(ligand_path)
-            
-            # Moldina creates output files with the pattern: <out_prefix>_<ligand_name>_out.pdbqt
-            # Check for common output patterns in multiple locations
-            possible_outputs = [
-                # With the "docking" prefix we set in config
-                os.path.join(output_dir, f"docking_{ligand_id}_out.pdbqt"),
-                # Standard patterns in output directory
-                os.path.join(output_dir, f"{ligand_id}_out.pdbqt"),
-                os.path.join(output_dir, f"{ligand_id}.pdbqt"),
-                os.path.join(output_dir, ligand_id, f"{ligand_id}_out.pdbqt"),
-                # In the same directory as the ligand (Moldina default behavior)
-                os.path.join(ligand_dir, f"{ligand_id}_out.pdbqt"),
-                os.path.join(ligand_dir, f"{ligand_id}.pdbqt"),
-            ]
-            
-            output_file = None
-            for path in possible_outputs:
-                if os.path.exists(path):
-                    output_file = path
-                    logger.info(f"Found output file for {ligand_id}: {path}")
-                    break
-            
-            if not output_file:
-                logger.warning(f"Output file not found for {ligand_id}. Checked: {possible_outputs}")
-                continue
-            
-            # Look for log file
-            log_file = output_file.replace('.pdbqt', '.log')
-            if not os.path.exists(log_file):
-                log_file = os.path.join(output_dir, f"{ligand_id}.log")
-            
-            # Parse binding affinity from log if available
-            best_affinity = None
-            modes = []
-            
-            # First try to parse from stdout (most reliable)
-            if stdout:
-                affinity_data = self._parse_moldina_stdout(stdout)
-                best_affinity = affinity_data.get("best_affinity")
-                modes = affinity_data.get("modes", [])
-            
-            # If no data from stdout, try log file
-            if not modes:
-                if os.path.exists(log_file):
-                    affinity_data = self._parse_vina_log(log_file)
-                    best_affinity = affinity_data.get("best_affinity")
-                    modes = affinity_data.get("modes", [])
-                # Also try the main moldina_output.log
-                elif os.path.exists(os.path.join(output_dir, "moldina_output.log")):
-                    affinity_data = self._parse_vina_log(os.path.join(output_dir, "moldina_output.log"))
-                    best_affinity = affinity_data.get("best_affinity")
-                    modes = affinity_data.get("modes", [])
-            
-            results.append({
-                "ligand_id": ligand_id,
-                "ligand_path": ligand_path,
-                "output_path": output_file,
-                "log_path": log_file if os.path.exists(log_file) else os.path.join(output_dir, "moldina_output.log"),
-                "best_affinity": best_affinity,
-                "modes": modes,
-                "num_modes_found": len(modes),
-                "checksum": compute_file_checksum(output_file)
-            })
-        
-        # Sort by best affinity (most negative = best)
-        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
-        
-        return results
-    
     def _parse_vina_log(self, log_path: str) -> Dict[str, Any]:
         """
         Parse Vina-style log file to extract binding affinities.

@@ -98,6 +98,48 @@ def test_download_ligand_unsupported_format(downloader, tmp_path):
         downloader.download_ligand("ATP", str(tmp_path), "xyz")
 
 
+@pytest.mark.parametrize(
+    "bad_ligand_id",
+    ["", "TOOLONG", "has space", "../../etc/passwd", "a/b"],
+)
+def test_download_ligand_rejects_invalid_id_before_building_url(downloader, tmp_path, bad_ligand_id):
+    """ligand_id is spliced directly into the outbound RCSB URL -- unlike
+    protein_id (validated via validate_pdb_id), it wasn't validated before
+    this, so any value reached files.rcsb.org unchecked. Must now be
+    rejected before any network call, same as an unsupported format."""
+    with patch('requests.get') as mock_get:
+        with pytest.raises(ValueError, match="Invalid ligand ID"):
+            downloader.download_ligand(bad_ligand_id, str(tmp_path), "sdf")
+        mock_get.assert_not_called()
+
+
+def test_download_structures_skips_invalid_ligand_id_without_crashing_batch(
+    downloader, tmp_path, sample_pdb_content, sample_sdf_content
+):
+    """An invalid ligand_id reaching download_ligand (e.g. name resolution
+    disabled and the token isn't chem_comp-shaped) must be skipped like any
+    other per-ligand failure, not raise out of the whole batch call."""
+    def mock_response_factory(url, timeout=None):
+        mock_resp = Mock()
+        if url.endswith(".pdb"):
+            mock_resp.content = sample_pdb_content
+        else:
+            mock_resp.content = sample_sdf_content
+        mock_resp.raise_for_status = Mock()
+        return mock_resp
+
+    with patch('requests.get', side_effect=mock_response_factory):
+        result = downloader.download_structures(
+            protein_id="1ABC",
+            ligand_ids=["ATP", "not-a-valid-chem-comp-id"],
+            save_dir=str(tmp_path / "mixed"),
+        )
+
+    assert result["status"] == "ok"
+    assert len(result["ligand_paths"]) == 1
+    assert result["ligand_paths"][0].endswith("ATP.sdf")
+
+
 def test_download_structures_complete(downloader, tmp_path, sample_pdb_content, sample_sdf_content):
     """Test complete download of protein and ligands."""
     with patch('requests.get') as mock_get:

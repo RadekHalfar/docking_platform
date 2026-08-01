@@ -3,7 +3,13 @@
     "allow": [
       "Bash(python3 -m py_compile nlp_orchestrator.py)",
       "Bash(python3 -m pytest tests/test_batch_docking.py tests/test_local_file_input.py tests/test_orchestrator_integration.py tests/test_ui_orchestrator_bridge.py tests/test_nlp_orchestrator.py -q)",
-      "Bash(python3 -m pytest tests/test_session_intents.py tests/test_workflow_definition.py tests/test_llm_orchestrator.py -q)"
+      "Bash(python3 -m pytest tests/test_session_intents.py tests/test_workflow_definition.py tests/test_llm_orchestrator.py -q)",
+      "Bash(docker build *)",
+      "Bash(docker rm *)",
+      "Bash(docker run *)",
+      "Bash(curl -sf http://127.0.0.1:18011/health)",
+      "Bash(docker rmi *)",
+      "Bash(python3 -m pytest tests/test_llm_orchestrator.py -q)"
     ]
   }
 }

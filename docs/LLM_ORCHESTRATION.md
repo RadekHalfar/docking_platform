@@ -331,9 +331,14 @@ Options:
   --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
   --llm-model MODEL         LLM model name (default: qwen2.5-coder:7b-instruct-q4_K_M)
   --llm-api-key KEY         Optional API key for providers that require auth
+  --llm-base-url URL        Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio)
   --output-dir DIR          Output directory (default: ./orchestrator_output)
+  --protein-file PATH       Local protein .pdb/.cif file instead of downloading from RCSB
+  --ligand-files PATH       Local ligand file; repeat the flag for multiple ligands
+  --ligand-folder DIR       Directory of local ligand files, scanned recursively (overrides --ligand-files and any ligand IDs in the command)
   --check-health            Check all services and exit
   --list-models             List available models from selected provider
+  --verbose {low,normal,mcp_demo}  Verbosity level (default: low)
   --clarification-mode MODE Missing-parameter mode: hybrid (default) or legacy
   --debug                   Enable debug logging
 ```

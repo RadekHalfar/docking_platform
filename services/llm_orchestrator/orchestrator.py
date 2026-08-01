@@ -16,6 +16,7 @@ from pathlib import Path
 
 from common.file_utils import scan_ligand_folder
 from common.http_retry import build_mcp_retry_session
+from common.mcp_client import call_mcp_tool as _shared_call_mcp_tool
 from common.path_utils import to_container_path
 from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
@@ -88,42 +89,34 @@ class WorkflowOrchestrator:
 
         Returns:
             Tool result
+
+        Thin wrapper around common.mcp_client.call_mcp_tool -- this and
+        that module used to duplicate the same JSON-RPC envelope-building
+        and error-handling logic independently (and had already drifted:
+        this method generated a per-job request_id, the shared one defaulted
+        to a static "1"). This keeps the orchestrator-specific behavior
+        (per-job request IDs, MCP-demo verbosity printing) as hooks passed
+        into the one real implementation.
         """
         # Generate unique ID for each request (required by JSON-RPC 2.0)
         request_id = f"orchestrator_{self.current_job_id}_{str(uuid.uuid4())[:8]}"
-        
-        payload = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tool_call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments
-            }
-        }
-        
-        # MCP Demo mode: Show full JSON-RPC communication
-        if self.verbosity == VERBOSITY_MCP_DEMO:
-            print("\n" + "." * 80)
-            print(f"📡 MCP Client → Server ({service_url})")
-            print("." * 80)
-            print()
-            print("JSON-RPC:")
-            print(json.dumps(payload, indent=2))
-            print("─" * 80)
-        
+
         logger.info(f"Calling {tool_name} on {service_url}")
         # Only log arguments in normal verbosity (not in MCP demo mode where we already show full payload)
         if self.verbosity != VERBOSITY_MCP_DEMO:
             logger.debug(f"Arguments: {json.dumps(arguments, indent=2)}")
-        
-        try:
-            response = _mcp_session.post(f"{service_url}/mcp", json=payload, timeout=timeout)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # MCP Demo mode: Show response
+
+        def _print_request(payload: Dict[str, Any]) -> None:
+            if self.verbosity == VERBOSITY_MCP_DEMO:
+                print("\n" + "." * 80)
+                print(f"📡 MCP Client → Server ({service_url})")
+                print("." * 80)
+                print()
+                print("JSON-RPC:")
+                print(json.dumps(payload, indent=2))
+                print("─" * 80)
+
+        def _print_response(data: Dict[str, Any]) -> None:
             if self.verbosity == VERBOSITY_MCP_DEMO:
                 print("." * 80)
                 print(f"📡 MCP Server ({service_url}) → Client")
@@ -132,17 +125,21 @@ class WorkflowOrchestrator:
                 print("JSON-RPC:")
                 print(json.dumps(data, indent=2))
                 print("─" * 80 + "\n")
-            
-            if "error" in data:
-                error_msg = data["error"].get("message", "Unknown error")
-                logger.error(f"MCP Error: {error_msg}")
-                raise RuntimeError(f"MCP Error: {error_msg}")
-            
-            return data.get("result", {})
-            
-        except requests.RequestException as e:
-            logger.error(f"Request failed: {e}")
-            raise RuntimeError(f"Failed to call {tool_name}: {e}")
+
+        try:
+            result = _shared_call_mcp_tool(
+                service_url, tool_name, arguments,
+                request_id=request_id,
+                timeout=timeout,
+                wrap_connection_errors=True,
+                on_request=_print_request,
+                on_response=_print_response,
+            )
+        except RuntimeError as e:
+            logger.error(str(e))
+            raise
+
+        return result if result is not None else {}
     
     def _copy_local_input(self, source_path: str, dest_dir: Path) -> str:
         """Copy a user-supplied local file into the job's downloads dir and return its container path."""

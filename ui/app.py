@@ -825,6 +825,16 @@ def _render_visualization(result: dict, job_id: str) -> None:
         st.components.v1.iframe(novnc_url, height=600, scrolling=False)
 
 
+@st.cache_data(show_spinner=False)
+def _read_file_bytes(path_str: str, mtime: float) -> bytes:
+    # mtime is part of the cache key purely to invalidate correctly if a
+    # file is regenerated -- the read itself is what's expensive to repeat.
+    # This renders on every Streamlit rerun, including the 2s active-job
+    # poll loop, so without caching every job file gets re-read from disk
+    # every ~2s regardless of whether the user ever clicks a download button.
+    return Path(path_str).read_bytes()
+
+
 def _render_file_downloads(job_id: str) -> None:
     if not job_id:
         return
@@ -834,13 +844,13 @@ def _render_file_downloads(job_id: str) -> None:
     st.subheader("Files")
     for f in sorted(job_dir.rglob("*")):
         if f.is_file() and f.suffix in {".pdbqt", ".pml", ".json", ".png"}:
-            with open(f, "rb") as fh:
-                st.download_button(
-                    f"Download {f.name}",
-                    fh,
-                    file_name=f.name,
-                    key=f"dl_{f}",
-                )
+            data = _read_file_bytes(str(f), f.stat().st_mtime)
+            st.download_button(
+                f"Download {f.name}",
+                data,
+                file_name=f.name,
+                key=f"dl_{f}",
+            )
 
 
 def _render_comparison_table(comparison: dict) -> None:

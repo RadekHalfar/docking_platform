@@ -132,6 +132,28 @@ def test_convert_to_pdbqt_manual(preparer, tmp_path):
     assert "TORSDOF" in content
 
 
+def test_convert_to_pdbqt_obabel_falls_back_to_manual_on_nonzero_exit(preparer, tmp_path):
+    """obabel missing (FileNotFoundError) and obabel running but failing
+    (non-zero exit) are the same underlying situation -- neither produced a
+    usable PDBQT -- so both must fall back to the manual converter the same
+    way, not just the missing-binary case."""
+    mol = Chem.MolFromSmiles("C")
+    from rdkit.Chem import AllChem
+    AllChem.EmbedMolecule(mol)
+    mol = Chem.AddHs(mol, addCoords=True)
+
+    pdb_file = tmp_path / "test.pdb"
+    preparer.save_as_pdb(mol, str(pdb_file))
+    pdbqt_file = tmp_path / "test.pdbqt"
+
+    fake_result = Mock(returncode=1, stderr="obabel: conversion error")
+    with patch("services.ligand_preparer.subprocess.run", return_value=fake_result):
+        result = preparer.convert_to_pdbqt_obabel(str(pdb_file), str(pdbqt_file))
+
+    assert result["method"] == "manual"
+    assert os.path.exists(pdbqt_file)
+
+
 def test_prepare_ligand_complete(preparer, fixtures_dir, tmp_path):
     """Test complete ligand preparation workflow."""
     sdf_file = fixtures_dir / "benzene.sdf"

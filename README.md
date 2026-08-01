@@ -302,87 +302,104 @@ python example_complete_workflow.py
 ### Project Structure
 
 ```
-mcp_demo/
-├── common/                      # Shared utilities and base classes
-│   ├── __init__.py
-│   ├── mcp_base.py             # Base MCP server implementation
-│   ├── schemas.py              # JobSpec and other schemas
-│   └── utils.py                # Common utilities
+docking_platform/
+├── common/                      # Shared utilities used across services/ui/cli
+│   ├── mcp_base.py             # Base MCP server implementation (Flask + JSON-RPC)
+│   ├── mcp_bootstrap.py        # Shared --host/--port/--cache-dir CLI parsing
+│   ├── mcp_client.py           # Shared JSON-RPC MCP client (used by orchestrator + examples)
+│   ├── mcp_tooling.py          # Tool-parameter registration helpers
+│   ├── http_retry.py           # Retry/backoff policies for LLM vs MCP HTTP calls
+│   ├── file_io.py              # Atomic JSON writes, cross-platform FileLock
+│   ├── file_utils.py           # Local-folder ligand scanning
+│   ├── path_utils.py           # Host<->container path conversion
+│   ├── config.py               # Env-var-backed service port/cache-dir defaults
+│   ├── schemas.py              # JobSpec and MCP tool schemas
+│   └── utils.py                # Validation, checksums, misc helpers
 │
 ├── services/                    # MCP service implementations
-│   ├── rcsb_downloader/        # Protein/ligand download service
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── ligand_preparer/        # Ligand preparation service
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── protein_preparer/       # Protein preparation service
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── moldina_runner/         # Molecular docking service
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── pymol_visualizer/       # Visualization service
-│   │   ├── __init__.py
-│   │   └── server.py
-│   ├── pymol_interactive/      # Interactive noVNC PyMOL helper service
-│   │   ├── __init__.py
-│   │   └── server.py
+│   ├── rcsb_downloader/        # Protein/ligand download service (port 8001)
+│   ├── ligand_preparer/        # Ligand preparation service (port 8002)
+│   ├── protein_preparer/       # Protein preparation service (port 8003)
+│   ├── moldina_runner/         # Molecular docking service (port 8004)
+│   ├── pymol_visualizer/       # Headless visualization/rendering service (port 8005)
+│   ├── pymol_interactive/      # Interactive noVNC PyMOL helper service (noVNC 6080 / API 8090)
 │   └── llm_orchestrator/       # LLM-based workflow orchestration
-│       ├── __init__.py
 │       ├── llm_base.py         # Provider interface
-│       ├── llm_adapters.py     # Provider implementations (Ollama adapter)
+│       ├── llm_adapters.py     # Provider implementations (Ollama/OpenAI/Anthropic/OpenAI-compatible)
 │       ├── llm_factory.py      # Provider factory
-│       ├── workflow_llm_parser.py  # Provider-neutral workflow parsing
-│       ├── orchestrator.py     # Workflow executor
-│       └── workflow_parser.py  # Workflow validator
+│       ├── workflow_llm_parser.py    # LLM-facing extraction (parse/classify/extract updates)
+│       ├── workflow_parser.py        # Stateful validation/enrichment (WorkflowParser)
+│       ├── workflow_definition.py    # Required-parameters-by-step, defaults
+│       ├── workflow_state_manager.py # Revisioned checkpoints, undo/restore
+│       ├── orchestrator.py     # Workflow executor (WorkflowOrchestrator)
+│       ├── interactive_session.py    # CLI interactive session loop
+│       ├── rerun_planner.py    # Partial-rerun invalidation planning
+│       ├── job_comparator.py   # Cross-job binding-affinity comparison
+│       └── job_cleanup.py      # Opt-in job-directory retention/cleanup
+│
+├── ui/                          # Streamlit web UI (one-shot workflows only, see docs/STATE_PERSISTENCE_STRATEGY.md)
+│   ├── app.py                  # Main Streamlit entry point
+│   ├── session_state.py        # Session state init/parameter sync
+│   ├── worker_cap.py           # docker-compose.yml-aware CPU-cap detection
+│   ├── orchestrator_bridge.py  # Background-thread workflow execution
+│   ├── job_history.py          # Sidebar job history scan
+│   ├── ollama_models.py        # Ollama model listing
+│   ├── pymol_client.py         # pymol-interactive helper-API client
+│   ├── results.py              # Results/comparison rendering
+│   └── settings.py             # Persisted LLM provider settings
+│
+├── installer/                   # Standalone PyInstaller installer
+│   ├── install.py              # Installer entry point (Docker check/install, build, launch)
+│   └── build.sh                # Freezes install.py into a single-file executable
 │
 ├── tests/                       # Unit and integration tests
-│   ├── fixtures/               # Test data (benzene.sdf, water.sdf)
-│   ├── test_*.py               # Individual service tests
+│   ├── fixtures/               # Test data (benzene.sdf, water.sdf, ...)
+│   ├── test_*.py               # Per-module/service tests
 │   ├── test_integration.py     # End-to-end integration tests
-│   └── test_docker_integration.py  # Docker container tests
+│   └── test_docker_integration.py  # Tests against live Docker services
 │
 ├── docker/                      # Docker configurations
-│   ├── base.Dockerfile         # Base image with common dependencies
+│   ├── base.Dockerfile         # Base image with common dependencies + non-root user
 │   ├── rcsb_downloader.Dockerfile
 │   ├── ligand_preparer.Dockerfile
 │   ├── protein_preparer.Dockerfile
 │   ├── moldina_runner.Dockerfile
 │   ├── pymol_visualizer.Dockerfile
-│   └── pymol_interactive.Dockerfile
+│   ├── pymol_interactive.Dockerfile
+│   ├── pymol_interactive_start.sh  # Xvfb/x11vnc/openbox/PyMOL startup script
+│   └── pymol_rpc_server.py     # PyMOL XML-RPC server started via `pymol -r`
 │
 ├── docs/                        # Documentation
 │   ├── API.md                  # MCP tool specifications
 │   ├── INSTALLATION.md         # Installation guide
-│   ├── DOCKER_DEPLOYMENT.md    # Docker deployment guide
+│   ├── DOCKER_DEPLOYMENT.md    # Docker deployment guide (incl. security model)
 │   ├── LLM_ORCHESTRATION.md    # Natural language interface guide
 │   ├── DOCKING_PARAMETERS.md   # Docking parameters reference
+│   ├── STATE_PERSISTENCE_STRATEGY.md  # Checkpoint/undo persistence design (CLI-only)
 │   ├── VERBOSITY_LEVELS.md     # Verbosity modes guide
 │   └── *.md                    # Additional documentation
 │
-├── dev_reports/                 # Development reports (gitignored)
-│   └── *.md                    # Analysis reports, implementation notes
-│
 ├── Moldina/                     # Moldina executable
-│   └── moldina                 # PSO-based docking binary
+│   ├── moldina                 # PSO-based docking binary (prebuilt, committed)
+│   └── README.md               # Binary provenance, source, update instructions
 │
-├── cache/                       # Downloaded structures cache
-├── demo_output/                 # Example workflow outputs
-├── orchestrator_output/         # LLM orchestrator outputs
-├── test_output/                 # Test outputs
+├── cache/                       # Downloaded structures cache (gitignored)
+├── demo_output/                 # Example workflow outputs (gitignored)
+├── orchestrator_output/         # LLM orchestrator outputs (gitignored, use `cleanup-jobs` to prune)
 │
-├── nlp_orchestrator.py          # CLI for natural language workflows
+├── nlp_orchestrator.py          # CLI for natural language workflows (also: compare, cleanup-jobs)
+├── benchmark_docking.py         # Sequential vs. parallel docking benchmark script
 ├── example_complete_workflow.py # Example Python API usage
 ├── example_prepare_ligand.py    # Example ligand preparation
 │
 ├── docker-compose.yml           # Multi-service Docker orchestration
-├── docker_build.ps1/.sh         # Docker build scripts
-├── start_services.ps1           # Service startup script (local)
-├── restart_servers.ps1          # Service restart script
+├── Dockerfile.ui                # Streamlit UI image
+├── docker_build.ps1/.sh         # Docker build scripts (incl. ui image)
+├── docking-platform-installer.spec  # PyInstaller-generated (not committed, see installer/build.sh)
 │
 ├── requirements.txt             # Python dependencies
 ├── pytest.ini                   # Pytest configuration
+├── .env.example                 # Environment variable reference
 ├── .gitignore                   # Git ignore rules
 ├── README.md                    # This file
 └── QUICK_START.md              # Quick start guide

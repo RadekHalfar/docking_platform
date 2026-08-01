@@ -4,8 +4,8 @@ RCSB Downloader MCP Server
 Exposes download_structures tool via JSON-RPC.
 """
 from typing import Optional
-from common.config import get_service_port, get_cache_dir
 from common.mcp_base import MCPServer
+from common.mcp_bootstrap import build_service_arg_parser, resolve_cache_dir, resolve_port
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
 from services.rcsb_downloader import RCSBDownloader
 
@@ -82,9 +82,12 @@ class RCSBDownloaderServer(MCPServer):
 
 def main():
     """Run the RCSB Downloader MCP server."""
+    parser = build_service_arg_parser("rcsb_downloader", "RCSB Downloader MCP Server")
+    args = parser.parse_args()
     server = RCSBDownloaderServer(
-        port=get_service_port("rcsb_downloader"),
-        cache_dir=get_cache_dir(),
+        host=args.host,
+        port=resolve_port("rcsb_downloader", args.port),
+        cache_dir=resolve_cache_dir(args.cache_dir),
     )
     server.run()
 

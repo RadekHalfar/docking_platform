@@ -192,6 +192,14 @@ For docking one protein against every ligand file in a folder, see
 
 ### Interactive Mode
 
+**CLI only.** Everything in this section — session state, parameter
+updates, `rerun`, revision history/`undo`, and named result bundles — is
+implemented in `nlp_orchestrator.py`'s interactive terminal session. The
+Streamlit web UI (`ui/`) does not wire in `WorkflowStateManager` and has
+none of these capabilities; it only runs one-shot workflows. See
+[docs/STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md) for the
+persistence layer these features are built on.
+
 ```bash
 python nlp_orchestrator.py --interactive
 ```
@@ -387,7 +395,7 @@ The LLM can identify these workflow stages:
 - `center` - Docking box center [x, y, z]
 - `box_size` - Box dimensions [x, y, z] in Angstroms
 - `exhaustiveness` - Search thoroughness (default: 8)
-- `cpu` - Number of CPUs (default: 4)
+- `cpu` - Number of CPUs (default: 1)
 - `population` - PSO population size (default: 500)
 
 **Visualization:**
@@ -734,16 +742,18 @@ docker compose restart
 You can use the orchestrator programmatically:
 
 ```python
-from services.llm_orchestrator import WorkflowOrchestrator, OllamaClient, WorkflowParser
+from services.llm_orchestrator import (
+    WorkflowOrchestrator, OllamaAdapter, WorkflowParser, parse_workflow_with_llm,
+)
 
 # Initialize components
-llm_client = OllamaClient(model="llama2")
+llm_client = OllamaAdapter(endpoint="http://localhost:11434", model="llama2")
 orchestrator = WorkflowOrchestrator(output_base="./my_output")
 parser = WorkflowParser()
 
 # Parse user input
 user_input = "Download 6lu7 and ATP, prepare and dock"
-parsed = llm_client.parse_workflow(user_input)
+parsed = parse_workflow_with_llm(llm_client, user_input)
 
 # Validate workflow
 workflow = parser.validate_workflow(parsed)

@@ -16,6 +16,8 @@ services (e.g. SERVICE_HOST=host.docker.internal on Docker Desktop for Windows):
     docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 """
 import os
+import shutil
+import uuid
 import pytest
 import requests
 import time
@@ -24,6 +26,29 @@ from pathlib import Path
 
 # Resolve service host: use env override or fall back to localhost
 _SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
+
+# Repo root as seen from wherever pytest runs (tests/ is always one level down).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def docker_cache_subdir():
+    """A container-writable path for save_dir/output_dir args, plus host-side cleanup.
+
+    A pytest tmp_path is a HOST filesystem path; it's never a real location
+    inside the (separate) container filesystem, whether or not it happens
+    to also exist as a literal (backslash-containing, on Windows) directory
+    name under the container's CWD. /app/cache is the one directory every
+    service can actually write to regardless of running as root or the
+    non-root `appuser` (see docker/base.Dockerfile) -- and since it's
+    bind-mounted to ./cache on the host, results land somewhere real and
+    inspectable too. Yields the container-side path; cleans up its host-side
+    mirror under ./cache afterward so these tests don't leave debris in the
+    real cache/ directory.
+    """
+    name = f"test_docker_integration_{uuid.uuid4().hex[:8]}"
+    yield f"/app/cache/{name}"
+    shutil.rmtree(_REPO_ROOT / "cache" / name, ignore_errors=True)
 
 # Service endpoints
 SERVICES = {
@@ -90,7 +115,7 @@ class TestDockerHealthChecks:
 class TestDockerServiceFunctionality:
     """Test basic functionality of services in Docker"""
     
-    def test_rcsb_download_in_docker(self, wait_for_services, tmp_path):
+    def test_rcsb_download_in_docker(self, wait_for_services, docker_cache_subdir):
         """Test downloading structure through dockerized service"""
         payload = {
             "jsonrpc": "2.0",
@@ -101,7 +126,7 @@ class TestDockerServiceFunctionality:
                     "protein_id": "6lu7",
                     "ligand_ids": [],
                     "formats": {"protein": "pdb"},
-                    "save_dir": str(tmp_path)
+                    "save_dir": docker_cache_subdir
                 }
             },
             "id": 1
@@ -117,8 +142,15 @@ class TestDockerServiceFunctionality:
         data = response.json()
         assert "result" in data
     
-    def test_ligand_preparation_in_docker(self, wait_for_services, tmp_path):
-        """Test ligand preparation through dockerized service"""
+    def test_ligand_preparation_in_docker(self, wait_for_services, docker_cache_subdir):
+        """Test ligand preparation through dockerized service.
+
+        Downloads into the shared /app/cache bind mount (see
+        docker_cache_subdir) so the file rcsb-downloader writes is actually
+        visible to ligand-preparer too -- both containers mount the same
+        host ./cache directory. A host pytest tmp_path would not be: it's
+        never a real path inside either container's filesystem.
+        """
         # First download a ligand
         download_payload = {
             "jsonrpc": "2.0",
@@ -129,45 +161,45 @@ class TestDockerServiceFunctionality:
                     "protein_id": "6lu7",
                     "ligand_ids": ["ATP"],
                     "formats": {"ligand": "sdf"},
-                    "save_dir": str(tmp_path)
+                    "save_dir": docker_cache_subdir
                 }
             },
             "id": 1
         }
-        
+
         download_response = requests.post(
             f"{SERVICES['rcsb_downloader']}/mcp",
             json=download_payload,
             timeout=30
         )
-        
+
         assert download_response.status_code == 200
-        ligand_file = tmp_path / "ATP.sdf"
-        
+        assert "result" in download_response.json()
+        ligand_file = f"{docker_cache_subdir}/ATP.sdf"
+
         # Now prepare it
         prep_payload = {
             "jsonrpc": "2.0",
             "method": "tool_call",
             "params": {
-                "name": "prepare_ligand",
+                "name": "prepare_ligands",
                 "arguments": {
-                    "ligand_path": str(ligand_file),
-                    "output_dir": str(tmp_path / "prepared"),
+                    "ligand_paths": [ligand_file],
+                    "output_dir": f"{docker_cache_subdir}/prepared",
                     "ph": 7.4
                 }
             },
             "id": 2
         }
-        
+
         prep_response = requests.post(
             f"{SERVICES['ligand_preparer']}/mcp",
             json=prep_payload,
             timeout=60
         )
-        
-        # May fail if ligand file doesn't exist in container
-        # This is expected - it demonstrates the need for proper volume mounting
+
         assert prep_response.status_code == 200
+        assert "result" in prep_response.json(), prep_response.json()
 
 
 class TestDockerNetworking:
@@ -203,14 +235,11 @@ class TestDockerVolumes:
 class TestDockerEndToEndWorkflow:
     """Test complete workflow through Docker services"""
     
-    def test_complete_docking_workflow_in_docker(self, wait_for_services, tmp_path):
+    def test_complete_docking_workflow_in_docker(self, wait_for_services, docker_cache_subdir):
         """
         Test full workflow: download → prepare → dock → visualize
         This is a comprehensive integration test
         """
-        output_dir = tmp_path / "docker_workflow_test"
-        output_dir.mkdir()
-        
         # Step 1: Download protein
         print("\n1. Downloading protein...")
         download_protein = {
@@ -222,7 +251,7 @@ class TestDockerEndToEndWorkflow:
                     "protein_id": "6lu7",
                     "ligand_ids": [],
                     "formats": {"protein": "pdb"},
-                    "save_dir": str(output_dir / "downloaded")
+                    "save_dir": f"{docker_cache_subdir}/downloaded"
                 }
             },
             "id": 1

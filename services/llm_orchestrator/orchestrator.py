@@ -15,10 +15,16 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from common.file_utils import scan_ligand_folder
+from common.http_retry import build_mcp_retry_session
 from common.path_utils import to_container_path
 from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
 logger = logging.getLogger(__name__)
+
+# Retries only connection-establishment failures, never read timeouts/5xx --
+# see common/http_retry.py for why that distinction matters for a call that
+# can trigger a real side-effecting action (e.g. run_docking).
+_mcp_session = build_mcp_retry_session()
 
 # Verbosity levels (match nlp_orchestrator.py)
 VERBOSITY_LOW = 0       # Minimal output (step summaries only)
@@ -64,7 +70,7 @@ class WorkflowOrchestrator:
         health = {}
         for name, url in self.services.items():
             try:
-                response = requests.get(f"{url}/health", timeout=5)
+                response = _mcp_session.get(f"{url}/health", timeout=5)
                 health[name] = response.status_code == 200
             except requests.RequestException:
                 health[name] = False
@@ -112,7 +118,7 @@ class WorkflowOrchestrator:
             logger.debug(f"Arguments: {json.dumps(arguments, indent=2)}")
         
         try:
-            response = requests.post(f"{service_url}/mcp", json=payload, timeout=timeout)
+            response = _mcp_session.post(f"{service_url}/mcp", json=payload, timeout=timeout)
             response.raise_for_status()
             
             data = response.json()

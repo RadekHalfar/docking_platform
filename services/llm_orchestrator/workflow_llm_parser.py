@@ -34,7 +34,7 @@ Extract the following:
    - box_size (docking box dimensions [x, y, z])
    - ph (pH value, default 7.4)
    - exhaustiveness (docking thoroughness, default 8)
-   - cpu (number of CPUs, default 4)
+   - cpu (number of CPUs, default 1)
    - population (PSO population, default 500)
 
 CRITICAL RULE FOR LIGAND_IDS:
@@ -75,7 +75,7 @@ Example 1 — center and box_size both explicitly given by the user:
     "box_size": [24.0, 28.0, 32.0],
     "ph": 7.4,
     "exhaustiveness": 8,
-    "cpu": 4,
+    "cpu": 1,
     "population": 500
   },
   "missing_required": []
@@ -90,7 +90,7 @@ Example 2 — center given but box_size NOT given (must be listed as missing):
     "center": [10.0, 20.0, 30.0],
     "ph": 7.4,
     "exhaustiveness": 8,
-    "cpu": 4,
+    "cpu": 1,
     "population": 500
   },
   "missing_required": ["box_size"]
@@ -105,7 +105,7 @@ Example 3 — box_size given but center NOT given (must be listed as missing; NE
     "box_size": [1.0, 10.0, 1.0],
     "ph": 7.4,
     "exhaustiveness": 8,
-    "cpu": 4,
+    "cpu": 1,
     "population": 500
   },
   "missing_required": ["center"]

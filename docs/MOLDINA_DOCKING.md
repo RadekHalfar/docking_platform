@@ -24,6 +24,13 @@ Moldina builds on AutoDock Vina but replaces the iterated local search algorithm
 
 ## Installation
 
+**Docker users don't need any of this** — a prebuilt binary is already
+committed at `Moldina/moldina` and copied into the `moldina-runner` image
+by `docker/moldina_runner.Dockerfile`. See
+[Moldina/README.md](../Moldina/README.md) for that binary's provenance and
+how to update it. The steps below are only for building your own copy from
+source (e.g. to update it, or to run Moldina outside Docker).
+
 ### Linux (Native)
 
 ```bash
@@ -74,7 +81,7 @@ results = runner.run_moldina_docking(
     output_dir="./docking_results",
     center=(10.5, 20.3, -5.2),  # Search box center
     box_size=(25, 30, 35),      # Search box dimensions
-    cpu=4,                       # Number of CPUs
+    cpu=1,                       # Number of CPUs
     population=500,              # PSO population size
     exhaustiveness=8,            # Search exhaustiveness
     num_modes=15,                # Max binding modes
@@ -129,7 +136,7 @@ response = requests.post(
                 "output_dir": "./results",
                 "center": [10.5, 20.3, -5.2],
                 "box_size": [25, 30, 35],
-                "cpu": 4,
+                "cpu": 1,
                 "population": 500,
                 "exhaustiveness": 8,
                 "num_modes": 15,

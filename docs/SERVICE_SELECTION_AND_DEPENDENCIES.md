@@ -182,7 +182,7 @@ User: "Show results of docking"
   "output_dir": "/app/docking_results",
   "center": [12.3, 34.5, -5.6],                   // Search box center [x,y,z] (REQUIRED)
   "box_size": [20.0, 20.0, 20.0],                 // Search box size [x,y,z] (REQUIRED)
-  "cpu": 4,                                        // CPU threads
+  "cpu": 1,                                        // CPU threads
   "population": 500,                               // PSO population size
   "exhaustiveness": 8,                             // Search exhaustiveness
   "num_modes": 15,                                 // Number of binding modes
@@ -344,7 +344,7 @@ These come from parsing the user's natural language command:
   "ligand_ids": ["ATP", "HEM"],   // Extracted from user input
   "ph": 7.4,                      // Default
   "exhaustiveness": 8,            // Default
-  "cpu": 4,                       // Default
+  "cpu": 1,                       // Default
   "population": 500,              // Default
   "num_modes": 15,                // Default
   "energy_range": 100.0,          // Default
@@ -371,7 +371,7 @@ These are **CRITICAL** and determine if docking can proceed:
 |-----------|---------|-------|--------|
 | `ph` | 7.4 | 0-14 | Affects protonation state |
 | `exhaustiveness` | 8 | 1-32 | Higher = slower but more thorough |
-| `cpu` | 4 | 1-max | Parallel threads for docking |
+| `cpu` | 1 | 1-max | Parallel threads for docking |
 | `population` | 500 | 100-4000 | PSO particles |
 | `num_modes` | 15 | 1-20 | Number of binding poses |
 
@@ -385,8 +385,9 @@ These are **CRITICAL** and determine if docking can proceed:
 - **Function:** `parse_workflow_with_llm()`
 
 ### Validation
-- **File:** [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py)
-- **Key:** `REQUIRED` dict - Defines required parameters per service
+- **File:** [workflow_definition.py](../services/llm_orchestrator/workflow_definition.py)
+- **Key:** `REQUIRED_PARAMETERS_BY_STEP` dict - Defines required parameters per service
+  (imported into [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py), which uses it in `validate_workflow()`)
 - **Function:** `validate_workflow()`
 
 ### Orchestration
@@ -514,7 +515,7 @@ original workflow, so a step the user never requested will not be included.
 
 **Problem:** User asks "What inputs does prepare_ligands need?"
 
-**Solution:** Direct them to the REQUIRED dict in [workflow_parser.py](../services/llm_orchestrator/workflow_parser.py) line ~33-39, or check this document's Part 2.
+**Solution:** Direct them to the `REQUIRED_PARAMETERS_BY_STEP` dict in [workflow_definition.py](../services/llm_orchestrator/workflow_definition.py) (line ~50), or check this document's Part 2.
 
 ---
 

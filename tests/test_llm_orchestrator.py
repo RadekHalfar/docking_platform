@@ -396,7 +396,7 @@ class TestWorkflowOrchestrator:
         orchestrator = WorkflowOrchestrator(output_base="./test_output")
         assert orchestrator.services["rcsb_downloader"] == "http://example.local:9001"
     
-    @patch('services.llm_orchestrator.orchestrator.requests.get')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.get')
     def test_check_services_health(self, mock_get):
         """Test service health checking."""
         mock_get.return_value.status_code = 200
@@ -424,7 +424,7 @@ class TestWorkflowOrchestrator:
         else:
             assert result == "/home/test/file.txt"
     
-    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
     def test_call_mcp_tool(self, mock_post, make_mcp_response):
         """Test MCP tool calling."""
         mock_post.return_value = make_mcp_response(result={"success": True})
@@ -440,7 +440,7 @@ class TestWorkflowOrchestrator:
         
         assert result["success"] is True
     
-    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
     def test_call_mcp_tool_error(self, mock_post, make_mcp_response):
         """Test MCP tool error handling."""
         mock_post.return_value = make_mcp_response(
@@ -505,7 +505,7 @@ class TestWorkflowOrchestrator:
 class TestWorkflowOrchestratorErrors:
     """Tests for WorkflowOrchestrator error handling (A2)."""
 
-    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
     def test_call_mcp_tool_raises_on_http_error(self, mock_post):
         """HTTP-level errors from a service should be re-raised as RuntimeError."""
         mock_post.side_effect = requests.HTTPError("503 Service Unavailable")
@@ -516,7 +516,7 @@ class TestWorkflowOrchestratorErrors:
         with pytest.raises(RuntimeError, match="download_structures"):
             orchestrator.call_mcp_tool("http://localhost:8001", "download_structures", {})
 
-    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
     def test_call_mcp_tool_raises_on_connection_error(self, mock_post):
         """Connection-level failures should surface as RuntimeError."""
         mock_post.side_effect = requests.ConnectionError("Connection refused")
@@ -627,7 +627,7 @@ class TestWorkflowStateManager:
 class TestIntegration:
     """Integration tests for full workflow."""
     
-    @patch('services.llm_orchestrator.orchestrator.requests.post')
+    @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
     def test_full_workflow_mock(self, mock_mcp_post, make_mcp_response):
         """Test full workflow with mocked services."""
         workflow_json = {

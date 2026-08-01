@@ -6,6 +6,8 @@ Defines a provider-agnostic contract for all LLM adapters.
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from common.http_retry import build_llm_retry_session
+
 
 class BaseLLMClient(ABC):
     """Abstract base class for provider-specific LLM clients."""
@@ -14,6 +16,10 @@ class BaseLLMClient(ABC):
         self.endpoint = endpoint
         self.model = model
         self.api_key = api_key
+        # Retries connection failures/read timeouts/transient 5xx with
+        # backoff -- see common/http_retry.py for why LLM calls can afford
+        # a more liberal retry policy than MCP tool calls.
+        self._session = build_llm_retry_session()
 
     @abstractmethod
     def generate(self, prompt: str, system: str = None, temperature: float = 0.1) -> str:

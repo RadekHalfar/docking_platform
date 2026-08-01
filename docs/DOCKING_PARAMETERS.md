@@ -326,7 +326,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
   "output_dir": "/data/docking_results",
   "center": [10.5, 20.3, -5.2],
   "box_size": [25.0, 30.0, 35.0],
-  "cpu": 4,
+  "cpu": 1,
   "population": 500,
   "exhaustiveness": 16,
   "num_modes": 15,

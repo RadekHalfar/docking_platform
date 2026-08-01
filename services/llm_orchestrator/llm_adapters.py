@@ -26,7 +26,7 @@ class OllamaAdapter(BaseLLMClient):
     def check_health(self) -> bool:
         """Check if Ollama endpoint is reachable."""
         try:
-            response = requests.get(self.tags_url, timeout=5)
+            response = self._session.get(self.tags_url, timeout=5)
             return response.status_code == 200
         except requests.RequestException as e:
             logger.error(f"Ollama health check failed: {e}")
@@ -48,7 +48,7 @@ class OllamaAdapter(BaseLLMClient):
 
         try:
             logger.info(f"Calling Ollama with model: {self.model}")
-            response = requests.post(self.generate_url, json=payload, timeout=120)
+            response = self._session.post(self.generate_url, json=payload, timeout=120)
             response.raise_for_status()
             result = response.json()
             return result.get("response", "")
@@ -57,7 +57,7 @@ class OllamaAdapter(BaseLLMClient):
             if response is not None and response.status_code == 404 and not self._model_available():
                 logger.info(f"Model {self.model} not found in Ollama; pulling it now")
                 self._pull_model()
-                retry_response = requests.post(self.generate_url, json=payload, timeout=120)
+                retry_response = self._session.post(self.generate_url, json=payload, timeout=120)
                 retry_response.raise_for_status()
                 result = retry_response.json()
                 return result.get("response", "")
@@ -70,7 +70,7 @@ class OllamaAdapter(BaseLLMClient):
     def list_models(self) -> list[str]:
         """List models available in Ollama."""
         try:
-            response = requests.get(self.tags_url, timeout=10)
+            response = self._session.get(self.tags_url, timeout=10)
             response.raise_for_status()
             data = response.json()
             return [model["name"] for model in data.get("models", [])]
@@ -85,7 +85,7 @@ class OllamaAdapter(BaseLLMClient):
         """Pull the configured model into the Ollama instance."""
         payload = {"name": self.model, "stream": True}
         try:
-            response = requests.post(self.pull_url, json=payload, stream=True, timeout=600)
+            response = self._session.post(self.pull_url, json=payload, stream=True, timeout=600)
             response.raise_for_status()
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
@@ -119,7 +119,7 @@ class OpenAIAdapter(BaseLLMClient):
         messages.append({"role": "user", "content": prompt})
         payload = {"model": self.model, "messages": messages, "temperature": temperature}
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.endpoint}/chat/completions",
                 headers=self._headers(),
                 json=payload,
@@ -136,14 +136,14 @@ class OpenAIAdapter(BaseLLMClient):
 
     def check_health(self) -> bool:
         try:
-            response = requests.get(f"{self.endpoint}/models", headers=self._headers(), timeout=10)
+            response = self._session.get(f"{self.endpoint}/models", headers=self._headers(), timeout=10)
             return response.status_code == 200
         except requests.RequestException:
             return False
 
     def list_models(self) -> list:
         try:
-            response = requests.get(f"{self.endpoint}/models", headers=self._headers(), timeout=10)
+            response = self._session.get(f"{self.endpoint}/models", headers=self._headers(), timeout=10)
             response.raise_for_status()
             return [m["id"] for m in response.json().get("data", [])]
         except requests.RequestException as e:
@@ -177,7 +177,7 @@ class AnthropicAdapter(BaseLLMClient):
         if system:
             payload["system"] = system
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.endpoint}/v1/messages",
                 headers=self._headers(),
                 json=payload,
@@ -194,7 +194,7 @@ class AnthropicAdapter(BaseLLMClient):
 
     def check_health(self) -> bool:
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.endpoint}/v1/models", headers=self._headers(), timeout=10
             )
             return response.status_code == 200
@@ -203,7 +203,7 @@ class AnthropicAdapter(BaseLLMClient):
 
     def list_models(self) -> list:
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.endpoint}/v1/models", headers=self._headers(), timeout=10
             )
             response.raise_for_status()
@@ -238,7 +238,7 @@ class OpenAICompatibleAdapter(BaseLLMClient):
         messages.append({"role": "user", "content": prompt})
         payload = {"model": self.model, "messages": messages, "temperature": temperature}
         try:
-            response = requests.post(
+            response = self._session.post(
                 f"{self.endpoint}/chat/completions",
                 headers=self._headers(),
                 json=payload,
@@ -255,7 +255,7 @@ class OpenAICompatibleAdapter(BaseLLMClient):
 
     def check_health(self) -> bool:
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.endpoint}/models", headers=self._headers(), timeout=10
             )
             return response.status_code == 200
@@ -264,7 +264,7 @@ class OpenAICompatibleAdapter(BaseLLMClient):
 
     def list_models(self) -> list:
         try:
-            response = requests.get(
+            response = self._session.get(
                 f"{self.endpoint}/models", headers=self._headers(), timeout=10
             )
             response.raise_for_status()

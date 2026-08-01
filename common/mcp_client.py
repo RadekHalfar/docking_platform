@@ -3,7 +3,12 @@ Shared JSON-RPC MCP client helpers.
 """
 from typing import Any, Dict, Optional
 
-import requests
+from common.http_retry import build_mcp_retry_session
+
+# Retries only connection-establishment failures, never read timeouts/5xx --
+# see common/http_retry.py for why that distinction matters for a call that
+# can trigger a real side-effecting action (e.g. run_docking).
+_session = build_mcp_retry_session()
 
 
 def call_mcp_tool(
@@ -27,7 +32,7 @@ def call_mcp_tool(
         },
     }
 
-    response = requests.post(endpoint, json=payload, timeout=timeout)
+    response = _session.post(endpoint, json=payload, timeout=timeout)
     response.raise_for_status()
 
     data = response.json()

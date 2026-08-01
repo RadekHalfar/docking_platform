@@ -211,8 +211,13 @@ def render_sidebar() -> None:
         _render_job_history()
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner="Checking available Ollama models...")
 def _cached_ollama_models(endpoint: str) -> list:
+    # show_spinner is a message, not False, on purpose: this runs on every
+    # rerun once the 30s cache lapses, including during the active-job 2s
+    # poll loop at the bottom of this file -- with no spinner the whole
+    # page silently froze for up to list_ollama_models()'s timeout with no
+    # indication anything was happening.
     return list_ollama_models(endpoint)
 
 

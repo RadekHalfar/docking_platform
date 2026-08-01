@@ -7,6 +7,12 @@ The workflow uses a hybrid persistence model that combines:
 
 This is implemented in `services/llm_orchestrator/workflow_state_manager.py` and integrated into parser, orchestrator, and CLI flow.
 
+**CLI only.** `ui/orchestrator_bridge.py` never passes a `state_manager=` to
+`execute_workflow()`, so the Streamlit web UI has none of this: no
+checkpointing, no `history`, no `undo`, no partial rerun. The UI only runs
+one-shot workflows. Everything below describes the interactive CLI session
+(`nlp_orchestrator.py --interactive`).
+
 **Not covered by this:** resuming a killed/crashed process. Undo/restore
 operates on `session.last_results`, which only exists in the memory of a
 live interactive session -- if the process is killed, there is currently no

@@ -24,19 +24,19 @@ class TestOllamaAdapter:
         assert adapter.model == "llama2"
         assert adapter.generate_url == "http://test:11434/api/generate"
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.get')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_check_health_success(self, mock_get):
         mock_get.return_value.status_code = 200
         adapter = OllamaAdapter()
         assert adapter.check_health() is True
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.get')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_check_health_failure(self, mock_get):
         mock_get.side_effect = requests.ConnectionError("Connection failed")
         adapter = OllamaAdapter()
         assert adapter.check_health() is False
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_generate(self, mock_post):
         mock_post.return_value.json.return_value = {"response": "hello"}
         mock_post.return_value.raise_for_status.return_value = None
@@ -47,8 +47,8 @@ class TestOllamaAdapter:
         assert response == "hello"
         mock_post.assert_called_once()
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
-    @patch('services.llm_orchestrator.llm_adapters.requests.get')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_generate_pulls_missing_model(self, mock_get, mock_post):
         model_missing_error = requests.HTTPError("404 Client Error")
         model_missing_error.response = Mock(status_code=404)
@@ -74,7 +74,7 @@ class TestOllamaAdapter:
         assert response == "hello"
         assert mock_post.call_count == 3
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_generate_raises_runtime_error_on_non_404_http_error(self, mock_post):
         """Non-404 HTTP errors should raise RuntimeError immediately without pulling."""
         http_error = requests.HTTPError("500 Internal Server Error")
@@ -85,7 +85,7 @@ class TestOllamaAdapter:
         with pytest.raises(RuntimeError, match="Failed to generate"):
             adapter.generate("prompt")
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_generate_raises_runtime_error_on_timeout(self, mock_post):
         """Timeout during generate should surface as RuntimeError."""
         mock_post.side_effect = requests.Timeout("timed out")
@@ -94,7 +94,7 @@ class TestOllamaAdapter:
         with pytest.raises(RuntimeError, match="Failed to generate"):
             adapter.generate("prompt")
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_generate_raises_runtime_error_on_connection_error(self, mock_post):
         """Connection refused during generate should surface as RuntimeError."""
         mock_post.side_effect = requests.ConnectionError("refused")
@@ -103,7 +103,7 @@ class TestOllamaAdapter:
         with pytest.raises(RuntimeError, match="Failed to generate"):
             adapter.generate("prompt")
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_pull_model_logs_error_status_in_stream(self, mock_post):
         """An error status line in the pull stream should be logged as a warning (L3 fix)."""
         pull_response = Mock()
@@ -120,7 +120,7 @@ class TestOllamaAdapter:
             warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
             assert any("disk full" in call for call in warning_calls)
 
-    @patch('services.llm_orchestrator.llm_adapters.requests.get')
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_list_models(self, mock_get):
         mock_get.return_value.raise_for_status.return_value = None
         mock_get.return_value.json.return_value = {
@@ -145,13 +145,13 @@ class TestOpenAIAdapter:
         mock.json.return_value = {"choices": [{"message": {"content": content}}]}
         return mock
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_success(self, mock_post):
         mock_post.return_value = self._make_chat_response("hello from openai")
         adapter = OpenAIAdapter(api_key="sk-test", model="gpt-4o-mini")
         assert adapter.generate("prompt") == "hello from openai"
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_sends_system_message(self, mock_post):
         mock_post.return_value = self._make_chat_response("ok")
         adapter = OpenAIAdapter(api_key="sk-test")
@@ -160,7 +160,7 @@ class TestOpenAIAdapter:
         assert payload["messages"][0] == {"role": "system", "content": "system prompt"}
         assert payload["messages"][1] == {"role": "user", "content": "user prompt"}
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_raises_on_http_error(self, mock_post):
         err = requests.HTTPError("401 Unauthorized")
         err.response = Mock(status_code=401)
@@ -169,17 +169,17 @@ class TestOpenAIAdapter:
         with pytest.raises(RuntimeError, match="Failed to generate"):
             adapter.generate("prompt")
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
     def test_check_health_success(self, mock_get):
         mock_get.return_value.status_code = 200
         assert OpenAIAdapter(api_key="sk-test").check_health() is True
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
     def test_check_health_failure(self, mock_get):
         mock_get.side_effect = requests.ConnectionError()
         assert OpenAIAdapter(api_key="sk-test").check_health() is False
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
     def test_list_models(self, mock_get):
         mock_get.return_value.raise_for_status.return_value = None
         mock_get.return_value.json.return_value = {
@@ -202,13 +202,13 @@ class TestAnthropicAdapter:
         mock.json.return_value = {"content": [{"text": text}]}
         return mock
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_success(self, mock_post):
         mock_post.return_value = self._make_messages_response("hello from claude")
         adapter = AnthropicAdapter(api_key="sk-ant-test")
         assert adapter.generate("prompt") == "hello from claude"
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_includes_system_field(self, mock_post):
         mock_post.return_value = self._make_messages_response("ok")
         adapter = AnthropicAdapter(api_key="sk-ant-test")
@@ -217,7 +217,7 @@ class TestAnthropicAdapter:
         assert payload["system"] == "system prompt"
         assert payload["messages"] == [{"role": "user", "content": "user prompt"}]
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_raises_on_auth_error(self, mock_post):
         err = requests.HTTPError("401 Unauthorized")
         err.response = Mock(status_code=401)
@@ -226,7 +226,7 @@ class TestAnthropicAdapter:
         with pytest.raises(RuntimeError, match="Failed to generate"):
             adapter.generate("prompt")
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
     def test_check_health_uses_models_endpoint(self, mock_get):
         mock_get.return_value.status_code = 200
         AnthropicAdapter(api_key="sk-ant-test").check_health()
@@ -248,7 +248,7 @@ class TestOpenAICompatibleAdapter:
         mock.json.return_value = {"choices": [{"message": {"content": content}}]}
         return mock
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_uses_custom_base_url(self, mock_post):
         mock_post.return_value = self._make_chat_response("ok")
         adapter = OpenAICompatibleAdapter(
@@ -257,7 +257,7 @@ class TestOpenAICompatibleAdapter:
         adapter.generate("prompt")
         assert "http://localhost:1234/v1/chat/completions" in mock_post.call_args.args[0]
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_works_without_api_key(self, mock_post):
         mock_post.return_value = self._make_chat_response("ok")
         adapter = OpenAICompatibleAdapter(base_url="http://localhost:1234/v1", model="m")
@@ -265,7 +265,7 @@ class TestOpenAICompatibleAdapter:
         headers = mock_post.call_args.kwargs["headers"]
         assert "Authorization" not in headers
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_sends_auth_when_api_key_provided(self, mock_post):
         mock_post.return_value = self._make_chat_response("ok")
         adapter = OpenAICompatibleAdapter(
@@ -275,14 +275,14 @@ class TestOpenAICompatibleAdapter:
         headers = mock_post.call_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer my-key"
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.get")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
     def test_check_health_hits_models_endpoint(self, mock_get):
         mock_get.return_value.status_code = 200
         adapter = OpenAICompatibleAdapter(base_url="http://localhost:8000/v1", model="m")
         assert adapter.check_health() is True
         assert "http://localhost:8000/v1/models" in mock_get.call_args.args[0]
 
-    @patch("services.llm_orchestrator.llm_adapters.requests.post")
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
     def test_generate_raises_on_http_error(self, mock_post):
         err = requests.HTTPError("500 Internal Server Error")
         err.response = Mock(status_code=500)

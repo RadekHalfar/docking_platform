@@ -161,10 +161,10 @@ This runs unit and Docker integration tests from inside the containerized dev en
 
 ### Option E: Interactive PyMOL In Browser (no host PyMOL required)
 
-Start the interactive service:
+This service starts automatically with `docker compose up -d` (it has no profile gate) -- no extra command needed unless you're restarting just this one service:
 
 ```powershell
-docker compose --profile interactive up -d pymol-interactive
+docker compose up -d pymol-interactive
 ```
 
 Open browser UI:

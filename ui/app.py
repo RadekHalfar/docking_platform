@@ -30,7 +30,18 @@ UPLOAD_DIR = OUTPUT_BASE / "uploads"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _save_upload(uploaded_file, dest: Path) -> str:
+def _save_upload(uploaded_file, upload_dir: Path) -> str:
+    """Save an uploaded file under upload_dir, using only its basename.
+
+    Streamlit's upload endpoint is a plain HTTP POST exposing whatever
+    filename the client sends; without stripping directory components a
+    crafted name (e.g. "../../etc/x") could write outside upload_dir.
+    """
+    safe_name = Path(uploaded_file.name).name
+    if not safe_name or safe_name in (".", ".."):
+        raise ValueError(f"Unusable uploaded filename: {uploaded_file.name!r}")
+
+    dest = upload_dir / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(uploaded_file.getbuffer())
     return str(dest)
@@ -467,7 +478,7 @@ def _render_rcsb_inputs() -> None:
 def _on_protein_upload_change() -> None:
     uploaded = st.session_state.get("upload_protein")
     if uploaded is not None:
-        path = _save_upload(uploaded, UPLOAD_DIR / uploaded.name)
+        path = _save_upload(uploaded, UPLOAD_DIR)
         st.session_state.params["protein_file"] = str(path)
         st.session_state.params.pop("protein_id", None)
         if st.session_state.get("_last_protein_file") != uploaded.name:
@@ -484,7 +495,7 @@ def _on_ligand_upload_change() -> None:
     uploaded_list = st.session_state.get("upload_ligands") or []
     names = tuple(f.name for f in uploaded_list)
     if names:
-        paths = [str(_save_upload(f, UPLOAD_DIR / f.name)) for f in uploaded_list]
+        paths = [str(_save_upload(f, UPLOAD_DIR)) for f in uploaded_list]
         st.session_state.params["ligand_files"] = paths
         st.session_state.params.pop("ligand_ids", None)
         if names != tuple(st.session_state.get("_last_ligand_files", ())):
@@ -527,7 +538,7 @@ def _on_folder_ligand_upload_change() -> None:
     uploaded_list = st.session_state.get("upload_folder_ligands") or []
     names = tuple(f.name for f in uploaded_list)
     if names:
-        paths = [str(_save_upload(f, UPLOAD_DIR / f.name)) for f in uploaded_list]
+        paths = [str(_save_upload(f, UPLOAD_DIR)) for f in uploaded_list]
         st.session_state.params["ligand_files"] = paths
         st.session_state.params.pop("ligand_ids", None)
         st.session_state.params.pop("ligand_folder", None)

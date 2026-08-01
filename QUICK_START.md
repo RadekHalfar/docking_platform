@@ -68,11 +68,9 @@ Use deterministic-only behavior with legacy mode:
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --clarification-mode legacy "Download 6lu7 and two ATP, prepare and dock"
 ```
 
-## 6. Start Interactive PyMOL (Optional)
+## 6. Interactive PyMOL
 
-```powershell
-docker compose --profile interactive up -d pymol-interactive
-```
+Already running -- it started along with everything else in step 2 (`docker compose up -d`). No profile flag or extra command is needed.
 
 Open noVNC desktop:
 
@@ -127,5 +125,5 @@ docker compose --profile dev run --rm script-runner pytest tests/test_nlp_orches
 
 ```powershell
 .\docker_build.ps1 -Services pymol-interactive -NoCache
-docker compose --profile interactive up -d pymol-interactive
+docker compose up -d pymol-interactive
 ```

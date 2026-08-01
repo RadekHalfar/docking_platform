@@ -1167,7 +1167,7 @@ def _create_box_via_live_pymol(
     if not healthy:
         print("pymol_interactive is not ready.")
         print("The helper API responded, but the PyMOL GUI/RPC backend is not available yet.")
-        print("Start it with: docker compose --profile interactive up -d pymol-interactive")
+        print("Start it with: docker compose up -d pymol-interactive")
         print(f"Then open: {no_vnc_url}")
         return None
 
@@ -1396,7 +1396,7 @@ def _try_start_pymol_interactive_service() -> bool:
     """Try to start pymol-interactive via docker compose on host runtime."""
     try:
         result = subprocess.run(
-            ["docker", "compose", "--profile", "interactive", "up", "-d", "pymol-interactive"],
+            ["docker", "compose", "up", "-d", "pymol-interactive"],
             capture_output=True,
             text=True,
             check=False,
@@ -1425,7 +1425,7 @@ def _integrate_with_pymol_interactive(results: dict) -> None:
 
         if not healthy:
             print("\nℹ️  Visualization is ready, but pymol_interactive is not reachable.")
-            print("   Start it with: docker compose --profile interactive up -d pymol-interactive")
+            print("   Start it with: docker compose up -d pymol-interactive")
             print(f"   Then open: {no_vnc_url}")
             return
 

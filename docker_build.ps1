@@ -61,6 +61,12 @@ $allServices = @{
         description = "Interactive PyMOL service (noVNC + helper API)"
         depends = @("base")
     }
+    "ui" = @{
+        dockerfile = "Dockerfile.ui"
+        tag = "mcp-docking-ui:latest"
+        description = "Streamlit web UI"
+        depends = @("base")
+    }
 }
 
 # Determine which services to build

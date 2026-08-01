@@ -3,9 +3,17 @@
 ## Overview
 The workflow uses a hybrid persistence model that combines:
 - latest files for simple runtime reloads
-- immutable revisioned checkpoints for audit history and recovery
+- immutable revisioned checkpoints for audit history and in-session undo (`undo <rev>` in the interactive CLI)
 
 This is implemented in `services/llm_orchestrator/workflow_state_manager.py` and integrated into parser, orchestrator, and CLI flow.
+
+**Not covered by this:** resuming a killed/crashed process. Undo/restore
+operates on `session.last_results`, which only exists in the memory of a
+live interactive session -- if the process is killed, there is currently no
+code path that reloads checkpoints to resume where it left off. The atomic
+writes below guarantee files on disk are never left half-written, but that's
+a different guarantee from being able to pick a workflow back up after a
+crash.
 
 ## Files Written Per Job
 For each job directory (`orchestrator_output/job_<id>/`), the system writes:
@@ -125,8 +133,11 @@ Current implementation provides:
 Not yet implemented:
 - explicit file locking across competing writers
 - optimistic concurrency checks against expected revision before write
+- resuming a killed/crashed process from its checkpoints (undo/restore only
+  works within a live interactive session -- see Overview)
 
-These can be added if you want multi-process write contention protection.
+These can be added if you want multi-process write contention protection or
+crash resume.
 
 ---
 

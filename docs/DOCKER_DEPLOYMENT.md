@@ -90,9 +90,9 @@ mcp-pymol-visualizer    mcp-pymol-visualizer:latest  Up (healthy)
 mcp-llm                 ollama/ollama:latest         Up (healthy)
 ```
 
-Optional interactive service:
+`pymol-interactive` is not gated by a profile -- it already started with the rest in step 2. To restart just that one service (e.g. after a targeted rebuild):
 ```bash
-docker compose --profile interactive up -d pymol-interactive
+docker compose up -d pymol-interactive
 docker compose ps pymol-interactive
 ```
 
@@ -568,7 +568,11 @@ COPY --from=builder /root/.local /root/.local
 
 ### Docker Compose Profiles
 
-Run different service combinations:
+Illustrative pattern for splitting services into opt-in groups -- **not** what
+`docker-compose.yml` currently defines (today the only profile is `dev`, on
+`script-runner`; every other service, including `pymol-interactive`, starts
+unconditionally with `docker compose up -d`). Adopt something like this if you
+need to split the stack for a leaner deployment:
 
 ```yaml
 services:

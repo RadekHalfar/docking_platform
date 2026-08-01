@@ -31,8 +31,11 @@ services:
       context: .
       dockerfile: docker/rcsb_downloader.Dockerfile
     container_name: mcp-rcsb-downloader
+    # Host-side port is configurable via .env (RCSB_DOWNLOADER_PORT) to work
+    # around "Address already in use" without touching the container's own
+    # port (which the healthcheck below always targets at 8001).
     ports:
-      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:${RCSB_DOWNLOADER_PORT:-8001}:8001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -49,8 +52,10 @@ services:
       context: .
       dockerfile: docker/ligand_preparer.Dockerfile
     container_name: mcp-ligand-preparer
+    # See rcsb-downloader above: host port configurable via .env, container
+    # port fixed at 8002 to match the healthcheck.
     ports:
-      - "127.0.0.1:8002:8002"
+      - "127.0.0.1:${LIGAND_PREPARER_PORT:-8002}:8002"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -67,8 +72,10 @@ services:
       context: .
       dockerfile: docker/protein_preparer.Dockerfile
     container_name: mcp-protein-preparer
+    # See rcsb-downloader above: host port configurable via .env, container
+    # port fixed at 8003 to match the healthcheck.
     ports:
-      - "127.0.0.1:8003:8003"
+      - "127.0.0.1:${PROTEIN_PREPARER_PORT:-8003}:8003"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -85,8 +92,10 @@ services:
       context: .
       dockerfile: docker/moldina_runner.Dockerfile
     container_name: mcp-moldina-runner
+    # See rcsb-downloader above: host port configurable via .env, container
+    # port fixed at 8004 to match the healthcheck.
     ports:
-      - "127.0.0.1:8004:8004"
+      - "127.0.0.1:${MOLDINA_RUNNER_PORT:-8004}:8004"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
@@ -116,8 +125,10 @@ services:
       context: .
       dockerfile: docker/pymol_visualizer.Dockerfile
     container_name: mcp-pymol-visualizer
+    # See rcsb-downloader above: host port configurable via .env, container
+    # port fixed at 8005 to match the healthcheck.
     ports:
-      - "127.0.0.1:8005:8005"
+      - "127.0.0.1:${PYMOL_VISUALIZER_PORT:-8005}:8005"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
@@ -199,6 +210,11 @@ services:
     networks:
       - mcp-network
     volumes:
+      # Kept read-write (unlike ui's otherwise-identical mount below):
+      # running `pytest` through this service needs to write .pytest_cache/
+      # and tests/test_output at the repo root, and the whole point of this
+      # service is editing/running arbitrary scripts without a rebuild. It's
+      # opt-in (--profile dev) and never part of the default `up -d` stack.
       - ./:/workspace
       - ./cache:/workspace/cache
       - ./demo_output:/workspace/demo_output
@@ -243,7 +259,12 @@ services:
     networks:
       - mcp-network
     volumes:
-      - ./:/workspace
+      # Read-only: Dockerfile.ui doesn't COPY app source, it runs straight off
+      # this mount, but the UI only ever needs to *read* code -- all of its
+      # actual writes (uploads, settings, job output) land in the two rw
+      # mounts below. Read-only here means a compromised ui container can no
+      # longer modify source/Dockerfiles/docker-compose.yml on the host.
+      - ./:/workspace:ro
       - ./cache:/workspace/cache
       - ./orchestrator_output:/workspace/orchestrator_output
     environment:

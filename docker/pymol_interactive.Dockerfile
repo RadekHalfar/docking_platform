@@ -29,7 +29,7 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -
     rm /tmp/miniconda.sh && \
     /opt/conda/bin/conda config --add channels conda-forge && \
     /opt/conda/bin/conda config --set channel_priority strict && \
-    /opt/conda/bin/conda install -y --override-channels -c conda-forge pymol-open-source flask requests && \
+    /opt/conda/bin/conda install -y --override-channels -c conda-forge pymol-open-source flask requests waitress && \
     ln -sf /opt/conda/bin/pymol /usr/local/bin/pymol && \
     /opt/conda/bin/conda clean -afy
 

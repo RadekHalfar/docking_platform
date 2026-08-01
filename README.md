@@ -66,7 +66,7 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 # --verbose normal     # Show service logs
 # --verbose mcp_demo   # Full MCP JSON-RPC demonstration
 
-# Results automatically saved to ./nlp_orchestration_output/<job_id>/
+# Results automatically saved to ./orchestrator_output/<job_id>/
 ```
 
 **See [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) for complete guide and examples.**
@@ -153,8 +153,8 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 # 5. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 
-# 6. Optional: start interactive PyMOL in browser (no host PyMOL needed)
-docker compose --profile interactive up -d pymol-interactive
+# 6. Interactive PyMOL in browser is already running (started in step 2 along
+#    with everything else -- no extra flag or command needed)
 # open: http://localhost:6080/vnc.html
 # helper API: http://localhost:8090
 # If your workflow command includes "visualize", the CLI will auto-load that job into pymol-interactive when this service is running.
@@ -192,8 +192,9 @@ python3 -m services.protein_preparer.server
 python3 -m services.moldina_runner.server
 python3 -m services.pymol_visualizer.server
 
-# Optional interactive browser service (ports 6080/8090)
-# docker compose --profile interactive up -d pymol-interactive
+# Optional interactive browser service (ports 6080/8090) -- runs in Docker
+# even if you're running the other services locally; no profile flag needed
+# docker compose up -d pymol-interactive
 ```
 
 ### Docker Deployment Details

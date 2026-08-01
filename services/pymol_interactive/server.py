@@ -344,6 +344,9 @@ def box_from_corners() -> Any:
 if __name__ == "__main__":
     host = os.getenv("PYMOL_INTERACTIVE_HOST", "0.0.0.0")
     port = int(os.getenv("PYMOL_INTERACTIVE_PORT", "8090"))
-    # threaded=True so a status poll is never queued behind an in-flight
-    # request (e.g. the background-load kickoff itself, or box selection).
-    app.run(host=host, port=port, threaded=True)
+    # waitress instead of Flask's dev server (see common/mcp_base.py for the
+    # same change and rationale). A small bounded pool is enough here -- a
+    # status poll should never queue behind an in-flight load/box request.
+    from waitress import serve
+
+    serve(app, host=host, port=port, threads=4)

@@ -57,8 +57,8 @@ docker compose logs -f
 # View logs for specific service
 docker compose logs -f pymol-visualizer
 
-# Interactive PyMOL logs (noVNC + helper API)
-docker compose --profile interactive logs -f pymol-interactive
+# Interactive PyMOL logs (noVNC + helper API) -- no profile flag needed, it's not gated by one
+docker compose logs -f pymol-interactive
 
 # View last 100 lines
 docker compose logs --tail=100 moldina-runner
@@ -311,8 +311,9 @@ docker exec mcp-pymol-visualizer pymol -c -Q test.pml
 ### PyMOL Interactive (Ports 6080/8090)
 
 ```bash
-# Start interactive service only
-docker compose --profile interactive up -d pymol-interactive
+# Already running by default; restart just this one service if needed
+# (no profile flag -- pymol-interactive isn't gated by one)
+docker compose up -d pymol-interactive
 
 # Check API health
 curl http://localhost:8090/health

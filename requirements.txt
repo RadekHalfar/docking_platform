@@ -1,6 +1,7 @@
 # Core dependencies
 requests>=2.31.0
 flask>=3.0.0
+waitress>=3.0.0           # Production WSGI server for MCP services (see common/mcp_base.py)
 python-dotenv>=1.0.0
 
 # Testing

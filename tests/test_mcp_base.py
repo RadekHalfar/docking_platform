@@ -222,6 +222,32 @@ def test_build_tool_parameters_short_and_long_specs():
     assert parameters[1].required is False
 
 
+def test_run_serves_via_waitress_not_flask_dev_server(test_server, monkeypatch):
+    """run() must use the production WSGI server (waitress), not Flask's
+    app.run() dev server -- the dev server has no bound on concurrent
+    request threads and isn't meant to serve real traffic."""
+    import common.mcp_base as mcp_base_module
+
+    calls = []
+    monkeypatch.setattr(
+        mcp_base_module, "MCP_SERVER_THREADS", 8,
+    )
+
+    def _fake_serve(app, host, port, threads):
+        calls.append({"app": app, "host": host, "port": port, "threads": threads})
+
+    monkeypatch.setattr("waitress.serve", _fake_serve)
+
+    test_server.host = "127.0.0.1"
+    test_server.run()
+
+    assert len(calls) == 1
+    assert calls[0]["app"] is test_server.app
+    assert calls[0]["host"] == "127.0.0.1"
+    assert calls[0]["port"] == 9999
+    assert calls[0]["threads"] == 8
+
+
 def test_register_mcp_tool_helper_registers_tool(test_server):
     """Test register_mcp_tool helper integrates with MCPServer."""
 

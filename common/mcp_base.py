@@ -9,12 +9,18 @@ Provides common functionality for all MCP services:
 """
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Callable
 from flask import Flask, request, jsonify
 from common.schemas import MCPToolDefinition, MCPToolParameter
 
 logger = logging.getLogger(__name__)
+
+# Bounded worker pool for the production WSGI server (see MCPServer.run()).
+# A handful of ligands can be docked/prepared concurrently while still
+# leaving room for /health polls; override via env if a deployment needs more.
+MCP_SERVER_THREADS = int(os.environ.get("MCP_SERVER_THREADS", "8"))
 
 
 class MCPTool:
@@ -193,10 +199,16 @@ class MCPServer(ABC):
         self.setup_tools()
         self.logger.info(f"Starting {self.name} on {self.host}:{self.port}")
         self.logger.info(f"Registered tools: {list(self.tools.keys())}")
-        # threaded=True so the /health endpoint stays responsive while a
-        # long-running tool call (e.g. docking a large batch) is in flight —
-        # otherwise Docker's healthcheck flaps the container to "unhealthy".
-        self.app.run(host=self.host, port=self.port, threaded=True)
+        # Flask's own app.run() is a development server not meant to serve
+        # real traffic (single-process, and threaded=True spawns one thread
+        # per request with no upper bound). waitress is a production-grade,
+        # pure-Python/cross-platform WSGI server with a bounded thread pool —
+        # sized so /health can still be served promptly alongside a few
+        # long-running tool calls (e.g. docking a large batch) without
+        # accepting unlimited concurrent requests.
+        from waitress import serve
+
+        serve(self.app, host=self.host, port=self.port, threads=MCP_SERVER_THREADS)
 
 
 # Standard JSON-RPC error codes

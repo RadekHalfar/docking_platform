@@ -248,10 +248,10 @@ Possible errors:
 
 ## Docker Usage
 
-Start service:
+This service has no profile gate -- it starts automatically with `docker compose up -d` along with everything else. To (re)start just this one service:
 
 ```bash
-docker compose --profile interactive up -d pymol-interactive
+docker compose up -d pymol-interactive
 ```
 
 Open browser desktop:
@@ -262,8 +262,9 @@ Open browser desktop:
 ## Quick Example
 
 ```bash
-# 1) Ensure interactive service is running
-docker compose --profile interactive up -d pymol-interactive
+# 1) The interactive service is already running (started with `docker compose up -d`);
+#    only needed if you stopped it or want to restart just this one service:
+# docker compose up -d pymol-interactive
 
 # 2) Kick off the load (returns immediately, doesn't wait for PyMOL)
 curl -X POST http://localhost:8090/api/load_job \

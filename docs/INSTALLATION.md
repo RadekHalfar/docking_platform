@@ -317,11 +317,15 @@ set PYTHONPATH=%PYTHONPATH%;%CD%  # Windows
 ### Issue: "Address already in use"
 **Solution:** Service port is occupied. Either:
 - Stop the existing service
-- Change port in `.env` file:
+- Change the **host** port in `.env` (only remaps what's exposed to your machine; the container keeps using its normal internal port, so no other config needs to change):
 ```bash
 RCSB_DOWNLOADER_PORT=8011
 LIGAND_PREPARER_PORT=8012
+PROTEIN_PREPARER_PORT=8013
+MOLDINA_RUNNER_PORT=8014
+PYMOL_VISUALIZER_PORT=8015
 ```
+Then restart with `docker compose up -d` (or `docker compose down && docker compose up -d` if services are already running) for the new mapping to take effect.
 
 ### Issue: "pytest: command not found"
 **Solution:** Install pytest:

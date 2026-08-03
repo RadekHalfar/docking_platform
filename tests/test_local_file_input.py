@@ -292,3 +292,88 @@ def test_missing_local_protein_file_raises_runtime_error(tmp_path):
 
     assert results["status"] == "failed"
     assert any("not found" in e for e in results["errors"])
+
+
+def test_ligand_basename_collision_raises_instead_of_overwriting(tmp_path):
+    """Two different source files sharing a basename must never silently
+    overwrite one another in the shared downloads dir -- see finding #3."""
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    ligand_a = dir_a / "ATP.sdf"
+    ligand_b = dir_b / "ATP.sdf"
+    ligand_a.write_text("FROM_A\n")
+    ligand_b.write_text("FROM_B\n")
+
+    output_base = tmp_path / "out"
+    orchestrator = WorkflowOrchestrator(output_base=str(output_base))
+    orchestrator.call_mcp_tool = Mock(return_value={"protein_path": None, "ligand_paths": []})
+
+    workflow = {
+        "services": ["get_input_files"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_files": [str(ligand_a), str(ligand_b)],
+            "formats": {"protein": "pdb", "ligand": "sdf"},
+        },
+    }
+    results = orchestrator.execute_workflow(workflow, job_id="collision_test")
+
+    assert results["status"] == "failed"
+    assert any("collision" in e.lower() for e in results["errors"])
+    assert any(str(ligand_a) in e and str(ligand_b) in e for e in results["errors"])
+    # Neither file should have been copied -- the collision check runs before any copy.
+    assert not (output_base / "collision_test" / "downloads" / "ATP.sdf").exists()
+
+
+def test_same_ligand_path_listed_twice_is_not_a_collision(tmp_path):
+    ligand_src = tmp_path / "src" / "ATP.sdf"
+    ligand_src.parent.mkdir()
+    ligand_src.write_text("$$$$\n")
+
+    output_base = tmp_path / "out"
+    orchestrator = WorkflowOrchestrator(output_base=str(output_base))
+    orchestrator.call_mcp_tool = Mock(return_value={"protein_path": None, "ligand_paths": []})
+
+    workflow = {
+        "services": ["get_input_files"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_files": [str(ligand_src), str(ligand_src)],
+            "formats": {"protein": "pdb", "ligand": "sdf"},
+        },
+    }
+    results = orchestrator.execute_workflow(workflow, job_id="duplicate_path_test")
+
+    assert results["status"] == "completed"
+    copied = output_base / "duplicate_path_test" / "downloads" / "ATP.sdf"
+    assert copied.exists()
+    assert copied.read_text() == "$$$$\n"
+
+
+def test_distinct_ligand_basenames_are_unaffected(tmp_path):
+    ligand_a = tmp_path / "src" / "ATP.sdf"
+    ligand_b = tmp_path / "src" / "HEM.sdf"
+    ligand_a.parent.mkdir()
+    ligand_a.write_text("ATP\n")
+    ligand_b.write_text("HEM\n")
+
+    output_base = tmp_path / "out"
+    orchestrator = WorkflowOrchestrator(output_base=str(output_base))
+    orchestrator.call_mcp_tool = Mock(return_value={"protein_path": None, "ligand_paths": []})
+
+    workflow = {
+        "services": ["get_input_files"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_files": [str(ligand_a), str(ligand_b)],
+            "formats": {"protein": "pdb", "ligand": "sdf"},
+        },
+    }
+    results = orchestrator.execute_workflow(workflow, job_id="distinct_names_test")
+
+    assert results["status"] == "completed"
+    downloads = output_base / "distinct_names_test" / "downloads"
+    assert (downloads / "ATP.sdf").exists()
+    assert (downloads / "HEM.sdf").exists()

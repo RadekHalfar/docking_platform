@@ -53,14 +53,17 @@ class LigandPreparer:
     def __init__(self, cache_dir: Optional[str] = None):
         """
         Initialize the ligand preparer.
-        
+
         Args:
-            cache_dir: Directory to cache prepared files
+            cache_dir: Currently unused -- no caching is implemented for
+                prepared ligands (unlike RCSBDownloader, which does cache).
+                Accepted for constructor consistency with the other MCP
+                services; the directory is still created if provided.
         """
         if not RDKIT_AVAILABLE:
             raise RuntimeError("RDKit is required but not installed. Install with: pip install rdkit")
-        
-        self.cache_dir = cache_dir
+
+        self.cache_dir = cache_dir  # write-only: never read anywhere in this class
         if cache_dir:
             ensure_directory(cache_dir)
     

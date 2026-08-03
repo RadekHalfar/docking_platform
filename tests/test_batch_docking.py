@@ -211,3 +211,34 @@ def test_empty_ligand_folder_raises_runtime_error(tmp_path):
 
     assert results["status"] == "failed"
     assert any("No ligand files found" in e for e in results["errors"])
+
+
+def test_ligand_folder_same_basename_in_different_subdirs_raises(tmp_path):
+    """A recursive scan can find two files sharing a basename in different
+    subdirectories -- execute_workflow must raise rather than silently let
+    one overwrite the other in the shared downloads dir. See finding #3."""
+    ligand_dir = tmp_path / "ligands"
+    sub_a = ligand_dir / "batch_a"
+    sub_b = ligand_dir / "batch_b"
+    sub_a.mkdir(parents=True)
+    sub_b.mkdir(parents=True)
+    (sub_a / "ATP.sdf").write_text("FROM_A\n")
+    (sub_b / "ATP.sdf").write_text("FROM_B\n")
+
+    output_base = tmp_path / "out"
+    orchestrator = WorkflowOrchestrator(output_base=str(output_base))
+    orchestrator.call_mcp_tool = Mock(return_value={"protein_path": "/app/downloads/6lu7.pdb", "ligand_paths": []})
+
+    workflow = {
+        "services": ["get_input_files"],
+        "parameters": {
+            "protein_id": "6lu7",
+            "ligand_folder": str(ligand_dir),
+            "formats": {"protein": "pdb", "ligand": "sdf"},
+        },
+    }
+    results = orchestrator.execute_workflow(workflow, job_id="folder_collision_test")
+
+    assert results["status"] == "failed"
+    assert any("collision" in e.lower() for e in results["errors"])
+    assert not (output_base / "folder_collision_test" / "downloads" / "ATP.sdf").exists()

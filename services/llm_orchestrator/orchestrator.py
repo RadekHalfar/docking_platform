@@ -150,6 +150,29 @@ class WorkflowOrchestrator:
         shutil.copy(src, dest)
         return self.normalize_path(str(dest))
 
+    def _copy_local_inputs(self, source_paths: List[str], dest_dir: Path) -> List[str]:
+        """Copy multiple user-supplied local files into the job's downloads dir.
+
+        Raises RuntimeError if two *different* source files would collide on
+        the same destination basename -- silently letting one overwrite the
+        other would corrupt the docking inputs with no indication anything
+        went wrong. The same source path appearing twice (e.g. the user
+        intentionally lists one file twice) is not a collision -- it copies
+        to the same destination idempotently.
+        """
+        claimed: Dict[str, str] = {}  # basename -> resolved source path that claimed it
+        for source_path in source_paths:
+            name = Path(source_path).name
+            resolved = str(Path(source_path).resolve())
+            if name in claimed and claimed[name] != resolved:
+                raise RuntimeError(
+                    f"Local ligand filename collision: both {claimed[name]} and "
+                    f"{source_path} would be copied to the same destination "
+                    f"filename '{name}'. Rename one of the files and try again."
+                )
+            claimed[name] = resolved
+        return [self._copy_local_input(f, dest_dir) for f in source_paths]
+
     def normalize_path(self, path: str) -> str:
         """
         Convert path to Docker container-compatible format.
@@ -279,7 +302,7 @@ class WorkflowOrchestrator:
                 if local_protein_file:
                     protein_path = self._copy_local_input(local_protein_file, download_dir)
 
-                local_ligand_paths = [self._copy_local_input(f, download_dir) for f in local_ligand_files]
+                local_ligand_paths = self._copy_local_inputs(local_ligand_files, download_dir)
                 ligand_paths = downloaded_ligand_paths + local_ligand_paths
 
                 results["results"]["get_input_files"] = {

@@ -739,7 +739,8 @@ def _render_affinity_chart(result: dict) -> None:
     dock_results = result.get("results", {}).get("dock", {}).get("results", [])
     fig = make_affinity_chart_figure(dock_results)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        with st.container(height=400):
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def _load_job_in_pymol(job_id: str | None) -> tuple[str, str]:

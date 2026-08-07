@@ -1,6 +1,7 @@
 """Streamlit front-end for the Molecular Docking Platform."""
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,9 +11,9 @@ from common.utils import generate_job_id
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
 from ui.job_history import list_completed_jobs
+from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
-from ui.pymol_client import get_load_status, kickoff_load_job
 from ui.results import build_comparison_html, make_affinity_chart_figure
 from ui.session_state import DETECTED_CPU_COUNT, apply_parsed_params, apply_settings, get_params, init
 
@@ -423,6 +424,9 @@ def render_parameters_panel() -> None:
         _render_folder_inputs()
 
     st.divider()
+    _render_box_picker()
+
+    st.divider()
     _render_docking_box()
 
     with st.expander("Advanced"):
@@ -590,6 +594,140 @@ def _render_folder_inputs() -> None:
         st.caption(f"{len(st.session_state.params['ligand_files'])} ligand file(s) ready")
 
 
+def _mirror_box_to_manual_inputs(center: list, box_size: list) -> None:
+    """Write picked/adjusted values into the manual text-input keys, which
+    _collect_form_params() reads -- the picker augments the manual form
+    rather than bypassing it, so "Run Docking" needs no separate code path.
+    Must run before _render_docking_box() instantiates those widgets.
+    """
+    st.session_state["param_center_x"] = f"{center[0]:.3f}"
+    st.session_state["param_center_y"] = f"{center[1]:.3f}"
+    st.session_state["param_center_z"] = f"{center[2]:.3f}"
+    st.session_state["param_box_x"] = f"{box_size[0]:.3f}"
+    st.session_state["param_box_y"] = f"{box_size[1]:.3f}"
+    st.session_state["param_box_z"] = f"{box_size[2]:.3f}"
+
+
+def _handle_pick_box() -> None:
+    """Run just enough of the workflow (download + prepare_protein) to get a
+    receptor PDB to show in the box picker -- no ligands/docking needed yet."""
+    form_params = _collect_form_params()
+    st.session_state.params.update(form_params)
+    params = st.session_state.params.copy()
+
+    prep_services = ["get_input_files", "prepare_protein"]
+    try:
+        validated = st.session_state.parser.validate_workflow(
+            {"services": prep_services, "parameters": params}
+        )
+    except Exception as exc:
+        st.error(f"Validation error: {exc}")
+        return
+
+    missing = validated.get("missing_required", [])
+    if missing:
+        st.warning(f"Provide a protein source first — missing: {', '.join(missing)}")
+        return
+
+    job_id = generate_job_id()
+    st.session_state["_box_picker_job_id"] = job_id
+    st.session_state.pop("_box_picker_receptor_pdb", None)
+    st.session_state.pop("picked_center", None)
+    st.session_state.pop("_box_picker_last_size", None)
+
+    bridge = OrchestratorBridge()
+    bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), services=prep_services)
+    st.session_state.box_picker_bridge = bridge
+    st.rerun()
+
+
+def _render_box_picker() -> None:
+    st.markdown("**Pick Docking Box Visually**")
+
+    bridge: OrchestratorBridge | None = st.session_state.get("box_picker_bridge")
+
+    if bridge and bridge.is_running():
+        st.info("Preparing receptor for box picking...")
+        return
+
+    if bridge and not bridge.is_running():
+        error = bridge.get_error()
+        result = bridge.get_result()
+        if error:
+            st.error(f"Could not prepare receptor: {error}")
+        elif result and result.get("status") == "completed":
+            proteins = (
+                result.get("results", {}).get("prepare_protein", {}).get("prepared_proteins", [])
+            )
+            pdb_path = proteins[0].get("pdb_path") if proteins else None
+            if pdb_path:
+                st.session_state["_box_picker_receptor_pdb"] = pdb_path
+            else:
+                st.error("Receptor was prepared but no PDB path was returned.")
+        elif result and result.get("status") == "failed":
+            st.error("Could not prepare receptor: " + "; ".join(result.get("errors", [])))
+        st.session_state.box_picker_bridge = None
+
+    receptor_raw = st.session_state.get("_box_picker_receptor_pdb")
+    if not receptor_raw:
+        if st.button("Load receptor for box picking"):
+            _handle_pick_box()
+        return
+
+    receptor_path = _resolve_container_path(receptor_raw)
+    if not receptor_path.exists():
+        st.warning("Prepared receptor no longer on disk — reload it.")
+        if st.button("Reload receptor"):
+            _handle_pick_box()
+        return
+
+    receptor_pdb = _read_file_bytes(
+        str(receptor_path), receptor_path.stat().st_mtime
+    ).decode("utf-8", errors="replace")
+
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=1.0)
+    with s2:
+        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=1.0)
+    with s3:
+        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=1.0)
+
+    center = st.session_state.get("picked_center")
+
+    click = render_mol_viewer(
+        receptor_pdb,
+        mode="box_picker",
+        center=center,
+        box_size=[bx, by, bz],
+        height=450,
+        key=f"box_picker_{st.session_state.get('_box_picker_job_id')}",
+    )
+    if click and click.get("center") and click["center"] != center:
+        center = click["center"]
+        st.session_state["picked_center"] = center
+        st.session_state["_box_picker_last_size"] = [bx, by, bz]
+        _mirror_box_to_manual_inputs(center, [bx, by, bz])
+        st.rerun()
+
+    # Keep the manual fields (and hence the box actually docked with) in sync
+    # if the user resizes after already having picked a center.
+    if center and st.session_state.get("_box_picker_last_size") != [bx, by, bz]:
+        st.session_state["_box_picker_last_size"] = [bx, by, bz]
+        _mirror_box_to_manual_inputs(center, [bx, by, bz])
+
+    if center:
+        st.caption(f"Picked center: ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})")
+    else:
+        st.caption("Click a receptor atom in the viewer to set the box center.")
+
+    if st.button("Discard picked receptor"):
+        st.session_state.pop("_box_picker_receptor_pdb", None)
+        st.session_state.pop("picked_center", None)
+        st.session_state.pop("_box_picker_last_size", None)
+        st.rerun()
+
+
 def _render_docking_box() -> None:
     st.markdown("**Docking Box**")
     c1, c2, c3 = st.columns(3)
@@ -743,52 +881,6 @@ def _render_affinity_chart(result: dict) -> None:
             st.plotly_chart(fig, use_container_width=True)
 
 
-def _load_job_in_pymol(job_id: str | None) -> tuple[str, str]:
-    """Ask the pymol-interactive helper API to load job structures.
-
-    Loading is asynchronous server-side (a real batch can take longer than
-    any single fixed HTTP timeout), so this kicks off a load and/or polls
-    for completion rather than blocking on one long request.
-
-    Returns (state, message) for display in the PyMOL tab, where state is
-    one of "done", "running", "error".
-    """
-    if not job_id:
-        return "error", "No job selected."
-
-    if st.session_state.get("_pymol_loaded_job") == job_id:
-        return "done", f"Loaded job `{job_id}` into PyMOL."
-
-    api_url = os.getenv("PYMOL_INTERACTIVE_URL", "http://pymol-interactive:8090")
-    status = get_load_status(api_url)
-    current_status = status.get("status")
-    current_job = status.get("job_id")
-
-    if current_status == "done" and current_job == job_id:
-        st.session_state["_pymol_loaded_job"] = job_id
-        st.session_state["_pymol_load_pending"] = False
-        return "done", f"Loaded job `{job_id}` into PyMOL."
-
-    if current_status == "running":
-        st.session_state["_pymol_load_pending"] = True
-        if current_job == job_id:
-            return "running", f"Loading job `{job_id}` into PyMOL..."
-        return "running", "PyMOL is busy loading another job — this job will load once it's free."
-
-    if current_status == "error" and current_job == job_id:
-        st.session_state["_pymol_load_pending"] = False
-        return "error", f"Failed to load job `{job_id}` into PyMOL: {status.get('error')}"
-
-    # idle, or the last load was for/errored on a different job — start fresh.
-    kicked_off = kickoff_load_job(api_url, job_id)
-    if kicked_off.get("status") in ("started", "already_running"):
-        st.session_state["_pymol_load_pending"] = True
-        return "running", f"Loading job `{job_id}` into PyMOL..."
-
-    st.session_state["_pymol_load_pending"] = False
-    return "error", kicked_off.get("error", "Unknown error starting PyMOL load.")
-
-
 def _resolve_container_path(path: str) -> Path:
     """Remap /app/orchestrator_output/... → OUTPUT_BASE/... so the UI container
     can access files written by MCP services that mount the volume at /app."""
@@ -801,29 +893,75 @@ def _resolve_container_path(path: str) -> Path:
         return p
 
 
-def _render_visualization(result: dict, job_id: str) -> None:
-    raw_path = result.get("results", {}).get("visualize", {}).get("image_path")
-    if not raw_path:
-        return
-    png_path = _resolve_container_path(raw_path)
-    if not png_path.exists():
-        return
+def _split_sdf_records(sdf_text: str) -> list[str]:
+    """Split a multi-record SDF (one $$$$-terminated block per pose) into a
+    list of individually valid single-record SDF texts, in file order."""
+    blocks = re.split(r"\r?\n\$\$\$\$\r?\n?", sdf_text)
+    return [block + "\n$$$$\n" for block in blocks if block.strip()]
 
-    tab_img, tab_pymol = st.tabs(["Image", "PyMOL"])
-    with tab_img:
-        st.image(str(png_path))
-        with open(png_path, "rb") as f:
-            st.download_button("Download PNG", f, file_name="docking.png", mime="image/png")
-    with tab_pymol:
-        state, msg = _load_job_in_pymol(job_id)
-        if state == "done":
-            st.success(msg, icon="✅")
-        elif state == "running":
-            st.info(msg, icon="⏳")
-        else:
-            st.error(msg)
-        novnc_url = os.getenv("PYMOL_NOVNC_URL", "http://localhost:6080") + "/vnc_auto.html"
-        st.components.v1.iframe(novnc_url, height=600, scrolling=False)
+
+def _render_visualization(result: dict, job_id: str) -> None:
+    viz = result.get("results", {}).get("visualize", {})
+    raw_receptor = viz.get("receptor_pdb")
+    if not raw_receptor:
+        return
+    receptor_path = _resolve_container_path(raw_receptor)
+    if not receptor_path.exists():
+        st.caption("Receptor structure not found on disk.")
+        return
+    receptor_pdb = _read_file_bytes(
+        str(receptor_path), receptor_path.stat().st_mtime
+    ).decode("utf-8", errors="replace")
+
+    dock_results = {
+        r["ligand_id"]: r
+        for r in result.get("results", {}).get("dock", {}).get("results", [])
+        if r.get("ligand_id")
+    }
+
+    ligands: dict[str, dict] = {}
+    for entry in viz.get("converted", []):
+        ligand_id = entry.get("ligand_id")
+        raw_sdf_path = entry.get("sdf_path")
+        if not ligand_id or not raw_sdf_path:
+            continue
+        sdf_path = _resolve_container_path(raw_sdf_path)
+        if not sdf_path.exists():
+            continue
+        sdf_text = _read_file_bytes(
+            str(sdf_path), sdf_path.stat().st_mtime
+        ).decode("utf-8", errors="replace")
+        records = _split_sdf_records(sdf_text)
+        if not records:
+            continue
+
+        modes = dock_results.get(ligand_id, {}).get("modes") or []
+        pose_index = 0
+        if len(records) > 1:
+            options = list(range(1, len(records) + 1))
+
+            def _format_pose(i: int, m=modes) -> str:
+                if i - 1 < len(m) and m[i - 1].get("affinity") is not None:
+                    return f"Mode {i} ({m[i - 1]['affinity']:.2f} kcal/mol)"
+                return f"Mode {i}"
+
+            selected = st.selectbox(
+                f"{ligand_id} — pose",
+                options,
+                format_func=_format_pose,
+                key=f"pose_select_{job_id}_{ligand_id}",
+            )
+            pose_index = selected - 1
+        pose_index = min(pose_index, len(records) - 1)
+
+        affinity = (
+            modes[pose_index].get("affinity")
+            if pose_index < len(modes)
+            else dock_results.get(ligand_id, {}).get("best_affinity")
+        )
+        ligands[ligand_id] = {"sdf": records[pose_index], "affinity": affinity}
+
+    render_mol_viewer(receptor_pdb, ligands, mode="view", height=550, key=f"mol_viewer_{job_id}")
 
 
 @st.cache_data(show_spinner=False)
@@ -874,10 +1012,11 @@ with params_col:
 with results_col:
     render_results_panel()
 
-# Keep polling while a docking job or a PyMOL load is in progress — 2 s
-# delay avoids spinning the CPU.
+# Keep polling while a docking job or the box-picker's receptor prep is in
+# progress — 2 s delay avoids spinning the CPU.
+box_picker_bridge = st.session_state.get("box_picker_bridge")
 if (st.session_state.bridge and st.session_state.bridge.is_running()) or \
-        st.session_state.get("_pymol_load_pending"):
+        (box_picker_bridge and box_picker_bridge.is_running()):
     import time
     time.sleep(2)
     st.rerun()

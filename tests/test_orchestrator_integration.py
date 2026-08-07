@@ -28,19 +28,36 @@ def _prepare_ligands_result():
 
 
 def _prepare_protein_result():
-    # orchestrator reads prepared_proteins[0].pdbqt_path → workflow_state["prepared_protein"]
-    return {"prepared_proteins": [{"pdbqt_path": "/app/prepared/6lu7.pdbqt"}], "status": "ok"}
+    # orchestrator reads prepared_proteins[0].pdbqt_path/pdb_path →
+    # workflow_state["prepared_protein"]/["prepared_protein_pdb"]
+    return {
+        "prepared_proteins": [
+            {"pdbqt_path": "/app/prepared/6lu7.pdbqt", "pdb_path": "/app/prepared/6lu7_prepared.pdb"}
+        ],
+        "status": "ok",
+    }
 
 
 def _dock_result():
     return {
-        "results": [{"output_path": "/app/docking/ATP_out.pdbqt", "best_affinity": -8.5}],
+        "results": [
+            {
+                "ligand_id": "ATP",
+                "output_path": "/app/docking/ATP_out.pdbqt",
+                "best_affinity": -8.5,
+                "modes": [{"mode": 1, "affinity": -8.5, "rmsd_lb": 0.0, "rmsd_ub": 0.0}],
+            }
+        ],
         "successful": 1,
     }
 
 
 def _visualize_result():
-    return {"script_path": "/app/viz/scene.pse"}
+    return {
+        "converted": [{"ligand_id": "ATP", "sdf_path": "/app/viz/ATP_poses.sdf", "conversion_method": "meeko"}],
+        "errors": [],
+        "status": "ok",
+    }
 
 
 # Tool name map based on actual call_mcp_tool calls in orchestrator.py:
@@ -48,13 +65,13 @@ def _visualize_result():
 #   prepare_ligands  → "prepare_ligands"
 #   prepare_protein  → "prepare_proteins"
 #   dock             → "run_docking"
-#   visualize        → "visualize_docking"
+#   visualize        → "convert_docked_poses" (on ligand_preparer)
 _TOOL_RESULTS = {
     "download_structures": _download_result,
     "prepare_ligands": _prepare_ligands_result,
     "prepare_proteins": _prepare_protein_result,
     "run_docking": _dock_result,
-    "visualize_docking": _visualize_result,
+    "convert_docked_poses": _visualize_result,
 }
 
 
@@ -105,7 +122,7 @@ def test_execute_workflow_full_chain_calls_services_in_order(tmp_path):
         "prepare_ligands",
         "prepare_proteins",
         "run_docking",
-        "visualize_docking",
+        "convert_docked_poses",
     ]
 
 
@@ -132,7 +149,7 @@ def test_execute_workflow_skips_step_not_in_services(tmp_path):
     orchestrator.execute_workflow(workflow, job_id="skip_test")
 
     assert call_log == ["download_structures"]
-    assert "visualize_docking" not in call_log
+    assert "convert_docked_poses" not in call_log
     assert "prepare_ligands" not in call_log
 
 

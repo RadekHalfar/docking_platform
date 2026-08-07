@@ -114,6 +114,48 @@ class TestOrchestratorBridge:
         assert bridge.get_result() is None
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_services_override_replaces_workflow_services(self, MockOrchestrator):
+        """The box-picker's partial run passes services= explicitly, which
+        must override workflow["services"] rather than being ignored."""
+        captured = {}
+
+        def fake_execute(workflow, job_id=None, **kwargs):
+            captured["workflow"] = workflow
+            return {"status": "completed"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        workflow = {"services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"], "parameters": {}}
+        bridge.start_workflow(workflow, "job_test", "/tmp", services=["get_input_files", "prepare_protein"])
+        bridge._thread.join(timeout=5)
+
+        assert captured["workflow"]["services"] == ["get_input_files", "prepare_protein"]
+        # Original dict passed by the caller must not be mutated in place.
+        assert workflow["services"] == ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_no_services_override_keeps_workflow_services(self, MockOrchestrator):
+        captured = {}
+
+        def fake_execute(workflow, job_id=None, **kwargs):
+            captured["workflow"] = workflow
+            return {"status": "completed"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        workflow = {"services": ["get_input_files"], "parameters": {}}
+        bridge.start_workflow(workflow, "job_test", "/tmp")
+        bridge._thread.join(timeout=5)
+
+        assert captured["workflow"]["services"] == ["get_input_files"]
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
     def test_second_start_resets_previous_result(self, MockOrchestrator):
         started = threading.Event()
         released = threading.Event()

@@ -38,13 +38,32 @@ class OrchestratorBridge:
         self._result: Optional[Dict[str, Any]] = None
         self._error: Optional[str] = None
 
-    def start_workflow(self, workflow: dict, job_id: str, output_base: str) -> None:
-        """Start execute_workflow() in a background daemon thread."""
+    def start_workflow(
+        self,
+        workflow: dict,
+        job_id: str,
+        output_base: str,
+        services: Optional[List[str]] = None,
+    ) -> None:
+        """Start execute_workflow() in a background daemon thread.
+
+        Args:
+            workflow: Validated workflow dict (services/parameters).
+            job_id: Job identifier -- also the output directory name.
+            output_base: Root directory for job outputs.
+            services: Overrides ``workflow["services"]`` when given -- used
+                for partial runs (e.g. the box-picker's "just prepare the
+                receptor" phase) without needing a differently-shaped
+                workflow dict from the caller.
+        """
         self._result = None
         self._error = None
+        run_workflow = dict(workflow)
+        if services is not None:
+            run_workflow["services"] = services
         self._thread = threading.Thread(
             target=self._run,
-            args=(workflow, job_id, output_base),
+            args=(run_workflow, job_id, output_base),
             daemon=True,
         )
         self._thread.start()

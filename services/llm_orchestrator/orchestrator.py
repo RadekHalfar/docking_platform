@@ -411,6 +411,7 @@ class WorkflowOrchestrator:
                 protein_results = prepare_protein_result.get("prepared_proteins", [])
                 if protein_results and protein_results[0].get("pdbqt_path"):
                     self.workflow_state["prepared_protein"] = protein_results[0].get("pdbqt_path")
+                    self.workflow_state["prepared_protein_pdb"] = protein_results[0].get("pdb_path")
                     self._step_print("   \u2705 Protein prepared successfully")
                     if self.verbosity == VERBOSITY_NORMAL:
                         logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
@@ -495,58 +496,44 @@ class WorkflowOrchestrator:
                     logger.info("STEP 5: Generating visualization")
                     logger.info("="*80)
                 
-                if not self.workflow_state.get("prepared_protein"):
+                if not self.workflow_state.get("prepared_protein_pdb"):
                     raise RuntimeError("No prepared protein available for visualization")
-                
-                # Get docked ligands
-                docked_ligands = []
-                affinities = []
-                
+
+                # Ligand poses (with per-mode affinity/RMSD) are converted from the
+                # docked PDBQT to SDF for client-side (3Dmol.js) viewing; the receptor
+                # needs no conversion, the already-prepared PDB is used as-is.
+                pose_results = []
                 if self.workflow_state.get("docking_results"):
-                    for ligand_result in self.workflow_state["docking_results"].get("results", []):
-                        if ligand_result.get("output_path"):
-                            docked_ligands.append(ligand_result["output_path"])
-                            # None (not 0.0) when a ligand produced no parseable score —
-                            # defaulting to 0.0 would make an unscored ligand look like
-                            # the best binder in the batch.
-                            affinities.append(ligand_result.get("best_affinity"))
-                
-                if not docked_ligands:
-                    if self.verbosity != VERBOSITY_LOW:
-                        logger.warning("No docked ligands found, using prepared ligands for visualization")
-                    docked_ligands = self.workflow_state.get("prepared_ligands", [])
-                    affinities = None
-                
+                    pose_results = [
+                        r for r in self.workflow_state["docking_results"].get("results", [])
+                        if r.get("output_path")
+                    ]
+
                 viz_dir = job_dir / "visualization"
                 viz_dir.mkdir(exist_ok=True)
-                
-                viz_result = self.call_mcp_tool(
-                    self.services["pymol_visualizer"],
-                    "visualize_docking",
-                    {
-                        "receptor_path": self.workflow_state["prepared_protein"],  # Already in container format
-                        "ligand_paths": docked_ligands,  # Already in container format
-                        "output_dir": self.normalize_path(viz_dir),
-                        "affinities": affinities,
-                        "show_surface": True,
-                        "show_binding_site": True,
-                        "binding_site_radius": 5.0,
-                        "render_image": True,
-                        "image_width": 1920,
-                        "image_height": 1080,
-                        "image_dpi": 300,
-                        "ray_trace": True
-                    }
-                )
-                
+
+                if pose_results:
+                    viz_result = self.call_mcp_tool(
+                        self.services["ligand_preparer"],
+                        "convert_docked_poses",
+                        {
+                            "pose_results": pose_results,  # Already in container format
+                            "output_dir": self.normalize_path(viz_dir),
+                        }
+                    )
+                else:
+                    if self.verbosity != VERBOSITY_LOW:
+                        logger.warning("No docked ligand poses found, skipping pose conversion")
+                    viz_result = {"converted": [], "errors": [], "status": "skipped"}
+
+                viz_result["receptor_pdb"] = self.workflow_state["prepared_protein_pdb"]
+
                 results["results"]["visualize"] = viz_result
                 results["services_executed"].append("visualize")
                 
-                self._step_print("   \u2705 Visualization created")
+                self._step_print(f"   \u2705 Visualization prepared: {len(viz_result.get('converted', []))} ligand(s)")
                 if self.verbosity == VERBOSITY_NORMAL:
-                    logger.info(f"\u2705 Visualization created: {viz_result.get('script_path')}")
-                    if viz_result.get("image_path"):
-                        logger.info(f"\u2705 Image rendered: {viz_result.get('image_path')}")
+                    logger.info(f"\u2705 Visualization prepared: {viz_result.get('converted')}")
 
                 _save_step_checkpoint("visualize")
             

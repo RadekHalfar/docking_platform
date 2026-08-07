@@ -849,7 +849,7 @@ def _render_job_results() -> None:
             st.success(f"Job `{viewed_job_id}` completed")
             _render_affinity_chart(result)
             _render_visualization(result, viewed_job_id)
-            _render_file_downloads(viewed_job_id)
+            _render_file_downloads(result, viewed_job_id)
             return
 
         if result and result.get("status") == "failed":
@@ -863,7 +863,7 @@ def _render_job_results() -> None:
         st.info(f"Viewing job `{viewed_job_id}`")
         _render_affinity_chart(result)
         _render_visualization(result, viewed_job_id)
-        _render_file_downloads(viewed_job_id)
+        _render_file_downloads(result, viewed_job_id)
         return
 
     if result and result.get("status") == "failed":
@@ -974,15 +974,67 @@ def _read_file_bytes(path_str: str, mtime: float) -> bytes:
     return Path(path_str).read_bytes()
 
 
-def _render_file_downloads(job_id: str) -> None:
+_POSE_DOWNLOAD_FORMATS = ["pdbqt", "pdb", "sdf", "mol2"]
+
+
+def _render_pose_downloads(result: dict, job_id: str) -> None:
+    """Per-ligand docked-pose downloads with a global format picker.
+
+    PDBQT is Moldina's native output (no conversion, always available if
+    docking succeeded for that ligand) and is the default; PDB/SDF/MOL2 are
+    the whole multi-pose file (all modes) written by the visualize step's
+    convert_docked_poses, in whichever formats it was asked to produce.
+    """
+    dock_results = {
+        r["ligand_id"]: r
+        for r in result.get("results", {}).get("dock", {}).get("results", [])
+        if r.get("ligand_id")
+    }
+    if not dock_results:
+        return
+
+    converted = {
+        entry["ligand_id"]: entry
+        for entry in result.get("results", {}).get("visualize", {}).get("converted", [])
+        if entry.get("ligand_id")
+    }
+
+    st.subheader("Docked Poses")
+    fmt = st.selectbox("Download format", _POSE_DOWNLOAD_FORMATS, index=0, key=f"dl_format_{job_id}")
+
+    for ligand_id, dock_entry in dock_results.items():
+        if fmt == "pdbqt":
+            raw_path = dock_entry.get("output_path")
+        else:
+            raw_path = converted.get(ligand_id, {}).get(f"{fmt}_path")
+
+        if not raw_path:
+            continue
+        path = _resolve_container_path(raw_path)
+        if not path.exists():
+            continue
+
+        data = _read_file_bytes(str(path), path.stat().st_mtime)
+        st.download_button(
+            f"Download {ligand_id} ({fmt})",
+            data,
+            file_name=path.name,
+            key=f"dl_pose_{job_id}_{ligand_id}_{fmt}",
+        )
+
+
+def _render_file_downloads(result: dict, job_id: str) -> None:
     if not job_id:
         return
     job_dir = OUTPUT_BASE / job_id
     if not job_dir.exists():
         return
-    st.subheader("Files")
+
+    _render_pose_downloads(result, job_id)
+
+    st.subheader("Other Files")
     for f in sorted(job_dir.rglob("*")):
-        if f.is_file() and f.suffix in {".pdbqt", ".pml", ".json", ".png"}:
+        if f.is_file() and f.suffix in {".pml", ".json", ".png"}:
             data = _read_file_bytes(str(f), f.stat().st_mtime)
             st.download_button(
                 f"Download {f.name}",

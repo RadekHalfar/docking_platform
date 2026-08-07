@@ -4,6 +4,7 @@ Unit tests for Ligand Preparer service.
 import sys
 import pytest
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch, Mock, MagicMock
 
@@ -537,9 +538,11 @@ def _make_docked_pose_pdbqt(tmp_path: Path, n_poses: int = 2) -> Path:
 
 
 def test_convert_docked_poses_meeko_round_trip(preparer, tmp_path):
-    """Real (non-mocked) PDBQT -> RDKit -> SDF round trip for a 2-pose docked
-    ligand: bond orders must be restored (not just atom positions), and each
-    pose's affinity/RMSD from the docking log must land on its SDF record."""
+    """Real (non-mocked) PDBQT -> RDKit round trip for a 2-pose docked ligand,
+    writing all default formats (sdf, pdb, mol2) from a single parse: bond
+    orders must be restored (not just atom positions), each pose's
+    affinity/RMSD from the docking log must land on its SDF record, and the
+    PDB/MOL2 outputs must contain one record per pose too."""
     pytest.importorskip("meeko")
     pose_path = _make_docked_pose_pdbqt(tmp_path, n_poses=2)
 
@@ -562,6 +565,8 @@ def test_convert_docked_poses_meeko_round_trip(preparer, tmp_path):
     assert entry["conversion_method"] == "meeko"
     assert entry["num_poses"] == 2
     assert os.path.exists(entry["sdf_path"])
+    assert os.path.exists(entry["pdb_path"])
+    assert os.path.exists(entry["mol2_path"])
 
     mols = [m for m in Chem.SDMolSupplier(entry["sdf_path"]) if m is not None]
     assert len(mols) == 2
@@ -577,22 +582,75 @@ def test_convert_docked_poses_meeko_round_trip(preparer, tmp_path):
     assert mols[1].GetProp("rmsd_lb") == "1.2"
     assert mols[1].GetProp("rmsd_ub") == "2.3"
 
+    pdb_text = Path(entry["pdb_path"]).read_text()
+    assert pdb_text.count("MODEL") == 2
+    assert pdb_text.count("ENDMDL") == 2
+
+    mol2_text = Path(entry["mol2_path"]).read_text()
+    assert mol2_text.count("@<TRIPOS>MOLECULE") == 2
+
+
+def test_convert_docked_poses_only_requested_formats_are_written(preparer, tmp_path):
+    """A caller asking for a subset of formats shouldn't get the others."""
+    pytest.importorskip("meeko")
+    pose_path = _make_docked_pose_pdbqt(tmp_path, n_poses=1)
+    pose_results = [{"ligand_id": "ethanol", "output_path": str(pose_path), "modes": []}]
+
+    result = preparer.convert_docked_poses(pose_results, str(tmp_path / "viz"), formats=("pdb",))
+
+    entry = result["converted"][0]
+    assert "pdb_path" in entry
+    assert "sdf_path" not in entry
+    assert "mol2_path" not in entry
+    # No stray temp SDF left behind in the output dir either.
+    assert list((tmp_path / "viz").glob("*.sdf")) == []
+
+
+def test_convert_docked_poses_mol2_derived_from_sdf_not_pdbqt(preparer, tmp_path):
+    """MOL2 must be converted from the SDF this call just wrote (which
+    carries Meeko's restored bond orders), not straight from the PDBQT
+    (which would lose them to OpenBabel's weaker geometry-based guess)."""
+    pytest.importorskip("meeko")
+    pose_path = _make_docked_pose_pdbqt(tmp_path, n_poses=1)
+    pose_results = [{"ligand_id": "ethanol", "output_path": str(pose_path), "modes": []}]
+
+    real_run = subprocess.run
+    obabel_calls = []
+
+    def spy_run(cmd, *args, **kwargs):
+        if cmd[0] == "obabel":
+            obabel_calls.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    with patch("services.ligand_preparer.subprocess.run", side_effect=spy_run):
+        result = preparer.convert_docked_poses(
+            pose_results, str(tmp_path / "viz"), formats=("sdf", "mol2")
+        )
+
+    assert result["status"] == "ok"
+    assert len(obabel_calls) == 1
+    cmd = obabel_calls[0]
+    assert cmd[1].endswith(".sdf"), f"obabel should convert from the SDF, not the PDBQT: {cmd}"
+    assert cmd[1] != str(pose_path)
+
 
 def test_convert_docked_poses_falls_back_to_obabel_on_meeko_failure(preparer, tmp_path):
     """A ligand Meeko can't round-trip (e.g. no REMARK SMILES) should still
-    produce a usable (lower-fidelity) SDF via the OpenBabel fallback rather
-    than dropping the ligand from the viewer entirely."""
+    produce usable (lower-fidelity) files via the OpenBabel fallback rather
+    than dropping the ligand from the viewer/downloads entirely."""
     pose_path = tmp_path / "bad_out.pdbqt"
     pose_path.write_text(
         "MODEL 1\nATOM      1  C   LIG A   1       0.000   0.000   0.000  1.00  0.00     0.000 C\nENDMDL\n"
     )
     pose_results = [{"ligand_id": "bad", "output_path": str(pose_path), "modes": []}]
 
-    with patch.object(preparer, "_write_poses_sdf_meeko", side_effect=ValueError("no SMILES")):
-        with patch.object(preparer, "_write_poses_sdf_obabel", return_value="openbabel") as mock_ob:
+    with patch.object(preparer, "_write_poses_meeko", side_effect=ValueError("no SMILES")):
+        with patch.object(preparer, "_write_poses_obabel", return_value="openbabel") as mock_ob:
             result = preparer.convert_docked_poses(pose_results, str(tmp_path / "viz"))
 
     mock_ob.assert_called_once()
+    called_output_paths = mock_ob.call_args[0][1]
+    assert set(called_output_paths) == {"sdf", "pdb", "mol2"}
     assert result["status"] == "ok"
     assert result["converted"][0]["conversion_method"] == "openbabel"
 
@@ -604,8 +662,8 @@ def test_convert_docked_poses_records_error_when_both_conversions_fail(preparer,
     )
     pose_results = [{"ligand_id": "bad", "output_path": str(pose_path), "modes": []}]
 
-    with patch.object(preparer, "_write_poses_sdf_meeko", side_effect=ValueError("no SMILES")):
-        with patch.object(preparer, "_write_poses_sdf_obabel", side_effect=RuntimeError("obabel missing")):
+    with patch.object(preparer, "_write_poses_meeko", side_effect=ValueError("no SMILES")):
+        with patch.object(preparer, "_write_poses_obabel", side_effect=RuntimeError("obabel missing")):
             result = preparer.convert_docked_poses(pose_results, str(tmp_path / "viz"))
 
     assert result["status"] == "failed"

@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import logging
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 
@@ -373,21 +374,27 @@ class LigandPreparer:
             "rotatable_bonds": num_rotatable
         }
     
+    _SUPPORTED_POSE_FORMATS = ("sdf", "pdb", "mol2")
+
     def convert_docked_poses(
         self,
         pose_results: List[Dict[str, Any]],
-        output_dir: str
+        output_dir: str,
+        formats: Tuple[str, ...] = _SUPPORTED_POSE_FORMATS,
     ) -> Dict[str, Any]:
         """
-        Convert each ligand's docked-pose PDBQT (all Vina/Moldina modes) into a
-        multi-record SDF, one record per pose, for client-side (3Dmol.js)
-        visualization.
+        Convert each ligand's docked-pose PDBQT (all Vina/Moldina modes) into
+        one multi-pose file per requested format (default: SDF, PDB, MOL2 --
+        PDBQT itself is never included here since it's already the native,
+        unconverted file the `dock` step wrote).
 
         Uses Meeko's PDBQT->RDKit round trip (the REMARK SMILES Meeko embeds
         when it originally wrote the ligand PDBQT) to restore proper bond
-        orders/aromaticity -- something the PDBQT file alone doesn't carry.
-        Falls back to OpenBabel (no per-pose affinity/RMSD metadata, but still
-        a valid SDF) if the Meeko round trip fails, e.g. for ligands that
+        orders/aromaticity -- something the PDBQT file alone doesn't carry --
+        parsing the PDBQT once and writing every requested format from the
+        same in-memory molecule. Falls back to OpenBabel (no per-pose
+        affinity/RMSD metadata, and formats converted independently straight
+        from the PDBQT) if the Meeko round trip fails, e.g. for ligands that
         weren't prepared by Meeko originally.
 
         Args:
@@ -395,12 +402,15 @@ class LigandPreparer:
                 MoldinaRunner (``ligand_id``, ``output_path`` pointing at the
                 multi-model docked-pose PDBQT, and ``modes`` -- a list of
                 {mode, affinity, rmsd_lb, rmsd_ub} in pose order).
-            output_dir: Directory to write ``<ligand_id>_poses.sdf`` files to.
+            output_dir: Directory to write ``<ligand_id>_poses.<format>``
+                files to.
+            formats: Which formats to write; unrecognized values are ignored.
 
         Returns:
             Dictionary with per-ligand conversion results and any errors.
         """
         ensure_directory(output_dir)
+        formats = tuple(f for f in formats if f in self._SUPPORTED_POSE_FORMATS) or self._SUPPORTED_POSE_FORMATS
 
         converted = []
         errors = []
@@ -412,25 +422,31 @@ class LigandPreparer:
                 continue
 
             modes = pose.get("modes") or []
-            sdf_path = os.path.join(output_dir, f"{sanitize_filename(ligand_id)}_poses.sdf")
+            clean_id = sanitize_filename(ligand_id)
+            output_paths = {
+                fmt: os.path.join(output_dir, f"{clean_id}_poses.{fmt}") for fmt in formats
+            }
 
             try:
-                method = self._write_poses_sdf_meeko(pose_path, modes, sdf_path)
+                method = self._write_poses_meeko(pose_path, modes, output_paths)
             except Exception as e:
                 logger.warning(f"Meeko pose conversion failed for {ligand_id}: {e}; falling back to OpenBabel")
                 try:
-                    method = self._write_poses_sdf_obabel(pose_path, sdf_path)
+                    method = self._write_poses_obabel(pose_path, output_paths)
                 except Exception as e2:
                     logger.error(f"OpenBabel pose conversion also failed for {ligand_id}: {e2}")
                     errors.append({"ligand_id": ligand_id, "error": str(e2)})
                     continue
 
-            converted.append({
+            entry = {
                 "ligand_id": ligand_id,
-                "sdf_path": sdf_path,
                 "num_poses": len(modes) or None,
                 "conversion_method": method,
-            })
+            }
+            for fmt, path in output_paths.items():
+                if os.path.exists(path):
+                    entry[f"{fmt}_path"] = path
+            converted.append(entry)
 
         return {
             "converted": converted,
@@ -438,16 +454,21 @@ class LigandPreparer:
             "status": "ok" if converted else "failed",
         }
 
-    def _write_poses_sdf_meeko(
+    def _write_poses_meeko(
         self,
         pose_pdbqt_path: str,
         modes: List[Dict[str, Any]],
-        sdf_path: str
+        output_paths: Dict[str, str]
     ) -> str:
         """
-        Round-trip a docked-pose PDBQT back to RDKit (bond orders restored via
-        the embedded Meeko REMARK SMILES) and write every pose as its own SDF
-        record, tagged with its affinity/RMSD from the parsed docking log.
+        Round-trip a docked-pose PDBQT back to RDKit once (bond orders
+        restored via the embedded Meeko REMARK SMILES), then write every
+        requested format from that single parse: SDF/PDB directly (one pose
+        per record/MODEL, tagged with its affinity/RMSD from the parsed
+        docking log -- PDB has no property mechanism to carry it, only SDF
+        does), and MOL2 derived from the SDF this call just wrote (OpenBabel
+        has no bond-order perception of its own to lose that way, unlike
+        converting straight from PDBQT).
         """
         from meeko import PDBQTMolecule, RDKitMolCreate
 
@@ -457,7 +478,17 @@ class LigandPreparer:
             raise ValueError("Meeko produced no RDKit molecules from pose file")
         mol = RDKitMolCreate.combine_rdkit_mols(mol_list)
 
-        writer = Chem.SDWriter(sdf_path)
+        # MOL2 has no RDKit writer -- it's derived below from an SDF, so one
+        # must exist even if the caller didn't request "sdf" as an output.
+        sdf_path = output_paths.get("sdf")
+        temp_sdf_fd = None
+        if sdf_path is None and "mol2" in output_paths:
+            base_dir = os.path.dirname(next(iter(output_paths.values())))
+            temp_sdf_fd, sdf_path = tempfile.mkstemp(suffix=".sdf", dir=base_dir)
+        pdb_path = output_paths.get("pdb")
+
+        sdf_writer = Chem.SDWriter(sdf_path) if sdf_path else None
+        pdb_writer = Chem.PDBWriter(pdb_path, flavor=1) if pdb_path else None
         try:
             for conformer in mol.GetConformers():
                 conf_id = conformer.GetId()
@@ -466,24 +497,52 @@ class LigandPreparer:
                 mol.SetProp("affinity", str(mode.get("affinity", "")))
                 mol.SetProp("rmsd_lb", str(mode.get("rmsd_lb", "")))
                 mol.SetProp("rmsd_ub", str(mode.get("rmsd_ub", "")))
-                writer.write(mol, confId=conf_id)
+                if sdf_writer:
+                    sdf_writer.write(mol, confId=conf_id)
+                if pdb_writer:
+                    pdb_writer.write(mol, confId=conf_id)
         finally:
-            writer.close()
+            if sdf_writer:
+                sdf_writer.close()
+            if pdb_writer:
+                pdb_writer.close()
+
+        if "mol2" in output_paths:
+            self._sdf_to_mol2(sdf_path, output_paths["mol2"])
+
+        if temp_sdf_fd is not None:
+            os.close(temp_sdf_fd)
+            os.remove(sdf_path)
 
         return "meeko"
 
-    def _write_poses_sdf_obabel(self, pose_pdbqt_path: str, sdf_path: str) -> str:
-        """
-        Fallback pose conversion via OpenBabel. Preserves pose geometry/order
-        but not the affinity/RMSD metadata (OpenBabel doesn't know about it) --
-        the viewer falls back to showing poses without per-pose scores.
-        """
-        cmd = ["obabel", pose_pdbqt_path, "-O", sdf_path]
+    def _sdf_to_mol2(self, sdf_path: str, mol2_path: str) -> None:
+        """Derive MOL2 from an already-written SDF (which carries the
+        Meeko-restored bond orders) rather than letting OpenBabel re-derive
+        connectivity from the raw PDBQT on its own."""
+        cmd = ["obabel", sdf_path, "-O", mol2_path]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 or not os.path.exists(mol2_path):
+            raise RuntimeError(
+                f"OpenBabel SDF->MOL2 conversion failed (exit {result.returncode}): {result.stderr}"
+            )
 
-        if result.returncode != 0 or not os.path.exists(sdf_path):
-            raise RuntimeError(f"OpenBabel pose conversion failed (exit {result.returncode}): {result.stderr}")
-
+    def _write_poses_obabel(self, pose_pdbqt_path: str, output_paths: Dict[str, str]) -> str:
+        """
+        Fallback pose conversion via OpenBabel when the Meeko round trip
+        fails. No per-pose affinity/RMSD metadata (OpenBabel doesn't know
+        about it) -- the viewer falls back to showing poses without per-pose
+        scores. Each requested format is converted independently straight
+        from the PDBQT (there's no shared RDKit mol to derive them from, the
+        way the Meeko path does).
+        """
+        for fmt, path in output_paths.items():
+            cmd = ["obabel", pose_pdbqt_path, "-O", path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0 or not os.path.exists(path):
+                raise RuntimeError(
+                    f"OpenBabel pose conversion to {fmt} failed (exit {result.returncode}): {result.stderr}"
+                )
         return "openbabel"
 
     def _count_rotatable_bonds_from_pdbqt(self, pdbqt_path: str) -> int:

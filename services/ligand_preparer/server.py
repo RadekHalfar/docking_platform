@@ -74,26 +74,33 @@ class LigandPreparerServer(MCPServer):
 
         def convert_docked_poses_handler(
             pose_results: list,
-            output_dir: str
+            output_dir: str,
+            formats: list = None,
         ) -> dict:
             """Handler for convert_docked_poses tool."""
+            kwargs = {}
+            if formats:
+                kwargs["formats"] = tuple(formats)
             return self.preparer.convert_docked_poses(
                 pose_results=pose_results,
-                output_dir=output_dir
+                output_dir=output_dir,
+                **kwargs,
             )
 
         register_mcp_tool(
             self,
             name="convert_docked_poses",
             description=(
-                "Convert each ligand's docked-pose PDBQT (all Vina/Moldina modes) into a "
-                "multi-record SDF for visualization, restoring bond orders via Meeko's "
-                "PDBQT->RDKit round trip (falls back to OpenBabel if that fails)."
+                "Convert each ligand's docked-pose PDBQT (all Vina/Moldina modes) into one "
+                "multi-pose file per requested format (default: sdf, pdb, mol2), restoring "
+                "bond orders via Meeko's PDBQT->RDKit round trip (falls back to OpenBabel, "
+                "converting each format independently, if that fails)."
             ),
             handler=convert_docked_poses_handler,
             parameters=build_tool_parameters([
                 ("pose_results", "array", "Per-ligand docking result dicts (ligand_id, output_path, modes) as produced by run_docking", True),
-                ("output_dir", "string", "Directory to write <ligand_id>_poses.sdf files to", True),
+                ("output_dir", "string", "Directory to write <ligand_id>_poses.<format> files to", True),
+                ("formats", "array", "Output formats to write: any of 'sdf', 'pdb', 'mol2' (default: all three; PDBQT is never generated here since it's already the native docked-pose file)"),
             ]),
             returns={
                 "converted": "array",

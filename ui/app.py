@@ -10,7 +10,7 @@ import streamlit as st
 from common.utils import generate_job_id
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
-from ui.job_history import list_completed_jobs
+from ui.job_history import escape_markdown, list_completed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
@@ -171,12 +171,14 @@ def _handle_run_docking() -> None:
         return
 
     job_id = generate_job_id()
+    job_name = st.session_state.get("param_job_name", "").strip()[:60]
     st.session_state.job_id = job_id
+    st.session_state.job_name = job_name
     st.session_state.viewed_job_id = job_id
     st.session_state["_job_done"] = False
 
     bridge = OrchestratorBridge()
-    bridge.start_workflow(validated, job_id, str(OUTPUT_BASE))
+    bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), job_name=job_name)
     st.session_state.bridge = bridge
 
     st.session_state.messages.append(
@@ -300,8 +302,14 @@ def _render_job_history() -> None:
 
     selected = []
     for job in jobs[:10]:
-        label = f"{job['job_id']}  {job['protein_id']} ({job['ligand_count']} ligand(s))"
-        col_check, col_load = st.columns([4, 1])
+        job_name = job.get("job_name") or ""
+        protein_info = f"{job['protein_id']} ({job['ligand_count']} ligand(s))"
+        if job_name:
+            label = f"**{escape_markdown(job_name)}**  `{job['job_id']}`  {protein_info}"
+        else:
+            label = f"{job['job_id']}  {protein_info}"
+
+        col_check, col_load, col_rename = st.columns([3, 1, 1])
         with col_check:
             if st.checkbox(label, key=f"job_sel_{job['job_id']}"):
                 selected.append(job["job_dir"])
@@ -309,6 +317,36 @@ def _render_job_history() -> None:
             if st.button("Load", key=f"job_load_{job['job_id']}"):
                 st.session_state.viewed_job_id = job["job_id"]
                 st.rerun()
+        with col_rename:
+            if st.button("Rename", key=f"job_rename_toggle_{job['job_id']}"):
+                flag = f"_renaming_{job['job_id']}"
+                st.session_state[flag] = not st.session_state.get(flag, False)
+
+        if st.session_state.get(f"_renaming_{job['job_id']}"):
+            new_name = st.text_input(
+                "New name",
+                value=job_name,
+                key=f"job_rename_input_{job['job_id']}",
+                max_chars=60,
+                label_visibility="collapsed",
+            )
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                if st.button("Save", key=f"job_rename_save_{job['job_id']}"):
+                    try:
+                        rename_job(job["job_dir"], new_name)
+                    except Exception as exc:
+                        st.error(f"Rename failed: {exc}")
+                    else:
+                        _cached_completed_jobs.clear()
+                        st.session_state[f"_renaming_{job['job_id']}"] = False
+                        if st.session_state.get("viewed_job_id") == job["job_id"]:
+                            st.session_state.job_name = new_name.strip()[:60]
+                        st.rerun()
+            with col_cancel:
+                if st.button("Cancel", key=f"job_rename_cancel_{job['job_id']}"):
+                    st.session_state[f"_renaming_{job['job_id']}"] = False
+                    st.rerun()
 
     if len(selected) >= 2 and st.button("Compare selected jobs"):
         try:
@@ -449,6 +487,14 @@ def render_parameters_panel() -> None:
             "ligands in parallel increases memory usage — lower this if docking jobs "
             "start failing unexpectedly."
         )
+
+    st.divider()
+    st.text_input(
+        "Job name (optional)",
+        key="param_job_name",
+        max_chars=60,
+        help="A label to help you find this job later in the history panel.",
+    )
 
     st.divider()
     col_run, col_reset = st.columns(2)
@@ -818,6 +864,13 @@ def _render_workflow_failure(job_id: str, result: dict) -> None:
         st.caption(str(err))
 
 
+def _job_label(job_id: str, job_name: str | None) -> str:
+    """Markdown label for a job header: bold name (if any) plus the id."""
+    if job_name:
+        return f"**{escape_markdown(job_name)}** (`{job_id}`)"
+    return f"`{job_id}`"
+
+
 def _render_job_results() -> None:
     bridge: OrchestratorBridge = st.session_state.bridge
     active_job_id = st.session_state.job_id
@@ -833,8 +886,10 @@ def _render_job_results() -> None:
     # The job currently tracked by the live bridge takes priority — it may
     # still be running, in which case there's nothing on disk to fall back to.
     if bridge and viewed_job_id == active_job_id:
+        job_label = _job_label(viewed_job_id, st.session_state.get("job_name"))
+
         if bridge.is_running():
-            st.info(f"Job `{viewed_job_id}` is running...")
+            st.info(f"Job {job_label} is running...")
             _render_docking_progress(viewed_job_id)
             return
 
@@ -846,7 +901,7 @@ def _render_job_results() -> None:
             return
 
         if result and result.get("status") == "completed":
-            st.success(f"Job `{viewed_job_id}` completed")
+            st.success(f"Job {job_label} completed")
             _render_affinity_chart(result)
             _render_visualization(result, viewed_job_id)
             _render_file_downloads(result, viewed_job_id)
@@ -860,7 +915,8 @@ def _render_job_results() -> None:
     # — covers jobs Loaded from history and jobs with no live bridge.
     result = _load_workflow_results(viewed_job_id)
     if result and result.get("status") == "completed":
-        st.info(f"Viewing job `{viewed_job_id}`")
+        job_label = _job_label(viewed_job_id, result.get("job_name"))
+        st.info(f"Viewing job {job_label}")
         _render_affinity_chart(result)
         _render_visualization(result, viewed_job_id)
         _render_file_downloads(result, viewed_job_id)

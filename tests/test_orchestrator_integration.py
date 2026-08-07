@@ -158,13 +158,29 @@ def test_execute_workflow_persists_results_file(tmp_path):
     orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
     orchestrator.call_mcp_tool = Mock(side_effect=_full_chain_fake_call)
 
-    results = orchestrator.execute_workflow(_FULL_CHAIN_WORKFLOW, job_id="persist_test")
+    results = orchestrator.execute_workflow(
+        _FULL_CHAIN_WORKFLOW, job_id="persist_test", job_name="Overnight batch"
+    )
 
     results_file = tmp_path / "persist_test" / "workflow_results.json"
     assert results_file.exists(), "workflow_results.json should be written"
     saved = json.loads(results_file.read_text())
     assert saved["status"] == "completed"
     assert saved["job_id"] == "persist_test"
+    assert saved["job_name"] == "Overnight batch"
+    assert results["job_name"] == "Overnight batch"
+
+
+def test_execute_workflow_job_name_defaults_to_empty_string(tmp_path):
+    """Omitting job_name must persist an empty string, not crash or omit the key."""
+    orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+    orchestrator.call_mcp_tool = Mock(side_effect=_full_chain_fake_call)
+
+    orchestrator.execute_workflow(_FULL_CHAIN_WORKFLOW, job_id="no_name_test")
+
+    results_file = tmp_path / "no_name_test" / "workflow_results.json"
+    saved = json.loads(results_file.read_text())
+    assert saved["job_name"] == ""
 
 
 def test_execute_workflow_records_error_without_crashing(tmp_path):
@@ -181,7 +197,12 @@ def test_execute_workflow_records_error_without_crashing(tmp_path):
         },
     }
 
-    results = orchestrator.execute_workflow(workflow, job_id="error_test")
+    results = orchestrator.execute_workflow(workflow, job_id="error_test", job_name="Bad run")
 
     assert results["status"] == "failed"
     assert any("service offline" in e for e in results["errors"])
+    assert results["job_name"] == "Bad run"
+
+    results_file = tmp_path / "error_test" / "workflow_results.json"
+    saved = json.loads(results_file.read_text())
+    assert saved["job_name"] == "Bad run"

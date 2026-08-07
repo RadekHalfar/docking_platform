@@ -1,10 +1,14 @@
 """Tests for ui/job_history.py."""
 import json
 
-from ui.job_history import list_completed_jobs
+import pytest
+
+from ui.job_history import escape_markdown, list_completed_jobs, rename_job
 
 
-def _write_workflow_results(job_dir, *, status="completed", protein_path=None, dock_results=None):
+def _write_workflow_results(
+    job_dir, *, status="completed", protein_path=None, dock_results=None, job_name=None
+):
     job_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "status": status,
@@ -13,6 +17,8 @@ def _write_workflow_results(job_dir, *, status="completed", protein_path=None, d
             "dock": {"results": dock_results or []},
         },
     }
+    if job_name is not None:
+        data["job_name"] = job_name
     (job_dir / "workflow_results.json").write_text(json.dumps(data))
 
 
@@ -80,3 +86,94 @@ class TestListCompletedJobs:
         (job_dir / "workflow_results.json").write_text("{not valid json")
 
         assert list_completed_jobs(str(tmp_path)) == []
+
+    def test_named_job_reports_job_name(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_named", job_name="Overnight batch")
+
+        jobs = list_completed_jobs(str(tmp_path))
+
+        assert jobs[0]["job_name"] == "Overnight batch"
+
+    def test_missing_job_name_key_defaults_to_empty_string(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_unnamed")
+
+        jobs = list_completed_jobs(str(tmp_path))
+
+        assert jobs[0]["job_name"] == ""
+
+    def test_explicit_empty_job_name_stays_empty_string(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_blank_name", job_name="")
+
+        jobs = list_completed_jobs(str(tmp_path))
+
+        assert jobs[0]["job_name"] == ""
+
+
+class TestRenameJob:
+    def test_renames_job_in_place(self, tmp_path):
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(job_dir, job_name="Old name")
+
+        rename_job(str(job_dir), "New name")
+
+        data = json.loads((job_dir / "workflow_results.json").read_text())
+        assert data["job_name"] == "New name"
+
+    def test_preserves_other_keys(self, tmp_path):
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(
+            job_dir,
+            protein_path="/app/orchestrator_output/job_a/downloads/6LU7.pdb",
+            dock_results=[{"ligand_id": "ATP", "best_affinity": -8.4}],
+        )
+
+        rename_job(str(job_dir), "Renamed")
+
+        data = json.loads((job_dir / "workflow_results.json").read_text())
+        assert data["status"] == "completed"
+        assert data["results"]["dock"]["results"] == [{"ligand_id": "ATP", "best_affinity": -8.4}]
+
+    def test_truncates_to_60_chars(self, tmp_path):
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(job_dir)
+
+        rename_job(str(job_dir), "x" * 100)
+
+        data = json.loads((job_dir / "workflow_results.json").read_text())
+        assert data["job_name"] == "x" * 60
+
+    def test_strips_whitespace(self, tmp_path):
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(job_dir)
+
+        rename_job(str(job_dir), "  padded  ")
+
+        data = json.loads((job_dir / "workflow_results.json").read_text())
+        assert data["job_name"] == "padded"
+
+    def test_raises_on_nonexistent_job_dir(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            rename_job(str(tmp_path / "does_not_exist"), "New name")
+
+
+class TestEscapeMarkdown:
+    def test_plain_text_unchanged(self):
+        assert escape_markdown("Overnight batch") == "Overnight batch"
+
+    def test_escapes_bold_asterisks(self):
+        assert escape_markdown("**bold**") == "\\*\\*bold\\*\\*"
+
+    def test_escapes_underscores(self):
+        assert escape_markdown("_italic_run") == "\\_italic\\_run"
+
+    def test_escapes_backticks(self):
+        assert escape_markdown("`code`") == "\\`code\\`"
+
+    def test_escapes_brackets_and_hash(self):
+        assert escape_markdown("[link] #tag") == "\\[link\\] \\#tag"
+
+    def test_escapes_backslash(self):
+        assert escape_markdown("a\\b") == "a\\\\b"
+
+    def test_emoji_and_unicode_pass_through(self):
+        assert escape_markdown("Run 🧬 ligand ähnlich") == "Run 🧬 ligand ähnlich"

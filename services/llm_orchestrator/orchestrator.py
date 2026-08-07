@@ -188,15 +188,17 @@ class WorkflowOrchestrator:
         workflow: Dict[str, Any],
         job_id: str = None,
         state_manager: Optional[Any] = None,
+        job_name: str = "",
     ) -> Dict[str, Any]:
         """
         Execute a complete workflow.
-        
+
         Args:
             workflow: Validated workflow dictionary
             job_id: Optional job identifier
             state_manager: Optional persistence manager used for checkpointing
-            
+            job_name: Optional user-supplied display label for the job
+
         Returns:
             Workflow execution results
         """
@@ -234,6 +236,7 @@ class WorkflowOrchestrator:
         
         results = {
             "job_id": self.current_job_id,
+            "job_name": job_name or "",
             "services_executed": [],
             "results": {},
             "errors": []

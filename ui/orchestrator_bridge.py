@@ -44,6 +44,7 @@ class OrchestratorBridge:
         job_id: str,
         output_base: str,
         services: Optional[List[str]] = None,
+        job_name: str = "",
     ) -> None:
         """Start execute_workflow() in a background daemon thread.
 
@@ -55,6 +56,7 @@ class OrchestratorBridge:
                 for partial runs (e.g. the box-picker's "just prepare the
                 receptor" phase) without needing a differently-shaped
                 workflow dict from the caller.
+            job_name: Optional user-supplied display label for the job.
         """
         self._result = None
         self._error = None
@@ -63,12 +65,12 @@ class OrchestratorBridge:
             run_workflow["services"] = services
         self._thread = threading.Thread(
             target=self._run,
-            args=(run_workflow, job_id, output_base),
+            args=(run_workflow, job_id, output_base, job_name),
             daemon=True,
         )
         self._thread.start()
 
-    def _run(self, workflow: dict, job_id: str, output_base: str) -> None:
+    def _run(self, workflow: dict, job_id: str, output_base: str, job_name: str = "") -> None:
         from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, WorkflowOrchestrator
 
         writer = _QueueWriter(self._log_queue)
@@ -77,7 +79,7 @@ class OrchestratorBridge:
                 orchestrator = WorkflowOrchestrator(
                     output_base=output_base, verbosity=VERBOSITY_LOW
                 )
-                result = orchestrator.execute_workflow(workflow, job_id=job_id)
+                result = orchestrator.execute_workflow(workflow, job_id=job_id, job_name=job_name)
             self._result = result
         except Exception as exc:
             self._error = str(exc)

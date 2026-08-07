@@ -6,7 +6,7 @@ import pytest
 from services.llm_orchestrator.job_comparator import compare_jobs, load_job_affinities
 
 
-def _write_workflow_results(job_dir, dock_results):
+def _write_workflow_results(job_dir, dock_results, job_name=None):
     job_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "job_id": job_dir.name,
@@ -17,6 +17,8 @@ def _write_workflow_results(job_dir, dock_results):
             }
         },
     }
+    if job_name is not None:
+        data["job_name"] = job_name
     (job_dir / "workflow_results.json").write_text(json.dumps(data))
 
 
@@ -134,3 +136,13 @@ class TestCompareJobs:
     def test_compare_jobs_empty_list_raises(self, tmp_path):
         with pytest.raises(ValueError):
             compare_jobs([])
+
+    def test_compare_jobs_uses_job_name_when_present(self, tmp_path):
+        job_a = tmp_path / "job_abc"
+        job_b = tmp_path / "job_def"
+        _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -8.4}], job_name="Wide box")
+        _write_workflow_results(job_b, [{"ligand_id": "ATP", "best_affinity": -7.9}])
+
+        comparison = compare_jobs([str(job_a), str(job_b)])
+
+        assert comparison["jobs"] == ["Wide box", "job_def"]

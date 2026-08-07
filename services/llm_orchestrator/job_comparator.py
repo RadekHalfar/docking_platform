@@ -36,6 +36,16 @@ def load_job_affinities(job_dir: str) -> Dict[str, Optional[float]]:
     return affinities
 
 
+def _load_job_name(job_dir: str) -> Optional[str]:
+    """Read the user-supplied job_name from a job's workflow_results.json, if any."""
+    results_file = Path(job_dir) / "workflow_results.json"
+    try:
+        data = json.loads(results_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data.get("job_name") or None
+
+
 def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     """
     Compare binding affinities across multiple completed job runs.
@@ -43,7 +53,8 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     Returns:
         {
           "ligands": sorted list of all ligand IDs across all jobs,
-          "jobs": list of job directory basenames,
+          "jobs": list of job display names (user-supplied job_name, falling
+                   back to the job directory basename when unnamed),
           "affinities": list-of-lists [ligand_idx][job_idx] = float|None,
           "best_per_ligand": {ligand_id: (job_name, affinity)}
         }
@@ -51,7 +62,7 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     if not job_dirs:
         raise ValueError("At least one job directory is required")
 
-    job_names = [Path(d).name for d in job_dirs]
+    job_names = [_load_job_name(d) or Path(d).name for d in job_dirs]
     per_job_affinities = [load_job_affinities(d) for d in job_dirs]
 
     ligands = sorted({ligand_id for affinities in per_job_affinities for ligand_id in affinities})

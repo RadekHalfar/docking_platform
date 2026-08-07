@@ -12,6 +12,7 @@ DETECTED_CPU_COUNT = detect_moldina_worker_cap()
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
 _WIDGET_DEFAULTS = {
+    "param_job_name": "",
     "param_protein_id": "",
     "param_ligand_ids_text": "",
     "param_ligand_folder_path": "",

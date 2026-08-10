@@ -386,5 +386,5 @@ See `example_complete_workflow.py` for full integration example.
 
 - [API Documentation](API.md) - Complete API reference
 - [Moldina Docking](MOLDINA_DOCKING.md) - Docking results format
-- [Usage Guide](../USAGE_GUIDE.md) - End-to-end examples
+- [GUI Guide](GUI_GUIDE.md) - The current default visualization path (3Dmol.js, no PyMOL)
 - [PyMOL Documentation](https://pymol.org/documentation.html) - PyMOL reference

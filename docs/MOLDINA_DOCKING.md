@@ -124,10 +124,11 @@ import requests
 
 # Run docking via MCP
 response = requests.post(
-    "http://localhost:8004/",
+    "http://localhost:8004/mcp",
     json={
         "jsonrpc": "2.0",
-        "method": "tools/call",
+        "id": "1",
+        "method": "tool_call",
         "params": {
             "name": "run_docking",
             "arguments": {
@@ -152,49 +153,12 @@ result = response.json()
 
 ## Configuration Parameters
 
-### Required Parameters
-
-- **receptor_path**: Path to receptor PDBQT file
-- **ligand_paths**: List of ligand PDBQT file paths
-- **output_dir**: Directory for output files
-- **center**: `[x, y, z]` coordinates of search box center (Å)
-- **box_size**: `[x, y, z]` dimensions of search box (Å)
-
-### Optional Parameters
-
-#### PSO-Specific Parameters
-
-- **population** (default: 500, min: 5)
-  - Size of PSO population
-  - Larger = more thorough search but slower
-  - Recommended: 200-1000 depending on ligand complexity
-  - Rule of thumb: ~100 × number_of_rotatable_bonds
-
-- **exhaustiveness** (default: 8)
-  - Global search exhaustiveness
-  - Similar to Vina's exhaustiveness
-  - Recommended: 8-32
-
-#### Output Parameters
-
-- **num_modes** (default: 15)
-  - Maximum number of binding modes to output
-  - More modes = better coverage of binding space
-  
-- **energy_range** (default: 100.0)
-  - Maximum energy difference from best mode (kcal/mol)
-  - Set to 100.0 to get all modes found
-  - Set to 3.0 to get only near-best modes
-
-#### Performance Parameters
-
-- **cpu** (default: 1)
-  - Number of CPU cores to use for a single ligand's own search
-  - Not exposed in the GUI (fixed at 1) — only direct/CLI callers of
-    `run_docking` can override it
-  - To speed up a *batch*, use `parallel`/`max_workers` instead (dock several
-    ligands concurrently rather than giving one ligand more cores) — see
-    `docs/BATCH_DOCKING.md#optional-parallel-docking`
+`run_docking` takes `receptor_path`, `ligand_paths`, `output_dir`, `center`,
+`box_size` (required) and `cpu`, `population`, `exhaustiveness`, `num_modes`,
+`energy_range`, `parallel`, `max_workers` (optional). For the full parameter
+table — types, defaults, ranges, tuning guidance, and the `cpu` vs.
+`parallel`/`max_workers` distinction — see
+[DOCKING_PARAMETERS.md § Stage 4: Molecular Docking](DOCKING_PARAMETERS.md#stage-4-molecular-docking).
 
 ## Search Box Configuration
 
@@ -449,21 +413,21 @@ from services.moldina_runner import MoldinaRunner
 
 # 1. Prepare protein
 protein_prep = ProteinPreparer()
-protein_results = protein_prep.prepare_proteins(
-    protein_files=["6lu7.pdb"],
+protein_result = protein_prep.prepare_proteins(
+    protein_paths=["6lu7.pdb"],
     output_dir="./prepared_proteins",
     remove_waters=True,
     add_hydrogens=True
 )
-receptor = protein_results[0]["pdbqt_path"]
+receptor = protein_result["prepared_proteins"][0]["pdbqt_path"]
 
 # 2. Prepare ligands
 ligand_prep = LigandPreparer()
-ligand_results = ligand_prep.prepare_ligands(
-    ligand_files=["ligand1.sdf", "ligand2.sdf"],
+ligand_result = ligand_prep.prepare_ligands(
+    ligand_paths=["ligand1.sdf", "ligand2.sdf"],
     output_dir="./prepared_ligands"
 )
-ligands = [r["pdbqt_path"] for r in ligand_results]
+ligands = [r["pdbqt_path"] for r in ligand_result["prepared_ligands"]]
 
 # 3. Run Moldina docking
 runner = MoldinaRunner()

@@ -176,7 +176,7 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 # .\demo_output\visualization\*_poses.sdf
 ```
 
-**See [DOCKER_QUICK_REFERENCE.md](DOCKER_QUICK_REFERENCE.md) for detailed guide.**
+**See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) for the detailed guide.**
 
 ### Local Installation (Optional)
 
@@ -186,8 +186,8 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 
 ```bash
 # Python 3.9+ required (not Python 2.7!)
-conda create -n docking-system python=3.12
-conda activate docking-system
+conda create -n docking-platform python=3.12
+conda activate docking-platform
 conda install -c conda-forge rdkit openbabel meeko
 pip install -r requirements.txt
 

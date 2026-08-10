@@ -18,6 +18,7 @@ This guide explains how to deploy the MCP Docking System with Docker containers.
 8. [Testing](#testing)
 9. [Troubleshooting](#troubleshooting)
 10. [Advanced Usage](#advanced-usage)
+11. [Command Cheat Sheet](#command-cheat-sheet)
 
 ---
 
@@ -321,16 +322,16 @@ MOLDINA_MEMORY_LIMIT=4G
 
 ### Custom Moldina Binary
 
-If you have a custom Moldina binary:
+`docker/moldina_runner.Dockerfile` always builds from the binary committed
+at `Moldina/moldina` (capital `M`, matching the repo's `Moldina/` directory
+— there is no source download step in this Dockerfile to toggle). To use a
+different build:
 
-1. Place it in `./moldina/moldina`
-2. Uncomment the COPY line in `docker/moldina_runner.Dockerfile`:
-   ```dockerfile
-   COPY moldina/moldina /usr/local/bin/moldina
-   RUN chmod +x /usr/local/bin/moldina
-   ```
-3. Comment out the Vina download section
-4. Rebuild the image
+1. Overwrite `Moldina/moldina` with your binary.
+2. Rebuild the image: `docker build -f docker/moldina_runner.Dockerfile -t mcp-moldina-runner:latest .`
+
+See [Moldina/README.md](../Moldina/README.md) for the binary's provenance,
+how to build it from source, and what to verify before replacing it.
 
 ---
 
@@ -703,7 +704,77 @@ services:
   grafana:
     image: grafana/grafana
     ports:
-      - "3000:3000"
+      - "3001:3000"  # host 3001 -- 3000 is already used by this platform's own GUI (the `ui` service)
+```
+
+---
+
+## Command Cheat Sheet
+
+Quick-reference commands beyond the walkthroughs above. Everything here uses
+the same `/mcp` JSON-RPC endpoint documented in [API.md](API.md) — POST with
+`{"jsonrpc": "2.0", "id": ..., "method": "tool_call", "params": {"name": ..., "arguments": {...}}}`.
+
+### GPU Check (Ollama)
+
+```bash
+# Verify GPU device request was applied to the ollama container
+docker inspect mcp-llm --format "Runtime={{.HostConfig.Runtime}} DeviceRequests={{json .HostConfig.DeviceRequests}}"
+
+# Check active model processor split (CPU/GPU)
+docker exec mcp-llm ollama ps
+```
+
+### Per-Service Commands
+
+**RCSB Downloader (port 8001):**
+```bash
+docker compose logs -f rcsb-downloader
+curl -X POST http://localhost:8001/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tool_call","params":{"name":"download_structures","arguments":{"protein_id":"1ABC","save_dir":"./data/test"}}}'
+```
+
+**Ligand Preparer (port 8002):**
+```bash
+docker compose logs -f ligand-preparer
+docker exec mcp-ligand-preparer python -c "import rdkit; print(rdkit.__version__)"
+```
+
+**Protein Preparer (port 8003):**
+```bash
+docker compose logs -f protein-preparer
+docker exec mcp-protein-preparer python -c "import rdkit, gemmi; print('OK')"
+```
+
+**Moldina Runner (port 8004):**
+```bash
+docker compose logs -f moldina-runner
+docker exec mcp-moldina-runner which moldina
+docker exec mcp-moldina-runner moldina --version
+docker stats mcp-moldina-runner
+```
+
+### Useful Aliases
+
+Add to your shell profile (`.bashrc`, `.zshrc`, or PowerShell profile):
+
+```bash
+# Bash/Zsh
+alias dps='docker compose ps'
+alias dlogs='docker compose logs -f'
+alias dup='docker compose up -d'
+alias ddown='docker compose down'
+alias drestart='docker compose restart'
+```
+
+```powershell
+# PowerShell
+function dps { docker compose ps @args }
+function dlogs { docker compose logs -f @args }
+function dup { docker compose up -d @args }
+function ddown { docker compose down @args }
+function drestart { docker compose restart @args }
 ```
 
 ---

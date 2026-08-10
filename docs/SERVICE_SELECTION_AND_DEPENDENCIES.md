@@ -489,13 +489,14 @@ original workflow, so a step the user never requested will not be included.
 
 5️⃣ VISUALIZE
   Input: receptor=6lu7.pdbqt, ligands=[ATP_docking.pdbqt], affinities=[-8.5]
-  Output: docking_viz.pml, docking_viz.png
+  Output: ATP_poses.sdf, ATP_poses.pdb, ATP_poses.mol2 (convert_docked_poses,
+          read by the GUI's in-browser 3Dmol.js viewer)
   Complete! ✅
 ```
 
 ---
 
-## Part 7: Troubleshooting
+## Part 8: Troubleshooting
 
 ### "Missing required parameters"
 

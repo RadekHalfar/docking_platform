@@ -11,7 +11,7 @@
 
 **Quick Start:**
 ```bash
-# See ../DOCKER_QUICK_REFERENCE.md for complete guide
+# See DOCKER_DEPLOYMENT.md for the complete guide
 .\docker_build.ps1        # Build images (Windows)
 docker compose up -d      # Start services
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
@@ -110,20 +110,17 @@ Use conda for reliable chemistry package installation (RDKit, OpenBabel, Meeko).
 
 ```bash
 # 1. Create conda environment
-conda create -n docking-system python=3.12
-conda activate docking-system
+conda create -n docking-platform python=3.12
+conda activate docking-platform
 
-# 2. Navigate to project directory
-cd docking-system
+# 2. Navigate to project directory (the cloned repo root)
+cd docking_platform
 
 # 3. Install Python dependencies
 pip install -r requirements.txt
 
 # 4. Install chemistry packages via conda
 conda install -c conda-forge rdkit openbabel meeko
-
-# 5. Download spaCy language model (if needed)
-python3 -m spacy download en_core_web_sm
 ```
 
 ### Method 2: pip Installation (No Conda)
@@ -134,17 +131,14 @@ Use this when you only need basic services or already manage Python dependencies
 # 1. Verify Python version
 python3 --version  # Should show 3.9 or higher
 
-# 2. Navigate to project directory
-cd docking-system
+# 2. Navigate to project directory (the cloned repo root)
+cd docking_platform
 
 # 3. Install Python dependencies
 pip install -r requirements.txt
 
 # 4. Install chemistry packages (if available on your platform)
 pip install rdkit meeko
-
-# 5. Download spaCy model
-python3 -m spacy download en_core_web_sm
 ```
 
 ### Method 3: Minimal Installation (Core Services Only)
@@ -152,14 +146,11 @@ python3 -m spacy download en_core_web_sm
 Install only core dependencies without chemistry packages.
 
 ```bash
-# 1. Navigate to project directory
-cd docking-system
+# 1. Navigate to project directory (the cloned repo root)
+cd docking_platform
 
 # 2. Install core dependencies
-pip install requests flask python-dotenv spacy pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
-
-# 3. Download spaCy model
-python -m spacy download en_core_web_sm
+pip install requests flask python-dotenv pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
 ```
 
 **Note:** Ligand Preparer service will not work without RDKit.
@@ -250,12 +241,6 @@ curl http://localhost:8002/health
 
 ## Testing Services
 
-### Using Test Client
-```bash
-# Make sure service is running first
-python test_client.py
-```
-
 ### Using curl
 ```bash
 # List available tools
@@ -309,7 +294,7 @@ conda install -c conda-forge meeko
 ### Issue: "ModuleNotFoundError: No module named 'common'"
 **Solution:** Make sure you're running from the project root directory and Python can find the modules:
 ```bash
-cd docking-system
+cd docking_platform
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"  # Linux/Mac
 set PYTHONPATH=%PYTHONPATH%;%CD%  # Windows
 ```
@@ -388,11 +373,13 @@ mypy services/ common/
 
 After installation:
 
-1. **Read the documentation**: `docs/API.md`, `docs/LIGAND_PREPARATION.md`
+1. **Read the documentation**: [../QUICK_START.md](../QUICK_START.md) for the
+   fastest path to a working workflow, then `docs/API.md` for the wire-level
+   reference and `docs/LLM_ORCHESTRATION.md` for the natural-language CLI
 2. **Run the tests**: `pytest tests/ -v`
 3. **Start services**: Try the RCSB Downloader first
-4. **Test with client**: Run `python test_client.py`
-5. **Explore examples**: Check the test files for usage examples
+4. **Explore examples**: Check `example_complete_workflow.py` and the test
+   files for direct-API usage examples
 
 ## Minimum System Requirements
 

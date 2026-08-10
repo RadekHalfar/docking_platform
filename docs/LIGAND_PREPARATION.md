@@ -1,12 +1,17 @@
-# Ligand Preparation for AutoDock Vina
+# Ligand Preparation
 
 ## Overview
 
-This document describes the ligand preparation process implemented in the Ligand Preparer service, following AutoDock Vina best practices.
+This document describes the ligand preparation process implemented in the
+Ligand Preparer service. This platform docks with
+[Moldina](MOLDINA_DOCKING.md), a PSO-based fork of AutoDock Vina that uses
+the same PDBQT input format and preparation best practices Vina established
+— everything below applies to both, and the term "Vina" is used where it's
+specifically the format/algorithm heritage being described.
 
 ## Why Preparation Is Needed
 
-AutoDock Vina requires ligands in PDBQT format, which includes:
+Docking (Moldina/Vina) requires ligands in PDBQT format, which includes:
 - **Explicit hydrogens** at the correct protonation state
 - **Partial charges** (typically Gasteiger charges)
 - **3D coordinates** for the ligand structure
@@ -63,7 +68,7 @@ AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
 AllChem.ComputeGasteigerCharges(mol)
 ```
 - Gasteiger-Marsili partial charges
-- Standard for AutoDock Vina
+- Standard for AutoDock Vina and Moldina
 - Required for electrostatic calculations
 
 **Step 6: Convert to PDBQT**
@@ -101,7 +106,7 @@ obabel input.pdb -O output.pdbqt -xh -p 7.4
 
 ### What is PDBQT?
 
-PDBQT is an extended PDB format required by AutoDock Vina. The name stands for:
+PDBQT is an extended PDB format originally defined by AutoDock Vina and used unchanged by Moldina (this platform's docking engine). The name stands for:
 - **PDB** - Protein Data Bank format (coordinates)
 - **Q** - Partial atomic charges
 - **T** - Atom types (AutoDock-specific)
@@ -154,17 +159,17 @@ The ligand preparation process creates **two output files**:
   - Verification and inspection
   - Visualization in molecular viewers
   - Debugging preparation issues
-- **Cannot be used for:** AutoDock Vina docking (missing charges and atom types)
+- **Cannot be used for:** docking (missing charges and atom types)
 
 #### 2. `ligand.pdbqt` - Final Docking File ✓
 - **Format:** PDBQT (extended PDB)
-- **Purpose:** Final file ready for AutoDock Vina
+- **Purpose:** Final file ready for docking (Moldina in this platform)
 - **Contains everything PDB has PLUS:**
   - **Partial charges** (Gasteiger charges)
   - **AutoDock atom types** (HD, OA, NA, C, etc.)
   - **Rotatable bonds** marked with BRANCH/ENDBRANCH
   - **TORSDOF** line (torsional degrees of freedom)
-- **Used for:** AutoDock Vina docking - **THIS IS WHAT YOU NEED!**
+- **Used for:** docking - **THIS IS WHAT YOU NEED!**
 
 **Important:** Always use the `.pdbqt` file for docking, not the `.pdb` file!
 

@@ -2,7 +2,11 @@
 
 ## Overview
 
-The Protein Preparer service prepares protein receptor structures for molecular docking with AutoDock Vina. It handles cleaning, protonation, charge assignment, and conversion to PDBQT format.
+The Protein Preparer service prepares protein receptor structures for
+molecular docking. It handles cleaning, protonation, charge assignment, and
+conversion to PDBQT format — the format [Moldina](MOLDINA_DOCKING.md) (this
+platform's docking engine) shares with AutoDock Vina, the tool that
+originally defined it.
 
 ## Workflow Overview
 
@@ -12,7 +16,7 @@ The service performs several key steps to prepare proteins:
 2. **Clean Structure**: Removes water molecules and unwanted heteroatoms
 3. **Add Hydrogens**: Adds missing hydrogen atoms at specified pH
 4. **Assign Charges**: Calculates Gasteiger partial atomic charges
-5. **Convert to PDBQT**: Creates AutoDock Vina-compatible PDBQT format
+5. **Convert to PDBQT**: Creates PDBQT format, compatible with both Moldina and AutoDock Vina
 6. **Batch Processing**: Handles multiple proteins in one operation
 
 ## Why Prepare Proteins?
@@ -23,7 +27,7 @@ Raw protein structures from PDB often contain:
 - Missing hydrogen atoms (X-ray structures don't show H atoms)
 - Incomplete charge information
 
-AutoDock Vina requires:
+Docking (Moldina/Vina) requires:
 - Clean protein structure with only receptor atoms
 - All hydrogen atoms present
 - Partial charges assigned
@@ -60,9 +64,9 @@ AutoDock Vina requires:
 
 ### 2. Final PDBQT File
 - **Extension**: `.pdbqt`
-- **Purpose**: Docking input file for AutoDock Vina
+- **Purpose**: Docking input file (`--receptor` for Moldina, this platform's engine)
 - **Contains**: ATOM records + Charges (Q) + atom Types (T)
-- **Use**: Direct input to `vina` command
+- **Use**: Direct input to `moldina`/`vina`-compatible docking commands
 
 ### What is PDBQT?
 
@@ -83,7 +87,7 @@ Components:
 | File Type | Purpose | When to Use |
 |-----------|---------|-------------|
 | **PDB** | Human-readable intermediate | Inspection, verification, PyMOL visualization |
-| **PDBQT** | Machine-readable for docking | Input to AutoDock Vina `--receptor` flag |
+| **PDBQT** | Machine-readable for docking | Input to Moldina's (and AutoDock Vina's) `--receptor` flag |
 
 **Bottom line**: Use the **PDBQT file** for docking. The PDB file is just a checkpoint.
 
@@ -144,26 +148,19 @@ result = preparer.prepare_protein_file(
 
 ## Parameters
 
-### prepare_protein_file()
+Two Python entry points share the same parameter names — the difference is
+single-file vs. batch:
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `protein_path` | str | Required | Path to input PDB file |
-| `output_path` | str | Required | Path for output PDBQT file |
-| `ph` | float | 7.4 | pH for hydrogen addition |
-| `add_hydrogens` | bool | True | Add missing hydrogen atoms |
-| `remove_waters` | bool | True | Remove water molecules |
-| `remove_heteroatoms` | bool | False | Remove all non-protein atoms |
-| `keep_residues` | list | None | Residue names to keep even if heteroatoms |
+- `prepare_protein_file(protein_path, output_path, ph=7.4, add_hydrogens=True, remove_waters=True, remove_heteroatoms=False, keep_residues=None)`
+- `prepare_proteins(protein_paths, output_dir, ...)` — same optional
+  parameters, but takes a list of input paths and an output directory
+  instead of one input/output path pair (this is what the `prepare_proteins`
+  MCP tool wraps — see [API.md](API.md#3-protein-preparer-service))
 
-### prepare_proteins()
-
-Same parameters as above, plus:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `protein_paths` | list | Required | List of input PDB file paths |
-| `output_dir` | str | Required | Directory for output files |
+For what each parameter means, its valid range, and how it affects docking,
+see [DOCKING_PARAMETERS.md § Stage 3: Protein Preparation](DOCKING_PARAMETERS.md#stage-3-protein-preparation)
+— that table is the canonical reference; this page describes the
+preparation *pipeline*, not a second copy of the parameter definitions.
 
 ## Return Format
 
@@ -212,7 +209,7 @@ For protein receptors, the service uses a **manual rigid receptor** conversion m
   - Maps elements to AutoDock atom types (H→HD, C→C, N→NA, O→OA, S→SA, etc.)
   - Assigns zero charges (rigid receptors don't need detailed charge distributions)
   - Creates simple ATOM-only PDBQT (no ROOT/ENDROOT/TORSDOF markers)
-- **Compatibility**: Works with AutoDock Vina, AutoDock, and Moldina
+- **Compatibility**: Works with Moldina (this platform's engine), AutoDock Vina, and AutoDock
 - **Always available**: No extra dependencies beyond RDKit
 
 ### Alternative: OpenBabel (Not Recommended)
@@ -326,7 +323,7 @@ print(f"Prepared {result['successful']} proteins")
 
 ### Issue: "Hydrogens not added"
 **Problem**: `add_hydrogens=False` was set
-**Solution**: Set `add_hydrogens=True` (default). AutoDock Vina requires all hydrogens.
+**Solution**: Set `add_hydrogens=True` (default). Docking requires all hydrogens.
 
 ### Issue: Conversion method "manual_rigid" used
 **Info**: This is the default and recommended method for rigid receptors
@@ -387,5 +384,5 @@ pip install rdkit openbabel-wheel
 
 - [Ligand Preparation](LIGAND_PREPARATION.md) - Prepare small molecules (uses Meeko)
 - [API Documentation](API.md) - Complete API reference
-- [Usage Guide](../USAGE_GUIDE.md) - End-to-end examples
+- [Docking Parameters](DOCKING_PARAMETERS.md) - Full parameter reference across all stages
 - [Quick Start](../QUICK_START.md) - Getting started guide

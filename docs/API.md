@@ -263,6 +263,7 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
 - Optionally uses Meeko for PDBQT conversion (recommended)
 - Falls back to OpenBabel or manual conversion if Meeko unavailable
 - PDBQT files include TORSDOF (torsional degrees of freedom) for Moldina/Vina
+- See [DOCKING_PARAMETERS.md § Stage 2](DOCKING_PARAMETERS.md#stage-2-ligand-preparation) for tuning guidance on `ph`/`add_hydrogens`/`optimize`
 
 ### Tool: convert_docked_poses
 
@@ -425,6 +426,10 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
 }
 ```
 
+**Notes:**
+- See [DOCKING_PARAMETERS.md § Stage 3](DOCKING_PARAMETERS.md#stage-3-protein-preparation) for tuning guidance on `ph`/`remove_waters`/`remove_heteroatoms`/`keep_residues`
+- See [PROTEIN_PREPARATION.md](PROTEIN_PREPARATION.md) for the preparation pipeline this tool wraps
+
 ---
 
 ## 4. Moldina Runner Service
@@ -548,7 +553,9 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
 - Results are sorted by best_affinity (most negative = best binding)
 - Population size should be ≥ 5; recommended: 100 × rotatable_bonds
 - Higher exhaustiveness and population = more thorough but slower
-- See `docs/MOLDINA_DOCKING.md` for detailed guide
+- See `docs/MOLDINA_DOCKING.md` for the engine guide, and
+  [DOCKING_PARAMETERS.md § Stage 4](DOCKING_PARAMETERS.md#stage-4-molecular-docking)
+  for tuning guidance and ranges for every parameter above
 
 ---
 

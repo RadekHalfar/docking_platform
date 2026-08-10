@@ -234,7 +234,7 @@ Examples:
 - ❌ `state and save results as hem_box_a`
 
 When one input contains multiple intents, only one intent is dispatched in the current implementation.
-Planned improvement: Phase 8 adds ordered multi-intent command sequencing.
+Planned improvement: `dev_plan.md` Phase 10 adds ordered multi-intent command sequencing.
 
 #### Intent classification for follow-up commands (Phase 2)
 
@@ -404,8 +404,7 @@ The LLM can identify these workflow stages:
 - `population` - PSO population size (default: 500)
 
 **Visualization:**
-- `show_surface` - Show protein surface (default: true)
-- `render_image` - Render PNG image (default: true)
+- `formats` - Which pose formats to generate for the GUI's 3Dmol.js viewer/downloads: any of `sdf`, `pdb`, `mol2` (default: all three; PDBQT is always available natively)
 
 ---
 
@@ -900,15 +899,19 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 
 ## Roadmap
 
+### Already Shipped (moved out of "planned")
+
+- [x] Local ligand/protein files, not just RCSB (`--protein-file`, `--ligand-files`, `--ligand-folder` — see [Local File Input](#local-file-input))
+- [x] Web UI (the Streamlit GUI, `ui/app.py` — see [GUI_GUIDE.md](GUI_GUIDE.md))
+- [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
+- [x] More LLM backends (OpenAI, Anthropic, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
+- [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))
+
 ### Planned Features
 
-- [ ] Support for custom ligand files (not from RCSB)
-- [ ] Batch workflow execution
+- [ ] Batch workflow execution across multiple independent jobs (as opposed to the existing single-job [batch docking from a folder](BATCH_DOCKING.md))
 - [ ] Workflow templates
-- [ ] Result comparison and ranking
-- [ ] Web UI for orchestrator
-- [ ] Support for more LLM backends (local Transformers, vLLM)
-- [ ] Workflow history and replay
+- [ ] Multi-intent command sequencing in one input line (`dev_plan.md` Phase 10 — see [Current command granularity](#current-command-granularity))
 - [ ] Parameter suggestions based on protein structure
 
 ---
@@ -919,7 +922,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 A: Only for initial model download and RCSB structure downloads. LLM runs locally.
 
 **Q: Can I use a different LLM?**  
-A: Yes. The CLI uses a provider/model abstraction. Today, the built-in adapter is Ollama, and you can switch Ollama models via `--llm-model` without rebuild. New providers can be added as adapters.
+A: Yes, in two ways: switch Ollama models via `--llm-model` without rebuild, or switch providers entirely — Ollama, OpenAI, Anthropic, and any OpenAI-compatible server (LM Studio, vLLM, Groq, ...) all ship as built-in adapters. See [Supported LLM Providers](#supported-llm-providers).
 
 **Q: How accurate is the parameter parsing?**  
 A: Very good for clear, explicit commands. If ambiguous, the system will prompt for clarification.

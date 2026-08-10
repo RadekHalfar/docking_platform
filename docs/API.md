@@ -264,6 +264,84 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
 - Falls back to OpenBabel or manual conversion if Meeko unavailable
 - PDBQT files include TORSDOF (torsional degrees of freedom) for Moldina/Vina
 
+### Tool: convert_docked_poses
+
+Converts each ligand's docked-pose PDBQT (every Vina/Moldina mode, as one
+multi-model file) into one multi-pose file per requested format, for the
+GUI's in-browser 3Dmol.js viewer and its per-format download picker. This is
+the `visualize` workflow step's default tool as of the PyMOL → 3Dmol.js
+migration — see [GUI_GUIDE.md](GUI_GUIDE.md) and the note at the top of
+[PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
+
+**Conversion:**
+1. Parse the docked-pose PDBQT with Meeko (`PDBQTMolecule` + `RDKitMolCreate`), restoring proper bond orders/aromaticity from the `REMARK SMILES` Meeko embedded when the ligand was originally prepared — a single parse is reused for every requested format.
+2. Write SDF/PDB directly from that RDKit molecule (one record/MODEL per pose, tagged in the SDF with that pose's `mode_index`/`affinity`/`rmsd_lb`/`rmsd_ub`).
+3. Derive MOL2 from the SDF just written via OpenBabel (so it inherits the restored bond orders instead of OpenBabel re-guessing them from raw PDBQT geometry).
+4. If the Meeko round trip fails for a ligand (e.g. it wasn't originally prepared by Meeko), fall back to converting each requested format independently straight from the PDBQT via OpenBabel — still usable, but without per-pose affinity/RMSD metadata.
+
+PDBQT itself is never produced by this tool — it's already the native,
+unconverted file `run_docking` wrote.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `pose_results` | array | Yes | Per-ligand docking result dicts as produced by `run_docking` (`ligand_id`, `output_path` pointing at the multi-model docked-pose PDBQT, `modes`) |
+| `output_dir` | string | Yes | Directory to write `<ligand_id>_poses.<format>` files to |
+| `formats` | array | No | Which formats to write: any of `"sdf"`, `"pdb"`, `"mol2"` (default: all three) |
+
+**Request Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_5",
+  "method": "tool_call",
+  "params": {
+    "name": "convert_docked_poses",
+    "arguments": {
+      "pose_results": [
+        {
+          "ligand_id": "ATP",
+          "output_path": "/data/jobs/job_001/docking_results/ATP_out.pdbqt",
+          "modes": [
+            {"mode": 1, "affinity": -8.5, "rmsd_lb": 0.0, "rmsd_ub": 0.0},
+            {"mode": 2, "affinity": -7.9, "rmsd_lb": 1.8, "rmsd_ub": 2.6}
+          ]
+        }
+      ],
+      "output_dir": "/data/jobs/job_001/visualization"
+    }
+  }
+}
+```
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "job_001_step_5",
+  "result": {
+    "converted": [
+      {
+        "ligand_id": "ATP",
+        "num_poses": 2,
+        "conversion_method": "meeko",
+        "sdf_path": "/data/jobs/job_001/visualization/ATP_poses.sdf",
+        "pdb_path": "/data/jobs/job_001/visualization/ATP_poses.pdb",
+        "mol2_path": "/data/jobs/job_001/visualization/ATP_poses.mol2"
+      }
+    ],
+    "errors": [],
+    "status": "ok"
+  }
+}
+```
+
+**Notes:**
+- Requires RDKit + Meeko for the primary path; OpenBabel for the MOL2 derivation step and the fallback path
+- A ligand's entry only carries `<format>_path` keys for formats that were actually written — check for a key's presence rather than assuming all three exist
+- `conversion_method` is `"meeko"` (bond orders restored, per-pose metadata included) or `"openbabel"` (fallback, no per-pose metadata)
+
 ---
 
 ## 3. Protein Preparer Service
@@ -475,6 +553,13 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
 ---
 
 ## 5. PyMOL Visualizer Service
+
+> **No longer used by default.** The `visualize` workflow step now calls
+> `convert_docked_poses` on the Ligand Preparer service (§2) instead, feeding
+> the GUI's in-browser 3Dmol.js viewer rather than a server-rendered PNG. This
+> service and its container are still present and still work if called
+> directly — see the note at the top of
+> [PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
 
 **Port:** 8005  
 **Base URL:** `http://localhost:8005`

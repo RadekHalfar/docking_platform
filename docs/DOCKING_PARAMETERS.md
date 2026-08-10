@@ -10,7 +10,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 2. [Stage 2: Ligand Preparation](#stage-2-ligand-preparation)
 3. [Stage 3: Protein Preparation](#stage-3-protein-preparation)
 4. [Stage 4: Molecular Docking (Moldina)](#stage-4-molecular-docking)
-5. [Stage 5: Visualization (PyMOL)](#stage-5-visualization)
+5. [Stage 5: Visualization](#stage-5-visualization)
 6. [Quick Reference Table](#quick-reference-table)
 
 ---
@@ -350,106 +350,72 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 ## Stage 5: Visualization
 
-**Service:** PyMOL Visualizer (port 8005)  
-**Tool:** `visualize_docking`
+**Service:** Ligand Preparer (port 8002)
+**Tool:** `convert_docked_poses`
+
+As of the PyMOL → 3Dmol.js migration, this stage no longer renders a server-side
+image. It converts each ligand's docked-pose PDBQT (all modes, in one
+multi-model file) into one multi-pose file per output format, which the GUI's
+in-browser 3Dmol.js viewer reads directly and offers as PDBQT/PDB/SDF/MOL2
+downloads (see [GUI_GUIDE.md](GUI_GUIDE.md)). The legacy PyMOL Visualizer
+(`visualize_docking`, port 8005) still exists and still works if you call it
+directly — see [API.md](API.md#5-pymol-visualizer-service) — it's just no
+longer part of the default workflow.
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `receptor_path` | string | **Yes** | - | Path to receptor file (PDBQT/PDB) |
-| `ligand_paths` | array | **Yes** | - | List of docked ligand PDBQT files |
+| `pose_results` | array | **Yes** | - | Per-ligand docking result dicts from `run_docking` (`ligand_id`, `output_path`, `modes`) |
 | `output_dir` | string | **Yes** | - | Directory for output files |
-| `affinities` | array | No | `null` | Binding affinities for color coding |
-| `show_surface` | boolean | No | `true` | Show protein surface |
-| `show_binding_site` | boolean | No | `true` | Highlight binding site residues |
-| `binding_site_radius` | number | No | `5.0` | Radius for binding site detection (Å) |
-| `render_image` | boolean | No | `true` | Render PNG image |
-| `image_width` | integer | No | `1920` | Image width in pixels |
-| `image_height` | integer | No | `1080` | Image height in pixels |
-| `image_dpi` | integer | No | `300` | Image DPI for publications |
-| `ray_trace` | boolean | No | `true` | Use ray tracing for high quality |
+| `formats` | array | No | `["sdf", "pdb", "mol2"]` | Which formats to write (PDBQT is never generated here — it's already the native `run_docking` output) |
 
-### Visualization Parameters
+### How It Works
 
-#### `affinities` - Binding Affinities
-- **Format:** Array of numbers (kcal/mol)
-- **Purpose:** Color-code ligands by binding strength
-- **Colors:**
-  - Green = Best (most negative)
-  - Yellow = Medium
-  - Red = Worst (least negative)
-- **Example:** `[-8.5, -7.2, -6.8]`
+1. **Parse once per ligand:** the docked-pose PDBQT is parsed with Meeko
+   (`PDBQTMolecule` + `RDKitMolCreate`), restoring proper bond
+   orders/aromaticity from the `REMARK SMILES` Meeko embedded when the
+   ligand was originally prepared.
+2. **Write every requested format from that one parse:** SDF and PDB are
+   written directly (one record/MODEL per pose); MOL2 is derived from the
+   SDF via OpenBabel, so it also gets the restored bond orders rather than
+   OpenBabel's own (weaker) geometry-based guess.
+3. **Fallback:** if the Meeko round trip fails for a ligand (e.g. it wasn't
+   originally prepared by Meeko), each requested format is converted
+   independently straight from the PDBQT via OpenBabel — still usable, just
+   without per-pose affinity/RMSD metadata.
 
-#### `show_surface`
-- **true:** Display protein molecular surface
-- **false:** Show cartoon/ribbon only
-- **Impact:** Surface helps visualize binding pocket
-
-#### `show_binding_site`
-- **true:** Highlight residues near ligands
-- **false:** Show all residues equally
-- **Uses:** `binding_site_radius` to determine proximity
-
-#### `binding_site_radius`
-- **Range:** 3.0 - 10.0 Å
-- **Default:** 5.0 Å
-- **Purpose:** Distance threshold for binding site residues
-- **Impact:** Larger = more residues highlighted
-
-### Image Rendering Parameters
-
-#### `render_image`
-- **true:** Generate PNG image automatically
-- **false:** Only create .pml script (open manually)
-
-#### `image_width` & `image_height`
-- **Presets:**
-  - HD: 1920 × 1080
-  - 4K: 3840 × 2160
-  - Publication: 2400 × 1800 (square-ish)
-- **Impact:** Larger = better quality, longer render time
-
-#### `image_dpi`
-- **Common values:**
-  - 150 - Screen viewing
-  - 300 - Standard publication
-  - 600 - High-quality publication
-- **Impact:** Higher DPI = sharper images, larger files
-
-#### `ray_trace`
-- **true:** High-quality rendering with shadows/reflections
-- **false:** Fast OpenGL rendering
-- **Impact:** Ray tracing takes longer but looks professional
+### `formats` — Output Formats
+- **Values:** any of `"sdf"`, `"pdb"`, `"mol2"`
+- **Purpose:** each becomes a download option in the GUI's format picker,
+  alongside the always-available native PDBQT
+- **Example:** `["sdf", "pdb"]` skips MOL2 generation for that job
 
 ### Example
 
 ```json
 {
-  "receptor_path": "/data/prepared/6lu7.pdbqt",
-  "ligand_paths": [
-    "/data/docking_results/ATP_out.pdbqt",
-    "/data/docking_results/HEM_out.pdbqt"
+  "pose_results": [
+    {
+      "ligand_id": "ATP",
+      "output_path": "/data/docking_results/ATP_out.pdbqt",
+      "modes": [
+        {"mode": 1, "affinity": -8.5, "rmsd_lb": 0.0, "rmsd_ub": 0.0},
+        {"mode": 2, "affinity": -7.2, "rmsd_lb": 1.9, "rmsd_ub": 2.7}
+      ]
+    }
   ],
-  "output_dir": "/data/visualization",
-  "affinities": [-8.5, -7.2],
-  "show_surface": true,
-  "show_binding_site": true,
-  "binding_site_radius": 5.0,
-  "render_image": true,
-  "image_width": 1920,
-  "image_height": 1080,
-  "image_dpi": 300,
-  "ray_trace": true
+  "output_dir": "/data/visualization"
 }
 ```
 
 ### Impact on Visualization
 
-- **affinities**: Enables quick visual comparison of binding strength
-- **render_image**: Docker containers can render without GUI
-- **ray_trace**: Publication-quality images
-- **binding_site_radius**: Balance between detail and clarity
+- **formats**: Controls which download formats are generated; SDF also
+  carries the per-pose affinity/RMSD metadata the 3Dmol.js pose selector
+  reads
+- **Meeko round trip**: Restores real bond orders (not just atom positions),
+  which a raw PDBQT alone doesn't carry
 
 ---
 
@@ -473,10 +439,9 @@ Complete overview of all parameters used in the molecular docking workflow acros
 | | **`box_size`** | - | Must encompass binding site |
 | | `exhaustiveness` | `8` | Higher = better quality |
 | | `population` | `500` | PSO parameter |
-| **Visualization** | `receptor_path` | - | Original or prepared |
-| | `ligand_paths` | - | Docking output |
-| | `affinities` | `null` | From docking results |
-| | `render_image` | `true` | Docker-compatible |
+| **Visualization** | `pose_results` | - | Docking output (`run_docking` results) |
+| | `output_dir` | - | Where to write converted pose files |
+| | `formats` | `["sdf", "pdb", "mol2"]` | PDBQT is always available too (native, no conversion) |
 
 ### Parameter Consistency Requirements
 
@@ -527,6 +492,14 @@ ligands concurrently) instead of a per-ligand core count. See
 ---
 
 ## Determining Docking Box Parameters
+
+### Method 0: GUI's Visual Box Picker (Easiest)
+
+The Streamlit GUI's **Pick Docking Box Visually** control does this for you
+in-browser, no PyMOL required: load the receptor, click an atom to set the
+center (a live translucent box shows the resulting region), and adjust the
+X/Y/Z size sliders until the box covers the binding site. See
+[GUI_GUIDE.md](GUI_GUIDE.md#picking-the-docking-box-visually).
 
 ### Method 1: Using PyMOL
 

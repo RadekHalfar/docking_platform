@@ -1,5 +1,18 @@
 # PyMOL Visualization Documentation
 
+> **No longer used by default.** The orchestrator's `visualize` workflow step
+> now calls `convert_docked_poses` on the Ligand Preparer service (see
+> [API.md](API.md#2-ligand-preparer-service)) to feed the GUI's in-browser
+> 3Dmol.js viewer and a PDBQT/PDB/SDF/MOL2 download picker — see
+> [GUI_GUIDE.md](GUI_GUIDE.md) — instead of PyMOL-rendered PNGs. That's a
+> lighter, client-side pipeline: no server-side rendering, no PyMOL/Xvfb
+> container involved.
+>
+> The `pymol-visualizer` service and everything below is still present, still
+> works, and can still be called directly (e.g. from
+> `example_complete_workflow.py`) — it just isn't part of the default
+> workflow anymore. This doc describes that standalone service as-is.
+
 ## Overview
 
 The PyMOL Visualizer service creates publication-quality molecular visualizations of docking results. It generates PyMOL scripts (.pml) that can be run to visualize protein-ligand complexes, with support for automatic rendering if PyMOL is installed.

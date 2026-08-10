@@ -273,6 +273,11 @@ extracts `results.dock.results[].{ligand_id, best_affinity}` for each job. No ot
 persistence file (parameters, state, checkpoints) is involved; comparison is purely a
 read-only operation over completed jobs.
 
+Column headers use each job's top-level `job_name` field when present (the optional,
+non-unique display label set from the GUI's **Job name** field or renamed later via the
+sidebar's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-job)), falling
+back to the job directory basename (i.e. the job ID) when a job has no name.
+
 ### CLI usage
 
 ```bash

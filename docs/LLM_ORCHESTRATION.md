@@ -54,8 +54,8 @@ This system lets you control the full molecular docking pipeline with plain-lang
 └──────┬──────┬──────┬──────┬──────────────────────────┘
        │      │      │      │
        ▼      ▼      ▼      ▼      ▼
-    RCSB  Ligand Protein Moldina PyMOL
-    Down   Prep   Prep   Docking Visual
+    RCSB  Ligand Protein Moldina Ligand
+    Down   Prep   Prep   Docking Prep (poses)
 ```
 
   ### Centralized Workflow Metadata (Phase 2)
@@ -383,7 +383,7 @@ The LLM can identify these workflow stages:
 2. **`prepare_ligands`** - Prepare ligands for docking
 3. **`prepare_protein`** - Prepare protein for docking
 4. **`dock`** - Run molecular docking
-5. **`visualize`** - Create PyMOL visualization
+5. **`visualize`** - Convert docked poses to PDB/SDF/MOL2 for the GUI's in-browser 3Dmol.js viewer (see [GUI_GUIDE.md](GUI_GUIDE.md))
 
 ### Supported Parameters
 
@@ -504,9 +504,9 @@ orchestrator_output/
     │   ├── HEM_out.pdbqt
     │   └── moldina_config.txt
     ├── visualization/
-    │   ├── visualization.pml
-    │   ├── visualization.pse
-    │   └── docking_visualization.png
+    │   ├── ATP_poses.sdf
+    │   ├── ATP_poses.pdb
+    │   └── ATP_poses.mol2
     ├── saved_results/
     │   ├── atp_box1/
     │   │   ├── metadata.json
@@ -523,6 +523,7 @@ orchestrator_output/
 ```json
 {
   "job_id": "job_1730304123",
+  "job_name": "",
   "status": "completed",
   "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
   "results": {
@@ -533,6 +534,14 @@ orchestrator_output/
   "errors": []
 }
 ```
+
+`job_name` is an optional, non-unique display label — `job_id` remains the
+sole unique identifier and is unaffected by it. It defaults to `""` when not
+supplied. The GUI sets it from the **Job name** field at submission time (or
+via the sidebar's **Rename** button afterward — see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-job)); the CLI (`nlp_orchestrator.py`)
+does not currently set it, so CLI-run jobs always persist `"job_name": ""`
+unless `execute_workflow(..., job_name=...)` is called directly.
 
 ---
 
@@ -768,8 +777,8 @@ if parser.has_missing_parameters():
     print(parser.format_missing_prompt())
     # Handle missing parameters...
 
-# Execute workflow
-results = orchestrator.execute_workflow(workflow, job_id="my_job")
+# Execute workflow (job_name is optional and purely a display label)
+results = orchestrator.execute_workflow(workflow, job_id="my_job", job_name="My batch run")
 
 print(f"Status: {results['status']}")
 print(f"Output: {orchestrator.output_base / results['job_id']}")

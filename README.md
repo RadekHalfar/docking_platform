@@ -1,6 +1,6 @@
 # MCP-Based Docking System
 
-A fully containerized molecular docking pipeline using Model Context Protocol (MCP) to coordinate protein preparation, ligand preparation, Moldina PSO-based docking, and PyMOL visualization.
+A fully containerized molecular docking pipeline using Model Context Protocol (MCP) to coordinate protein preparation, ligand preparation, Moldina PSO-based docking, and an in-browser 3Dmol.js visualization.
 
 **Zero Installation Required:** Everything runs in Docker containers, so you do not need to install Moldina, PyMOL, RDKit, or other dependencies locally.
 
@@ -19,19 +19,23 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
    -------------------------------------------------------------
    |                |                |                         |
 +------+  +-----------+     +-----------+         +-----------+
-|RCSB  |  | LigPrep   |     | Moldina   |         | PyMOL     |
-|Down- |  | (prep)    |     | (docking) |         | (visual)  |
-|loader|  |           |     |           |         |           |
+|RCSB  |  | LigPrep   |     | Moldina   |         | LigPrep   |
+|Down- |  | (prep +   |     | (docking) |         | pose      |
+|loader|  |  poses)   |     |           |         | -> GUI    |
 +------+  +-----------+     +-----------+         +-----------+
 ```
+
+3D viewing itself happens client-side in the browser (3Dmol.js) — the
+fourth box above converts docked poses to PDB/SDF/MOL2, it doesn't render
+anything server-side.
 
 ## Components
 
 1. **RCSB Downloader** - Fetches protein structures and ligands from RCSB PDB.
 2. **Protein Preparer** - Cleans proteins, adds hydrogens, and converts to PDBQT.
-3. **Ligand Preparer** - Prepares ligands (protonation, 3D conformers, PDBQT conversion).
+3. **Ligand Preparer** - Prepares ligands (protonation, 3D conformers, PDBQT conversion), and converts docked poses to PDB/SDF/MOL2 for the viewer/downloads.
 4. **Moldina Runner** - Executes Moldina PSO-based molecular docking.
-5. **PyMOL Visualizer** - Generates visualization scripts and rendered outputs.
+5. **GUI 3D Viewer** - In-browser 3Dmol.js viewer + visual docking-box picker (no server-side rendering; see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)). A legacy PyMOL Visualizer service still exists for direct/optional use — see [docs/PYMOL_VISUALIZATION.md](docs/PYMOL_VISUALIZATION.md).
 6. **LLM Orchestrator** - Provides natural-language workflow orchestration via pluggable LLM providers (default: Ollama).
 
 All services run in Docker containers.
@@ -166,8 +170,10 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 #   --clarification-mode legacy
 # PyMOL path creates docking_box.json from your current PyMOL selection.
 
-# 7. View rendered image output from containerized PyMOL
-# .\demo_output\visualization\docking_visualization.png
+# 7. View results: open the GUI (http://localhost:3000, started in step 2) and
+#    load the job for an in-browser 3Dmol.js view + PDBQT/PDB/SDF/MOL2 downloads,
+#    or inspect the converted pose files directly:
+# .\demo_output\visualization\*_poses.sdf
 ```
 
 **See [DOCKER_QUICK_REFERENCE.md](DOCKER_QUICK_REFERENCE.md) for detailed guide.**
@@ -206,8 +212,8 @@ python3 -m services.pymol_visualizer.server
 - Ligand Preparer (port 8002) - ~2 GB
 - Protein Preparer (port 8003) - ~2 GB
 - Moldina Runner (port 8004) - ~2 GB with custom Moldina executable
-- PyMOL Visualizer (port 8005) - ~3.5 GB with conda PyMOL + headless rendering
-- PyMOL Interactive (ports 6080/8090) - Browser-based noVNC session + docking-box helper API
+- PyMOL Visualizer (port 8005) - ~3.5 GB with conda PyMOL + headless rendering. Optional/legacy — the default `visualize` step no longer calls it (see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)).
+- PyMOL Interactive (ports 6080/8090) - Browser-based noVNC session + docking-box helper API. Still used for the CLI's interactive box selection; the GUI has its own lighter, PyMOL-free visual box picker.
 
 **See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) for complete Docker guide.**
 
@@ -275,6 +281,12 @@ python nlp_orchestrator.py --interactive
 
 ### Using Python API
 
+`example_complete_workflow.py` calls each MCP service directly (bypassing the
+orchestrator), including `pymol_visualizer`'s `visualize_docking` — it's a
+standalone demo of the raw service APIs, not the default `visualize` step the
+GUI/orchestrator use (see [Components](#components) above and
+[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md) for that path).
+
 ```bash
 # Using Python 3 (not Python 2.7!)
 $env:PYTHONIOENCODING="utf-8"  # Windows: Enable UTF-8 output
@@ -295,7 +307,7 @@ python example_complete_workflow.py
 - `prepared_proteins/` - PDBQT receptor files
 - `prepared_ligands/` - PDBQT ligand files
 - `docking_results/` - Docked poses from Moldina
-- `visualization/` - PyMOL scripts, session files, rendered images
+- `visualization/` - PyMOL scripts, session files, rendered images (this script's own output — the main GUI/orchestrator workflow writes PDB/SDF/MOL2 pose files here instead, see above)
 
 ## Development
 
@@ -318,10 +330,10 @@ docking_platform/
 │
 ├── services/                    # MCP service implementations
 │   ├── rcsb_downloader/        # Protein/ligand download service (port 8001)
-│   ├── ligand_preparer/        # Ligand preparation service (port 8002)
+│   ├── ligand_preparer/        # Ligand prep + docked-pose->PDB/SDF/MOL2 conversion (port 8002)
 │   ├── protein_preparer/       # Protein preparation service (port 8003)
 │   ├── moldina_runner/         # Molecular docking service (port 8004)
-│   ├── pymol_visualizer/       # Headless visualization/rendering service (port 8005)
+│   ├── pymol_visualizer/       # Headless PyMOL rendering (port 8005) -- optional/legacy, not used by default
 │   ├── pymol_interactive/      # Interactive noVNC PyMOL helper service (noVNC 6080 / API 8090)
 │   └── llm_orchestrator/       # LLM-based workflow orchestration
 │       ├── llm_base.py         # Provider interface
@@ -342,9 +354,11 @@ docking_platform/
 │   ├── session_state.py        # Session state init/parameter sync
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU-cap detection
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution
-│   ├── job_history.py          # Sidebar job history scan
+│   ├── job_history.py          # Sidebar job history scan, job naming/rename
 │   ├── ollama_models.py        # Ollama model listing
-│   ├── pymol_client.py         # pymol-interactive helper-API client
+│   ├── pymol_client.py         # pymol-interactive helper-API client (box selection only)
+│   ├── mol_viewer.py           # Python wrapper for the 3Dmol.js viewer/box-picker component
+│   ├── components/mol_viewer/  # Vendored 3Dmol.js + vanilla-JS Streamlit component (no build step)
 │   ├── results.py              # Results/comparison rendering
 │   └── settings.py             # Persisted LLM provider settings
 │
@@ -371,10 +385,12 @@ docking_platform/
 │
 ├── docs/                        # Documentation
 │   ├── API.md                  # MCP tool specifications
+│   ├── GUI_GUIDE.md            # Streamlit UI guide (3Dmol.js viewer, visual box picker)
 │   ├── INSTALLATION.md         # Installation guide
 │   ├── DOCKER_DEPLOYMENT.md    # Docker deployment guide (incl. security model)
 │   ├── LLM_ORCHESTRATION.md    # Natural language interface guide
 │   ├── DOCKING_PARAMETERS.md   # Docking parameters reference
+│   ├── PYMOL_VISUALIZATION.md  # Legacy/optional PyMOL Visualizer service (not used by default)
 │   ├── STATE_PERSISTENCE_STRATEGY.md  # Checkpoint/undo persistence design (CLI-only)
 │   ├── VERBOSITY_LEVELS.md     # Verbosity modes guide
 │   └── *.md                    # Additional documentation
@@ -425,7 +441,7 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - **Modular LLM Layer** - Provider interface + adapters (default provider is Ollama) with runtime model selection.
 - **Containerized Deployment** - Run all dependencies in Docker.
 - **Moldina PSO Docking** - PSO-based docking for pose search.
-- **Headless PyMOL** - Automated rendering in containers.
+- **In-Browser 3Dmol.js Viewer** - Client-side pose viewing and a visual docking-box picker, no server-side rendering.
 - **Cross-Platform** - Works across Windows and Linux path styles.
 - **Caching** - Reuses downloaded structures to reduce repeated work.
 - **MCP Protocol** - Standard JSON-RPC interface across services.
@@ -447,10 +463,14 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - Set UTF-8 encoding: `$env:PYTHONIOENCODING="utf-8"`
 - Use `python3` not `python`
 
-### PyMOL Analysis
-- Generated `.pse` session files work with local PyMOL
-- Rendered `.png` images created in Docker automatically
-- Paths are relative, work on host and in containers
+### Viewing Results
+- The GUI's in-browser 3Dmol.js viewer needs no PyMOL, no VNC, and no
+  server-side rendering — see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)
+- Download docked poses as PDBQT (native), PDB, SDF, or MOL2 from the same
+  panel
+- The legacy `pymol_visualizer` service (`.pml`/`.pse`/`.png`) still works if
+  called directly, but isn't part of the default workflow anymore — see
+  [docs/PYMOL_VISUALIZATION.md](docs/PYMOL_VISUALIZATION.md)
 
 ### Job Output Cleanup
 `orchestrator_output/` is never pruned automatically. To list (dry run) or delete old jobs:
@@ -464,11 +484,13 @@ python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
 
 ## Documentation
 
+- **[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)** - Streamlit UI guide: 3Dmol.js viewer, visual docking-box picker, download formats
 - **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - Guide to verbosity levels (`low`, `normal`, `mcp_demo`)
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages
 - **[docs/API.md](docs/API.md)** - Complete MCP tool specifications and JSON-RPC examples
-- **[docs/PYMOL_INTERACTIVE.md](docs/PYMOL_INTERACTIVE.md)** - Browser-based PyMOL interactive service and docking box helper API
+- **[docs/PYMOL_INTERACTIVE.md](docs/PYMOL_INTERACTIVE.md)** - Browser-based PyMOL interactive service and docking box helper API (CLI box selection; the GUI has its own visual picker)
+- **[docs/PYMOL_VISUALIZATION.md](docs/PYMOL_VISUALIZATION.md)** - Legacy/optional PyMOL Visualizer service (not used by default)
 - **[docs/INSTALLATION.md](docs/INSTALLATION.md)** - Installation instructions (Docker and local)
 - **[docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md)** - Docker deployment guide
 

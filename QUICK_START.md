@@ -88,7 +88,9 @@ http://localhost:8090
 
 If workflow includes `visualize`:
 
-1. Regular visualization output is generated through `pymol_visualizer`
+1. Docked poses are converted to PDB/SDF/MOL2 via `convert_docked_poses` (on
+   `ligand_preparer`) — this is what the GUI's in-browser 3Dmol.js viewer
+   reads; see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)
 2. After workflow completion, CLI tries to load the same job into `pymol-interactive`
 3. You can inspect it in noVNC when `pymol-interactive` is running
 

@@ -226,47 +226,53 @@ User: "Show results of docking"
 
 ---
 
-### 5. PYMOL_VISUALIZER Service
+### 5. Visualization: `convert_docked_poses` on LIGAND_PREPARER Service
 
-**Purpose:** Generate PyMOL visualizations and render PNG images of docking results
+**Purpose:** Convert each ligand's docked-pose PDBQT into PDBQT/PDB/SDF/MOL2
+files for the GUI's in-browser 3Dmol.js viewer and download picker (see
+[GUI_GUIDE.md](GUI_GUIDE.md)). No server-side rendering — PDBQT is native
+(no conversion needed), PDB/SDF/MOL2 come from a single Meeko PDBQT→RDKit
+parse per ligand, restoring proper bond orders. This replaced the old
+`PYMOL_VISUALIZER` service as the default `visualize` step; that service
+(port 8005, `visualize_docking`) is still present and callable directly, but
+is no longer part of the default workflow — see the note at the top of
+[PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
 
 **Input Parameters:**
 ```json
 {
-  "receptor_path": "/app/prepared/6lu7.pdbqt",     // From protein preparation
-  "ligand_paths": [                                // From docking (preferred) or ligand prep
-    "/app/docking_results/ATP_docking.pdbqt",
-    "/app/docking_results/HEM_docking.pdbqt"
+  "pose_results": [                                // From docking (run_docking's results)
+    {
+      "ligand_id": "ATP",
+      "output_path": "/app/docking_results/ATP_docking.pdbqt",
+      "modes": [{"mode": 1, "affinity": -8.5, "rmsd_lb": 0.0, "rmsd_ub": 0.0}]
+    }
   ],
   "output_dir": "/app/visualization",
-  "affinities": [-8.5, -7.2],                      // Binding affinities (optional)
-  "show_surface": true,
-  "show_binding_site": true,
-  "binding_site_radius": 5.0,
-  "render_image": true,
-  "image_width": 1920,
-  "image_height": 1080,
-  "image_dpi": 300,
-  "ray_trace": true
+  "formats": ["sdf", "pdb", "mol2"]                // Optional, this is the default
 }
 ```
 
 **Outputs:**
 ```json
 {
-  "script_path": "/app/visualization/docking_viz.pml",
-  "script_content": "# PyMOL script content...",
-  "image_path": "/app/visualization/docking_viz.png",
-  "image_created": true,
-  "metadata": {
-    "width": 1920,
-    "height": 1080,
-    "dpi": 300
-  }
+  "converted": [
+    {
+      "ligand_id": "ATP",
+      "num_poses": 1,
+      "conversion_method": "meeko",
+      "sdf_path": "/app/visualization/ATP_poses.sdf",
+      "pdb_path": "/app/visualization/ATP_poses.pdb",
+      "mol2_path": "/app/visualization/ATP_poses.mol2"
+    }
+  ],
+  "errors": [],
+  "status": "ok"
 }
 ```
 
-**Data Flow:** Consumes prepared protein and docked ligands → produces visualization script and images
+**Data Flow:** Consumes docked ligands (and the already-prepared receptor
+PDB, referenced as-is) → produces per-format pose files for the viewer/downloads
 
 ---
 
@@ -304,8 +310,8 @@ Orchestrator executes in this ORDER:
    └─ State saved: workflow_state["docking_results"]
 
 5. VISUALIZE (depends on PREPARE_PROTEIN and optionally DOCK)
-   ├─ Input: prepared_protein, docked_ligands (from DOCK) or prepared_ligands
-   ├─ Output: visualization script and images
+   ├─ Input: prepared_protein_pdb, docked ligand poses (from DOCK)
+   ├─ Output: per-ligand PDB/SDF/MOL2 pose files (convert_docked_poses on LIGAND_PREPARER)
    └─ Complete!
 ```
 

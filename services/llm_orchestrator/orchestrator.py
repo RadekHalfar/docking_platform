@@ -516,13 +516,19 @@ class WorkflowOrchestrator:
                 viz_dir.mkdir(exist_ok=True)
 
                 if pose_results:
+                    # ligand-preparer converts poses one ligand at a time (Meeko
+                    # round-trip, up to 3 formats each), so like dock_timeout above,
+                    # the flat 300s default silently fails on large batches.
+                    viz_timeout = max(300, math.ceil(5 * len(pose_results)))
+
                     viz_result = self.call_mcp_tool(
                         self.services["ligand_preparer"],
                         "convert_docked_poses",
                         {
                             "pose_results": pose_results,  # Already in container format
                             "output_dir": self.normalize_path(viz_dir),
-                        }
+                        },
+                        timeout=viz_timeout,
                     )
                 else:
                     if self.verbosity != VERBOSITY_LOW:

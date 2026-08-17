@@ -975,6 +975,12 @@ def _render_visualization(result: dict, job_id: str) -> None:
         if r.get("ligand_id")
     }
 
+    # Parse each ligand's converted poses and read the *currently selected*
+    # pose straight from session_state (set by the pickers rendered further
+    # down) so the viewer can be drawn right here, immediately below the bar
+    # chart — instead of after a page-long list of per-ligand pose pickers,
+    # which with a few hundred ligands buried the viewer many screens down.
+    multi_pose: dict[str, list[str]] = {}
     ligands: dict[str, dict] = {}
     for entry in viz.get("converted", []):
         ligand_id = entry.get("ligand_id")
@@ -990,25 +996,12 @@ def _render_visualization(result: dict, job_id: str) -> None:
         records = _split_sdf_records(sdf_text)
         if not records:
             continue
+        if len(records) > 1:
+            multi_pose[ligand_id] = records
 
         modes = dock_results.get(ligand_id, {}).get("modes") or []
-        pose_index = 0
-        if len(records) > 1:
-            options = list(range(1, len(records) + 1))
-
-            def _format_pose(i: int, m=modes) -> str:
-                if i - 1 < len(m) and m[i - 1].get("affinity") is not None:
-                    return f"Mode {i} ({m[i - 1]['affinity']:.2f} kcal/mol)"
-                return f"Mode {i}"
-
-            selected = st.selectbox(
-                f"{ligand_id} — pose",
-                options,
-                format_func=_format_pose,
-                key=f"pose_select_{job_id}_{ligand_id}",
-            )
-            pose_index = selected - 1
-        pose_index = min(pose_index, len(records) - 1)
+        selected = st.session_state.get(f"pose_select_{job_id}_{ligand_id}", 1)
+        pose_index = min(selected - 1, len(records) - 1)
 
         affinity = (
             modes[pose_index].get("affinity")
@@ -1018,6 +1011,25 @@ def _render_visualization(result: dict, job_id: str) -> None:
         ligands[ligand_id] = {"sdf": records[pose_index], "affinity": affinity}
 
     render_mol_viewer(receptor_pdb, ligands, mode="view", height=550, key=f"mol_viewer_{job_id}")
+
+    if multi_pose:
+        st.caption("Pose per ligand")
+        with st.container(height=300):
+            for ligand_id, records in multi_pose.items():
+                modes = dock_results.get(ligand_id, {}).get("modes") or []
+                options = list(range(1, len(records) + 1))
+
+                def _format_pose(i: int, m=modes) -> str:
+                    if i - 1 < len(m) and m[i - 1].get("affinity") is not None:
+                        return f"Mode {i} ({m[i - 1]['affinity']:.2f} kcal/mol)"
+                    return f"Mode {i}"
+
+                st.selectbox(
+                    f"{ligand_id} — pose",
+                    options,
+                    format_func=_format_pose,
+                    key=f"pose_select_{job_id}_{ligand_id}",
+                )
 
 
 @st.cache_data(show_spinner=False)
@@ -1058,25 +1070,26 @@ def _render_pose_downloads(result: dict, job_id: str) -> None:
     st.subheader("Docked Poses")
     fmt = st.selectbox("Download format", _POSE_DOWNLOAD_FORMATS, index=0, key=f"dl_format_{job_id}")
 
-    for ligand_id, dock_entry in dock_results.items():
-        if fmt == "pdbqt":
-            raw_path = dock_entry.get("output_path")
-        else:
-            raw_path = converted.get(ligand_id, {}).get(f"{fmt}_path")
+    with st.container(height=300):
+        for ligand_id, dock_entry in dock_results.items():
+            if fmt == "pdbqt":
+                raw_path = dock_entry.get("output_path")
+            else:
+                raw_path = converted.get(ligand_id, {}).get(f"{fmt}_path")
 
-        if not raw_path:
-            continue
-        path = _resolve_container_path(raw_path)
-        if not path.exists():
-            continue
+            if not raw_path:
+                continue
+            path = _resolve_container_path(raw_path)
+            if not path.exists():
+                continue
 
-        data = _read_file_bytes(str(path), path.stat().st_mtime)
-        st.download_button(
-            f"Download {ligand_id} ({fmt})",
-            data,
-            file_name=path.name,
-            key=f"dl_pose_{job_id}_{ligand_id}_{fmt}",
-        )
+            data = _read_file_bytes(str(path), path.stat().st_mtime)
+            st.download_button(
+                f"Download {ligand_id} ({fmt})",
+                data,
+                file_name=path.name,
+                key=f"dl_pose_{job_id}_{ligand_id}_{fmt}",
+            )
 
 
 def _render_file_downloads(result: dict, job_id: str) -> None:

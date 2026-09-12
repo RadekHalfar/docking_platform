@@ -578,7 +578,8 @@ orchestrator_output/
     │   └── hem_trial_b/
     │       ├── metadata.json
     │       └── docking_results/
-    └── workflow_results.json
+    ├── workflow_results.json
+    └── job.log
 ```
 
 **workflow_results.json** contains:
@@ -604,6 +605,32 @@ via the sidebar's **Rename** button afterward — see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-job)); the CLI (`nlp_orchestrator.py`)
 does not currently set it, so CLI-run jobs always persist `"job_name": ""`
 unless `execute_workflow(..., job_name=...)` is called directly.
+
+Since Phase 11 (v2.0), `execute_workflow()` **merges** into any
+`workflow_results.json` already on disk for that `job_dir` instead of
+overwriting it: `results` dicts are merged per-step (the new call's step
+results win on a repeat), `services_executed` is recomputed from every step
+that now has a result, and an existing non-empty `job_name` survives a call
+that didn't supply one. This means a session that runs `get_input_files`,
+then later reruns only `dock` after a parameter change, still has both
+steps' results on disk — a fresh `job_dir` with nothing to merge with
+behaves exactly as before.
+
+**job.log** (new in Phase 11) is a plain-text, append-only narration of a
+session's whole timeline in one file — the one place a multi-redock session
+reads end-to-end, since `workflow_results.json` only ever holds the current
+merged snapshot and the revisioned checkpoints under `checkpoints/` are
+structured data, not prose. Each line is
+`<UTC ISO timestamp> [LEVEL] <message>`, written by both
+`WorkflowOrchestrator.execute_workflow()` (workflow start, one line per step
+completion with its duration, one line per MCP tool call, a full traceback
+on failure, workflow finish + total elapsed time, and a pointer to the
+per-ligand `docking_results/<ligand_id>_moldina_output.log` files rather
+than duplicating their content) and `WorkflowStateManager` (a parameter-diff
+line on every `save_parameters_checkpoint()` call, a one-liner on every
+`save_execution_state_checkpoint()`/`restore_revision()` call) and
+`save_results_bundle()` (one line per named-bundle save, success or
+failure). See `common/job_log.py::append_job_log()`.
 
 ---
 

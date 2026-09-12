@@ -9,17 +9,20 @@ import logging
 import math
 import shutil
 import time
+import traceback
 import uuid
 import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from common.file_io import load_json_dict
 from common.file_utils import scan_ligand_folder
 from common.http_retry import build_mcp_retry_session
+from common.job_log import append_job_log
 from common.mcp_client import call_mcp_tool as _shared_call_mcp_tool
 from common.path_utils import to_container_path
 from common.utils import ensure_shared_directory
-from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
+from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS, get_service_urls_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +130,8 @@ class WorkflowOrchestrator:
                 print(json.dumps(data, indent=2))
                 print("─" * 80 + "\n")
 
+        job_dir = self.output_base / (self.current_job_id or "unknown_job")
+        call_start = time.time()
         try:
             result = _shared_call_mcp_tool(
                 service_url, tool_name, arguments,
@@ -138,8 +143,17 @@ class WorkflowOrchestrator:
             )
         except RuntimeError as e:
             logger.error(str(e))
+            append_job_log(
+                job_dir, "ERROR",
+                f"MCP call failed: {tool_name} @ {service_url} "
+                f"(after {time.time() - call_start:.1f}s): {e}",
+            )
             raise
 
+        append_job_log(
+            job_dir, "INFO",
+            f"MCP call: {tool_name} @ {service_url} completed in {time.time() - call_start:.1f}s",
+        )
         return result if result is not None else {}
     
     def _copy_local_input(self, source_path: str, dest_dir: Path) -> str:
@@ -234,7 +248,7 @@ class WorkflowOrchestrator:
         # Create job directory
         job_dir = self.output_base / self.current_job_id
         ensure_shared_directory(job_dir)
-        
+
         results = {
             "job_id": self.current_job_id,
             "job_name": job_name or "",
@@ -242,14 +256,30 @@ class WorkflowOrchestrator:
             "results": {},
             "errors": []
         }
-        
+
         logger.info(f"Starting workflow execution: {self.current_job_id}")
         logger.info(f"Services to execute: {services}")
-        
+
+        workflow_start = time.time()
+        step_start_times: Dict[str, float] = {}
+
+        def _step_started(step: str) -> None:
+            step_start_times[step] = time.time()
+
+        def _step_elapsed(step: str) -> float:
+            return time.time() - step_start_times.get(step, time.time())
+
+        append_job_log(
+            job_dir, "INFO",
+            f"Starting workflow execution: job_id={self.current_job_id} "
+            f"job_name={job_name or '(none)'} services={services}",
+        )
+
         try:
             # Step 1: Get input files (RCSB download and/or local file copy)
             if "get_input_files" in services:
                 _reload_latest_from_disk()
+                _step_started("get_input_files")
 
                 self._step_print("\n\U0001f4e5 STEP 1: Getting input files...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -334,6 +364,12 @@ class WorkflowOrchestrator:
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Got protein ({protein_source}): {self.workflow_state['protein_file']}")
                     logger.info(f"\u2705 Got {len(self.workflow_state['ligand_files'])} ligand(s) ({ligand_source})")
+                append_job_log(
+                    job_dir, "INFO",
+                    f"get_input_files completed in {_step_elapsed('get_input_files'):.1f}s: "
+                    f"got protein ({protein_source}) and {len(self.workflow_state['ligand_files'])} "
+                    f"ligand(s) ({ligand_source})",
+                )
 
                 _save_step_checkpoint("get_input_files")
             
@@ -344,6 +380,7 @@ class WorkflowOrchestrator:
             
             if "prepare_ligands" in services:
                 _reload_latest_from_disk()
+                _step_started("prepare_ligands")
 
                 self._step_print("\n\U0001f9ea STEP 2: Preparing ligands...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -380,12 +417,18 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Prepared {len(prepared_ligands)} ligand(s)")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Prepared {len(prepared_ligands)} ligands")
+                append_job_log(
+                    job_dir, "INFO",
+                    f"prepare_ligands completed in {_step_elapsed('prepare_ligands'):.1f}s: "
+                    f"prepared {len(prepared_ligands)} ligand(s)",
+                )
 
                 _save_step_checkpoint("prepare_ligands")
             
             # Step 3: Prepare protein
             if "prepare_protein" in services:
                 _reload_latest_from_disk()
+                _step_started("prepare_protein")
 
                 self._step_print("\n\U0001f9ec STEP 3: Preparing protein...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -419,12 +462,18 @@ class WorkflowOrchestrator:
                     self._step_print("   \u2705 Protein prepared successfully")
                     if self.verbosity == VERBOSITY_NORMAL:
                         logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
+                    append_job_log(
+                        job_dir, "INFO",
+                        f"prepare_protein completed in {_step_elapsed('prepare_protein'):.1f}s: "
+                        f"{self.workflow_state['prepared_protein']}",
+                    )
 
                 _save_step_checkpoint("prepare_protein")
             
             # Step 4: Run docking
             if "dock" in services:
                 _reload_latest_from_disk()
+                _step_started("dock")
 
                 self._step_print("\n\u26db\ufe0f  STEP 4: Running molecular docking...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -487,12 +536,19 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Docking completed: {docking_result.get('successful', 0)} successful")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Docking completed: {docking_result.get('successful', 0)} successful")
+                append_job_log(
+                    job_dir, "INFO",
+                    f"dock completed in {_step_elapsed('dock'):.1f}s: "
+                    f"{docking_result.get('successful', 0)} successful. "
+                    f"Per-ligand docking logs: {docking_dir}/<ligand_id>_moldina_output.log",
+                )
 
                 _save_step_checkpoint("dock")
             
             # Step 5: Visualize
             if "visualize" in services:
                 _reload_latest_from_disk()
+                _step_started("visualize")
 
                 self._step_print("\n\U0001f3a8 STEP 5: Generating visualization...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -544,9 +600,14 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Visualization prepared: {len(viz_result.get('converted', []))} ligand(s)")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Visualization prepared: {viz_result.get('converted')}")
+                append_job_log(
+                    job_dir, "INFO",
+                    f"visualize completed in {_step_elapsed('visualize'):.1f}s: "
+                    f"{len(viz_result.get('converted', []))} ligand(s)",
+                )
 
                 _save_step_checkpoint("visualize")
-            
+
             # Success
             results["status"] = "completed"
             self._step_print("\n\u2705 WORKFLOW COMPLETED SUCCESSFULLY\n")
@@ -554,12 +615,33 @@ class WorkflowOrchestrator:
                 logger.info("\n" + "="*80)
                 logger.info("\u2705 WORKFLOW COMPLETED SUCCESSFULLY")
                 logger.info("="*80)
-            
+
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
             results["status"] = "failed"
             results["errors"].append(str(e))
-        
+            append_job_log(job_dir, "ERROR", traceback.format_exc())
+
+        append_job_log(
+            job_dir, "INFO",
+            f"Workflow finished: job_id={self.current_job_id} status={results['status']} "
+            f"elapsed={time.time() - workflow_start:.1f}s",
+        )
+
+        # Merge with any existing on-disk results so a session spanning more
+        # than one execute_workflow() call (e.g. a redock after a parameter
+        # change) doesn't lose earlier steps' results from the persisted
+        # snapshot -- this used to clobber on every call. No-op for a fresh
+        # job_dir (nothing to merge with).
+        existing_results = load_json_dict(job_dir / "workflow_results.json")
+        if existing_results:
+            merged_step_results = dict(existing_results.get("results", {}))
+            merged_step_results.update(results.get("results", {}))
+            results["results"] = merged_step_results
+            results["services_executed"] = [s for s in WORKFLOW_STEPS if s in merged_step_results]
+            if not results.get("job_name") and existing_results.get("job_name"):
+                results["job_name"] = existing_results["job_name"]
+
         # Save results to file
         results_file = job_dir / "workflow_results.json"
         try:
@@ -568,5 +650,5 @@ class WorkflowOrchestrator:
             logger.info(f"Results saved to: {results_file}")
         except IOError as e:
             logger.error("Failed to save results to %s: %s", results_file, e)
-        
+
         return results

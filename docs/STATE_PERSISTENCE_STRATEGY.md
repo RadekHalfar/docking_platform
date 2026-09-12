@@ -37,6 +37,15 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
   - immutable snapshot for each parameter update revision
 - `checkpoints/rev_XXXXXX_state.json`
   - immutable snapshot for each runtime state checkpoint revision
+- `job.log` (Phase 11 / v2.0)
+  - append-only, human-readable narration of the whole session timeline
+    (parameter diffs, checkpoint/undo events, workflow start/step/finish,
+    MCP calls, full tracebacks on failure) -- see `common/job_log.py` and
+    [docs/LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md). Written by
+    `WorkflowStateManager` and `WorkflowOrchestrator.execute_workflow()`
+    regardless of whether a `state_manager` is attached, so it exists for
+    UI one-shot jobs too, even though the checkpoint/revision files above
+    remain CLI-only until Stage 11.2 wires a `state_manager` into the GUI.
 
 ## Atomic Writes
 All JSON writes are atomic:

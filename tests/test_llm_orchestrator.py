@@ -502,6 +502,152 @@ class TestWorkflowOrchestrator:
         assert captured_arguments["ligand_ids"] == ["HEM"]
 
 
+class TestJobLog:
+    """Stage 11.1: job.log narration written by execute_workflow()."""
+
+    def _job_log_text(self, tmp_path, job_id):
+        log_path = tmp_path / job_id / "job.log"
+        assert log_path.exists(), "job.log should have been created"
+        return log_path.read_text(encoding="utf-8")
+
+    def test_execute_workflow_logs_start_step_and_closing_lines(self, tmp_path, make_mcp_response):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        orchestrator.execute_workflow(workflow, job_id="log_test", job_name="My Run")
+
+        text = self._job_log_text(tmp_path, "log_test")
+        assert "Starting workflow execution: job_id=log_test job_name=My Run" in text
+        assert "get_input_files completed in" in text
+        assert "Workflow finished: job_id=log_test status=completed" in text
+
+    def test_execute_workflow_logs_full_traceback_on_failure(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(side_effect=RuntimeError("service down"))
+
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": [], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        orchestrator.execute_workflow(workflow, job_id="traceback_test")
+
+        text = self._job_log_text(tmp_path, "traceback_test")
+        assert "Traceback (most recent call last)" in text
+        assert "RuntimeError: service down" in text
+        assert "Workflow finished: job_id=traceback_test status=failed" in text
+
+    def test_call_mcp_tool_logs_one_line_per_call(self, tmp_path, make_mcp_response):
+        with patch("services.llm_orchestrator.orchestrator.requests.Session.post") as mock_post:
+            mock_post.return_value = make_mcp_response(result={"ok": True})
+
+            orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+            orchestrator.current_job_id = "mcp_call_log_test"
+
+            orchestrator.call_mcp_tool("http://localhost:8001", "test_tool", {"param": "value"})
+
+        text = self._job_log_text(tmp_path, "mcp_call_log_test")
+        lines = [line for line in text.splitlines() if "test_tool" in line]
+        assert len(lines) == 1
+        assert "completed in" in lines[0]
+
+
+class TestWorkflowResultsMerge:
+    """Stage 11.1: workflow_results.json accumulates across execute_workflow() calls."""
+
+    def test_second_call_with_different_services_preserves_first_calls_results(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        state_manager = WorkflowStateManager(tmp_path / "merge_test")
+
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+        first_workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+        first_results = orchestrator.execute_workflow(
+            first_workflow, job_id="merge_test", state_manager=state_manager, job_name="Run 1"
+        )
+        assert first_results["services_executed"] == ["get_input_files"]
+
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"prepared_ligands": [{"pdbqt_path": "/app/prepared/ATP.pdbqt"}]}
+        )
+        second_workflow = {
+            "services": ["prepare_ligands"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+        }
+        # Reuses the same job_dir's persisted workflow_state (get_input_files'
+        # ligand_files) via state_manager, exactly like a GUI/CLI redock would.
+        second_results = orchestrator.execute_workflow(
+            second_workflow, job_id="merge_test", state_manager=state_manager
+        )
+
+        results_file = tmp_path / "merge_test" / "workflow_results.json"
+        saved = json.loads(results_file.read_text())
+
+        assert "get_input_files" in saved["results"]
+        assert "prepare_ligands" in saved["results"]
+        assert saved["services_executed"] == ["get_input_files", "prepare_ligands"]
+        # Earlier non-empty job_name survives a second call that didn't supply one.
+        assert saved["job_name"] == "Run 1"
+        # The returned dict (not just the on-disk file) reflects the merge too.
+        assert second_results["services_executed"] == ["get_input_files", "prepare_ligands"]
+
+    def test_repeated_step_lets_the_new_call_win(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+        orchestrator.execute_workflow(workflow, job_id="rewin_test")
+
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/1abc.pdb", "ligand_paths": ["/app/HEM.sdf"]}
+        )
+        workflow2 = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "1abc", "ligand_ids": ["HEM"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+        orchestrator.execute_workflow(workflow2, job_id="rewin_test")
+
+        results_file = tmp_path / "rewin_test" / "workflow_results.json"
+        saved = json.loads(results_file.read_text())
+
+        assert saved["results"]["get_input_files"]["protein_path"] == "/app/1abc.pdb"
+
+    def test_fresh_job_dir_is_unaffected_by_merge_logic(self, tmp_path):
+        """A single execute_workflow() call against a brand-new job_dir must
+        behave exactly as before (no pre-existing file to merge with)."""
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        results = orchestrator.execute_workflow(workflow, job_id="fresh_test")
+
+        assert results["services_executed"] == ["get_input_files"]
+        results_file = tmp_path / "fresh_test" / "workflow_results.json"
+        saved = json.loads(results_file.read_text())
+        assert saved["services_executed"] == ["get_input_files"]
+
+
 class TestWorkflowOrchestratorErrors:
     """Tests for WorkflowOrchestrator error handling (A2)."""
 

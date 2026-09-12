@@ -255,3 +255,67 @@ def test_next_revision_is_safe_under_concurrent_writers(mgr):
     # No orphaned checkpoint files: every revision 1..n_threads has one.
     available = mgr._available_revisions()
     assert available == list(range(1, n_threads + 1))
+
+
+# ---------------------------------------------------------------------------
+# job.log (Stage 11.1)
+# ---------------------------------------------------------------------------
+
+def _job_log_text(mgr) -> str:
+    log_path = mgr.job_dir / "job.log"
+    assert log_path.exists(), "job.log should have been created"
+    return log_path.read_text(encoding="utf-8")
+
+
+def test_save_parameters_checkpoint_logs_a_diff_line(mgr):
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    mgr.save_parameters_checkpoint(PARAMS_B, source="interactive_update")
+
+    text = _job_log_text(mgr)
+    lines = [line for line in text.splitlines() if "source=interactive_update" in line]
+    assert len(lines) == 1, f"expected exactly one diff line for the second save, got: {lines}"
+
+    diff_line = lines[0]
+    assert "source=interactive_update" in diff_line
+    # Only the keys that actually changed between PARAMS_A and PARAMS_B.
+    assert "ligand_ids: ['ATP'] -> ['HEM']" in diff_line
+    assert "center: [1.0, 2.0, 3.0] -> [5.0, 6.0, 7.0]" in diff_line
+    assert "protein_id" not in diff_line
+    assert "box_size" not in diff_line
+
+
+def test_save_parameters_checkpoint_first_call_logs_all_keys_as_new(mgr):
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+
+    text = _job_log_text(mgr)
+    assert "source=initial_parse" in text
+    assert "protein_id: None -> '6lu7'" in text
+
+
+def test_save_execution_state_checkpoint_logs_a_line(mgr):
+    mgr.save_execution_state_checkpoint(STATE_A, step="get_input_files")
+
+    text = _job_log_text(mgr)
+    assert "State checkpoint saved (step=get_input_files)" in text
+
+
+def test_restore_revision_logs_a_line(mgr):
+    r1 = mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    mgr.save_parameters_checkpoint(PARAMS_B, source="interactive_update")
+
+    mgr.restore_revision(r1)
+
+    text = _job_log_text(mgr)
+    assert f"Restored revision {r1}" in text
+
+
+def test_job_log_lines_are_timestamped_and_ordered(mgr):
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    mgr.save_execution_state_checkpoint(STATE_A, step="get_input_files")
+
+    lines = [line for line in _job_log_text(mgr).splitlines() if line.strip()]
+    assert len(lines) == 2
+    for line in lines:
+        assert line.startswith("20"), f"expected an ISO timestamp prefix, got: {line}"
+    assert "Parameters updated" in lines[0] or "Parameters checkpoint saved" in lines[0]
+    assert "State checkpoint saved" in lines[1]

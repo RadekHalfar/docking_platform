@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.file_io import FileLock, atomic_write_json, load_json_dict
+from common.job_log import append_job_log
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,9 @@ class WorkflowStateManager:
         """Return the canonical checkpoint file path for a given revision and type suffix."""
         return self.checkpoints_dir / f"rev_{revision:06d}_{suffix}.json"
 
-    def _next_revision(self, event_type: str, details: Dict[str, Any]) -> int:
+    def _next_revision(
+        self, event_type: str, details: Dict[str, Any], log_message: Optional[str] = None
+    ) -> int:
         # The read-modify-write below is not safe to interleave: two writers
         # racing here would both compute the same "next" revision, and
         # whichever writes last silently clobbers the other's event (its
@@ -76,7 +79,42 @@ class WorkflowStateManager:
             events = manifest.setdefault("events", [])
             events.append(event)
             self._write_manifest(manifest)
+
+        # Every parameters_update/state_update/undo_restore event -- the
+        # entire content of this manifest -- also gets a human-readable line
+        # in job.log, the one place a session's whole timeline is readable
+        # end-to-end. log_message lets callers (e.g. a parameters diff) log
+        # something richer than event_type/details alone would allow, without
+        # bloating the manifest itself with that same detail.
+        message = log_message if log_message is not None else self._default_log_message(event_type, details)
+        append_job_log(self.job_dir, "INFO", message)
         return revision
+
+    @staticmethod
+    def _default_log_message(event_type: str, details: Dict[str, Any]) -> str:
+        if event_type == "state_update":
+            return f"State checkpoint saved (step={details.get('step', 'unknown')})"
+        if event_type == "undo_restore":
+            return f"Restored revision {details.get('restored_from_revision')} (recorded as a new revision)"
+        return f"{event_type} recorded"
+
+    @staticmethod
+    def _format_parameters_diff(
+        old_parameters: Optional[Dict[str, Any]], new_parameters: Dict[str, Any], source: str
+    ) -> str:
+        old_parameters = old_parameters or {}
+        changed_keys = sorted(
+            key
+            for key in set(old_parameters) | set(new_parameters)
+            if old_parameters.get(key) != new_parameters.get(key)
+        )
+        if not changed_keys:
+            return f"Parameters checkpoint saved (source={source}); no changes"
+
+        diff = "; ".join(
+            f"{key}: {old_parameters.get(key)!r} -> {new_parameters.get(key)!r}" for key in changed_keys
+        )
+        return f"Parameters updated (source={source}): {diff}"
 
     def get_current_revision(self) -> int:
         manifest = self._read_manifest()
@@ -84,7 +122,11 @@ class WorkflowStateManager:
 
     def save_parameters_checkpoint(self, parameters: Dict[str, Any], source: str = "unknown") -> int:
         """Persist latest parameters and snapshot a new immutable revision."""
-        revision = self._next_revision("parameters_update", {"source": source})
+        # Computed before _next_revision (and thus before the "latest"
+        # parameters file below is overwritten), so this still sees the
+        # previous call's values.
+        diff_message = self._format_parameters_diff(self.load_latest_parameters(), parameters, source)
+        revision = self._next_revision("parameters_update", {"source": source}, log_message=diff_message)
         payload = {
             "revision": revision,
             "timestamp": self._timestamp(),

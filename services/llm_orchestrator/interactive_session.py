@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, cast
 
 from common.file_io import atomic_write_json
+from common.job_log import append_job_log
 from .workflow_definition import get_ligand_display_names, get_protein_display_name
 from .workflow_state_manager import WorkflowStateManager
 
@@ -72,14 +73,17 @@ def save_results_bundle(
         * ``artifacts`` (list[str]) — names of sub-directories/files copied
         * ``error`` (str | None) — human-readable reason when ``success`` is False
     """
+    job_dir = Path(job_dir)
+
     err = validate_bundle_name(name)
     if err:
+        append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' rejected: {err}")
         return {"success": False, "bundle_path": None, "artifacts": [], "error": err}
 
-    job_dir = Path(job_dir)
     bundle_dir = job_dir / "saved_results" / name
 
     if bundle_dir.exists() and not overwrite:
+        append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' failed: bundle already exists")
         return {
             "success": False,
             "bundle_path": str(bundle_dir),
@@ -158,6 +162,11 @@ def save_results_bundle(
         "parameters": parameters,
     }
     atomic_write_json(bundle_dir / "metadata.json", metadata)
+
+    append_job_log(
+        job_dir, "INFO",
+        f"save_results_bundle '{name}' saved (scope={scope}, revision={revision}): {', '.join(included) or 'nothing to copy'}",
+    )
 
     return {
         "success": True,

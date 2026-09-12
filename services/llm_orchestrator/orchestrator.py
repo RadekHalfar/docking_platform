@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import shutil
+import threading
 import time
 import traceback
 import uuid
@@ -210,6 +211,7 @@ class WorkflowOrchestrator:
         job_id: str = None,
         state_manager: Optional[Any] = None,
         job_name: str = "",
+        cancel_event: Optional[threading.Event] = None,
     ) -> Dict[str, Any]:
         """
         Execute a complete workflow.
@@ -219,6 +221,13 @@ class WorkflowOrchestrator:
             job_id: Optional job identifier
             state_manager: Optional persistence manager used for checkpointing
             job_name: Optional user-supplied display label for the job
+            cancel_event: Optional cooperative-cancellation flag (e.g. from a
+                GUI "Stop" button). Checked once before each of the 5 steps --
+                not mid-request, so a step's own in-flight MCP call (capped at
+                its own timeout, see common/mcp_client.py) still runs to
+                completion; cancellation only prevents the *next* step from
+                starting. `None` (the default, used by every CLI caller) means
+                cancellation is never checked -- zero behavior change.
 
         Returns:
             Workflow execution results
@@ -277,9 +286,25 @@ class WorkflowOrchestrator:
             f"job_name={job_name or '(none)'} services={services}",
         )
 
+        cancelled = False
+
+        def _maybe_cancel() -> bool:
+            # Checked once at the top of each step below, right after
+            # confirming that step was even requested -- a step already in
+            # flight (e.g. a single MCP call) is never interrupted mid-call,
+            # only the *next* one is prevented from starting.
+            nonlocal cancelled
+            if not cancelled and cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                logger.info(
+                    "Workflow %s: cancellation requested, stopping before next step",
+                    self.current_job_id,
+                )
+            return cancelled
+
         try:
             # Step 1: Get input files (RCSB download and/or local file copy)
-            if "get_input_files" in services:
+            if "get_input_files" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
 
@@ -379,7 +404,7 @@ class WorkflowOrchestrator:
                 prepared_dir = job_dir / "prepared"
                 ensure_shared_directory(prepared_dir)
             
-            if "prepare_ligands" in services:
+            if "prepare_ligands" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
 
@@ -423,7 +448,7 @@ class WorkflowOrchestrator:
                 _save_step_checkpoint("prepare_ligands")
             
             # Step 3: Prepare protein
-            if "prepare_protein" in services:
+            if "prepare_protein" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
 
@@ -464,7 +489,7 @@ class WorkflowOrchestrator:
                 _save_step_checkpoint("prepare_protein")
             
             # Step 4: Run docking
-            if "dock" in services:
+            if "dock" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
 
@@ -538,7 +563,7 @@ class WorkflowOrchestrator:
                 _save_step_checkpoint("dock")
             
             # Step 5: Visualize
-            if "visualize" in services:
+            if "visualize" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
 
@@ -596,13 +621,22 @@ class WorkflowOrchestrator:
 
                 _save_step_checkpoint("visualize")
 
-            # Success
-            results["status"] = "completed"
-            self._step_print("\n\u2705 WORKFLOW COMPLETED SUCCESSFULLY\n")
-            if self.verbosity == VERBOSITY_NORMAL:
-                logger.info("\n" + "="*80)
-                logger.info("\u2705 WORKFLOW COMPLETED SUCCESSFULLY")
-                logger.info("="*80)
+            if cancelled:
+                results["status"] = "cancelled"
+                results["errors"].append("Workflow cancelled by user request")
+                self._step_print("\n\u23f9 WORKFLOW CANCELLED (stopped before the next step)\n")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info("\n" + "="*80)
+                    logger.info("\u23f9 WORKFLOW CANCELLED")
+                    logger.info("="*80)
+            else:
+                # Success
+                results["status"] = "completed"
+                self._step_print("\n\u2705 WORKFLOW COMPLETED SUCCESSFULLY\n")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info("\n" + "="*80)
+                    logger.info("\u2705 WORKFLOW COMPLETED SUCCESSFULLY")
+                    logger.info("="*80)
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")

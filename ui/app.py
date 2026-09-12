@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,12 +15,19 @@ from services.llm_orchestrator.rerun_planner import compute_rerun_steps, describ
 from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
-from ui.job_history import escape_markdown, list_completed_jobs, rename_job
+from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
 from ui.results import build_comparison_html, make_affinity_chart_figure
-from ui.session_state import DETECTED_CPU_COUNT, apply_parsed_params, apply_settings, get_params, init
+from ui.session_state import (
+    DETECTED_CPU_COUNT,
+    apply_parsed_params,
+    apply_settings,
+    get_params,
+    init,
+    start_new_session,
+)
 
 st.set_page_config(
     layout="wide",
@@ -197,7 +205,7 @@ def _handle_run_docking() -> None:
     st.session_state.bridge = bridge
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": f"Starting docking job `{job_id}`..."}
+        {"role": "assistant", "content": f"Starting docking session `{job_id}`..."}
     )
     st.rerun()
 
@@ -274,9 +282,10 @@ def _execute_confirmed_redock() -> None:
     st.rerun()
 
 
-def _reset_session() -> None:
+def _reset_session(preserve: frozenset = frozenset({"settings"})) -> None:
     for key in list(st.session_state.keys()):
-        del st.session_state[key]
+        if key not in preserve:
+            del st.session_state[key]
     st.rerun()
 
 
@@ -298,8 +307,12 @@ def render_sidebar() -> None:
         _render_settings_form()
 
         st.divider()
-        st.subheader("Job History")
+        st.subheader("Session History")
         _render_job_history()
+
+        st.divider()
+        st.subheader("Failed Sessions")
+        _render_failed_session_history()
 
 
 @st.cache_data(ttl=30, show_spinner="Checking available Ollama models...")
@@ -321,6 +334,12 @@ def _cached_completed_jobs(output_base: str) -> list:
     # every ~2 seconds for the entire duration of any running job, growing
     # linearly with total historical job count.
     return list_completed_jobs(output_base)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _cached_failed_jobs(output_base: str) -> list:
+    # Mirrors _cached_completed_jobs's caching rationale above.
+    return list_failed_jobs(output_base)
 
 
 def _render_settings_form() -> None:
@@ -385,66 +404,162 @@ def _render_settings_form() -> None:
             st.error(f"Could not apply settings: {exc}")
 
 
+def _resume_session(job: dict) -> None:
+    """Load a session's results into the results panel *and* resume it as
+    the active interactive session, so redocking can continue immediately
+    instead of starting a brand-new job on the next "Run Docking" click.
+
+    Reconstructing a WorkflowStateManager against an existing job_dir is
+    safe -- it only creates the manifest file if missing, never overwrites
+    existing checkpoints (see workflow_state_manager.py).
+    """
+    st.session_state.viewed_job_id = job["job_id"]
+    state_manager = WorkflowStateManager(Path(job["job_dir"]))
+    last_results = _load_workflow_results(job["job_id"])
+    st.session_state.interactive_session.activate(
+        job["job_id"], state_manager, last_results=last_results
+    )
+    st.session_state.job_id = job["job_id"]
+    st.session_state.job_name = job.get("job_name", "")
+    # Prevents render_chat()'s completion-sync block from immediately
+    # overwriting session.last_results on the next rerun (that block only
+    # runs while _job_done is False, i.e. for a run it's actively tracking).
+    st.session_state["_job_done"] = True
+    st.rerun()
+
+
+def _clear_all_job_caches() -> None:
+    _cached_completed_jobs.clear()
+    _cached_failed_jobs.clear()
+
+
+def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str | None:
+    """Render one session's Load/Rename/Delete controls -- shared by Session
+    History and Failed Sessions. Returns job_dir if its checkbox was
+    checked (feeds "Compare selected sessions"), else None.
+    """
+    job_name = job.get("job_name") or ""
+    if job_name:
+        label = f"**{escape_markdown(job_name)}**  `{job['job_id']}`  {detail}"
+    else:
+        label = f"{job['job_id']}  {detail}"
+
+    selected_dir = None
+    col_first, col_load, col_rename, col_delete = st.columns([3, 1, 1, 1])
+    with col_first:
+        if show_checkbox:
+            if st.checkbox(label, key=f"job_sel_{job['job_id']}"):
+                selected_dir = job["job_dir"]
+        else:
+            st.markdown(label)
+    with col_load:
+        if st.button("Load", key=f"job_load_{job['job_id']}"):
+            _resume_session(job)
+    with col_rename:
+        if st.button("Rename", key=f"job_rename_toggle_{job['job_id']}"):
+            flag = f"_renaming_{job['job_id']}"
+            st.session_state[flag] = not st.session_state.get(flag, False)
+
+    # Only the current browser session's own bridge is visible here -- a
+    # different tab/process running the same job_id is not detectable, and
+    # that residual gap is documented rather than silently assumed solved.
+    running_here = (
+        job["job_id"] == st.session_state.get("job_id")
+        and st.session_state.bridge is not None
+        and st.session_state.bridge.is_running()
+    )
+    with col_delete:
+        if st.button("Delete", key=f"job_delete_toggle_{job['job_id']}", disabled=running_here):
+            flag = f"_deleting_{job['job_id']}"
+            st.session_state[flag] = not st.session_state.get(flag, False)
+    if running_here:
+        st.caption("Running in this browser tab — use Stop (in the results panel) before deleting.")
+
+    if st.session_state.get(f"_renaming_{job['job_id']}"):
+        new_name = st.text_input(
+            "New name",
+            value=job_name,
+            key=f"job_rename_input_{job['job_id']}",
+            max_chars=60,
+            label_visibility="collapsed",
+        )
+        col_save, col_cancel = st.columns(2)
+        with col_save:
+            if st.button("Save", key=f"job_rename_save_{job['job_id']}"):
+                try:
+                    rename_job(job["job_dir"], new_name)
+                except Exception as exc:
+                    st.error(f"Rename failed: {exc}")
+                else:
+                    _clear_all_job_caches()
+                    st.session_state[f"_renaming_{job['job_id']}"] = False
+                    if st.session_state.get("viewed_job_id") == job["job_id"]:
+                        st.session_state.job_name = new_name.strip()[:60]
+                    st.rerun()
+        with col_cancel:
+            if st.button("Cancel", key=f"job_rename_cancel_{job['job_id']}"):
+                st.session_state[f"_renaming_{job['job_id']}"] = False
+                st.rerun()
+
+    if st.session_state.get(f"_deleting_{job['job_id']}"):
+        st.warning(f"Delete session `{job['job_id']}` and all its files? This cannot be undone.")
+        col_confirm, col_cancel2 = st.columns(2)
+        with col_confirm:
+            if st.button("Confirm delete", key=f"job_delete_confirm_{job['job_id']}"):
+                try:
+                    shutil.rmtree(job["job_dir"])
+                except OSError as exc:
+                    st.error(f"Delete failed: {exc}")
+                else:
+                    _clear_all_job_caches()
+                    if st.session_state.get("viewed_job_id") == job["job_id"]:
+                        st.session_state.viewed_job_id = None
+                    if st.session_state.get("job_id") == job["job_id"]:
+                        start_new_session()
+                    st.session_state[f"_deleting_{job['job_id']}"] = False
+                    st.rerun()
+        with col_cancel2:
+            if st.button("Cancel", key=f"job_delete_cancel_{job['job_id']}"):
+                st.session_state[f"_deleting_{job['job_id']}"] = False
+                st.rerun()
+
+    return selected_dir
+
+
 def _render_job_history() -> None:
     jobs = _cached_completed_jobs(str(OUTPUT_BASE))
 
     if not jobs:
-        st.caption("No completed jobs yet.")
+        st.caption("No completed sessions yet.")
         return
 
     selected = []
     for job in jobs[:10]:
-        job_name = job.get("job_name") or ""
-        protein_info = f"{job['protein_id']} ({job['ligand_count']} ligand(s))"
-        if job_name:
-            label = f"**{escape_markdown(job_name)}**  `{job['job_id']}`  {protein_info}"
-        else:
-            label = f"{job['job_id']}  {protein_info}"
+        detail = f"{job['protein_id']} ({job['ligand_count']} ligand(s))"
+        job_dir = _render_session_row(job, detail, show_checkbox=True)
+        if job_dir:
+            selected.append(job_dir)
 
-        col_check, col_load, col_rename = st.columns([3, 1, 1])
-        with col_check:
-            if st.checkbox(label, key=f"job_sel_{job['job_id']}"):
-                selected.append(job["job_dir"])
-        with col_load:
-            if st.button("Load", key=f"job_load_{job['job_id']}"):
-                st.session_state.viewed_job_id = job["job_id"]
-                st.rerun()
-        with col_rename:
-            if st.button("Rename", key=f"job_rename_toggle_{job['job_id']}"):
-                flag = f"_renaming_{job['job_id']}"
-                st.session_state[flag] = not st.session_state.get(flag, False)
-
-        if st.session_state.get(f"_renaming_{job['job_id']}"):
-            new_name = st.text_input(
-                "New name",
-                value=job_name,
-                key=f"job_rename_input_{job['job_id']}",
-                max_chars=60,
-                label_visibility="collapsed",
-            )
-            col_save, col_cancel = st.columns(2)
-            with col_save:
-                if st.button("Save", key=f"job_rename_save_{job['job_id']}"):
-                    try:
-                        rename_job(job["job_dir"], new_name)
-                    except Exception as exc:
-                        st.error(f"Rename failed: {exc}")
-                    else:
-                        _cached_completed_jobs.clear()
-                        st.session_state[f"_renaming_{job['job_id']}"] = False
-                        if st.session_state.get("viewed_job_id") == job["job_id"]:
-                            st.session_state.job_name = new_name.strip()[:60]
-                        st.rerun()
-            with col_cancel:
-                if st.button("Cancel", key=f"job_rename_cancel_{job['job_id']}"):
-                    st.session_state[f"_renaming_{job['job_id']}"] = False
-                    st.rerun()
-
-    if len(selected) >= 2 and st.button("Compare selected jobs"):
+    if len(selected) >= 2 and st.button("Compare selected sessions"):
         try:
             st.session_state.comparison = compare_jobs(selected)
         except Exception as exc:
             st.error(f"Comparison failed: {exc}")
+
+
+def _render_failed_session_history() -> None:
+    jobs = _cached_failed_jobs(str(OUTPUT_BASE))
+
+    if not jobs:
+        st.caption("No failed or cancelled sessions.")
+        return
+
+    for job in jobs[:10]:
+        first_error = job.get("first_error", "Unknown error")
+        if len(first_error) > 80:
+            first_error = first_error[:77] + "..."
+        detail = f"{job['protein_id']} — {first_error}"
+        _render_session_row(job, detail, show_checkbox=False)
 
 
 # ── Chat panel ────────────────────────────────────────────────────────────────
@@ -488,6 +603,11 @@ def render_chat() -> None:
                 st.session_state["_job_done"] = True
                 st.session_state.messages.append(
                     {"role": "assistant", "content": f"Workflow failed: {error}"}
+                )
+            elif result and result.get("status") == "cancelled":
+                st.session_state["_job_done"] = True
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": "Session stopped."}
                 )
             elif result and result.get("status") == "failed":
                 st.session_state["_job_done"] = True
@@ -589,16 +709,16 @@ def render_parameters_panel() -> None:
         )
         st.caption(
             f"{DETECTED_CPU_COUNT} CPU core(s) detected on this machine. Running many "
-            "ligands in parallel increases memory usage — lower this if docking jobs "
+            "ligands in parallel increases memory usage — lower this if docking sessions "
             "start failing unexpectedly."
         )
 
     st.divider()
     st.text_input(
-        "Job name (optional)",
+        "Session name (optional)",
         key="param_job_name",
         max_chars=60,
-        help="A label to help you find this job later in the history panel.",
+        help="A label to help you find this session later in the history panel.",
     )
 
     st.divider()
@@ -614,12 +734,25 @@ def render_parameters_panel() -> None:
                 st.session_state.pop("_pending_rerun", None)
                 st.rerun()
     else:
-        col_run, col_reset = st.columns(2)
+        col_run, col_new, col_reset = st.columns(3)
         with col_run:
             if st.button("Run Docking", type="primary", use_container_width=True):
                 _handle_run_docking()
+        with col_new:
+            if st.button(
+                "New Session",
+                use_container_width=True,
+                disabled=not st.session_state.interactive_session.has_active_job(),
+                help="Keep your parameters, start a fresh session.",
+            ):
+                start_new_session()
+                st.rerun()
         with col_reset:
-            if st.button("Reset", use_container_width=True):
+            if st.button(
+                "Reset",
+                use_container_width=True,
+                help="Clear everything, including entered parameters.",
+            ):
                 _reset_session()
 
 
@@ -913,7 +1046,7 @@ def _render_docking_box() -> None:
 
 def render_results_panel() -> None:
     st.subheader("Results")
-    tab_job, tab_compare = st.tabs(["Job Viewer", "Compare Jobs"])
+    tab_job, tab_compare = st.tabs(["Session Viewer", "Compare Sessions"])
 
     with tab_job:
         _render_job_results()
@@ -923,7 +1056,7 @@ def render_results_panel() -> None:
         if comparison:
             _render_comparison_table(comparison)
         else:
-            st.caption("Select 2+ completed jobs in the sidebar and click Compare.")
+            st.caption("Select 2+ completed sessions in the sidebar and click Compare.")
 
 
 def _load_workflow_results(job_id: str) -> dict | None:
@@ -976,9 +1109,27 @@ def _render_docking_progress(job_id: str) -> None:
 
 
 def _render_workflow_failure(job_id: str, result: dict) -> None:
-    st.error(f"Job `{job_id}` failed.")
+    st.error(f"Session `{job_id}` failed.")
     for err in result.get("errors", []):
         st.caption(str(err))
+    _render_job_log(job_id)
+
+
+def _render_job_log(job_id: str) -> None:
+    """Session Log viewer: reads job.log fresh every rerun (it's small and
+    actively appended to while a job is running, so caching it -- unlike the
+    other file reads in this module -- would just add complexity for no
+    real benefit).
+    """
+    log_path = OUTPUT_BASE / job_id / "job.log"
+    if not log_path.exists():
+        return
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    with st.expander("Session Log"):
+        st.code("\n".join(text.splitlines()[-500:]))
+        st.download_button(
+            "Download full log", text, file_name="job.log", key=f"dl_job_log_{job_id}"
+        )
 
 
 def _job_label(job_id: str, job_name: str | None) -> str:
@@ -995,55 +1146,64 @@ def _render_job_results() -> None:
 
     if not viewed_job_id:
         st.caption(
-            "No job selected yet. Configure parameters and click Run Docking, "
-            "or click Load next to a job in the sidebar's Job History."
+            "No session selected yet. Configure parameters and click Run Docking, "
+            "or click Load next to a session in the sidebar's Session History."
         )
         return
 
-    # The job currently tracked by the live bridge takes priority — it may
-    # still be running, in which case there's nothing on disk to fall back to.
+    # The session currently tracked by the live bridge takes priority — it
+    # may still be running, in which case there's nothing on disk to fall
+    # back to.
     if bridge and viewed_job_id == active_job_id:
         job_label = _job_label(viewed_job_id, st.session_state.get("job_name"))
 
         if bridge.is_running():
-            st.info(f"Job {job_label} is running...")
+            st.info(f"Session {job_label} is running...")
             _render_docking_progress(viewed_job_id)
+            if bridge.stop_requested():
+                st.caption("Stop requested — waiting for the current step to finish...")
+            elif st.button("Stop", key=f"stop_{viewed_job_id}"):
+                bridge.request_stop()
+                st.rerun()
+            _render_job_log(viewed_job_id)
             return
 
         result = bridge.get_result()
         error = bridge.get_error()
 
         if error:
-            st.error(f"Job failed: {error}")
+            st.error(f"Session failed: {error}")
             return
 
         if result and result.get("status") == "completed":
-            st.success(f"Job {job_label} completed")
+            st.success(f"Session {job_label} completed")
             _render_affinity_chart(result)
             _render_visualization(result, viewed_job_id)
             _render_file_downloads(result, viewed_job_id)
+            _render_job_log(viewed_job_id)
             return
 
-        if result and result.get("status") == "failed":
+        if result and result.get("status") in ("failed", "cancelled"):
             _render_workflow_failure(viewed_job_id, result)
             return
 
-    # Otherwise, view a completed job by reading its results straight from disk
-    # — covers jobs Loaded from history and jobs with no live bridge.
+    # Otherwise, view a session by reading its results straight from disk —
+    # covers sessions Loaded from history and sessions with no live bridge.
     result = _load_workflow_results(viewed_job_id)
     if result and result.get("status") == "completed":
         job_label = _job_label(viewed_job_id, result.get("job_name"))
-        st.info(f"Viewing job {job_label}")
+        st.info(f"Viewing session {job_label}")
         _render_affinity_chart(result)
         _render_visualization(result, viewed_job_id)
         _render_file_downloads(result, viewed_job_id)
+        _render_job_log(viewed_job_id)
         return
 
-    if result and result.get("status") == "failed":
+    if result and result.get("status") in ("failed", "cancelled"):
         _render_workflow_failure(viewed_job_id, result)
         return
 
-    st.caption("No results found for this job.")
+    st.caption("No results found for this session.")
 
 
 def _render_affinity_chart(result: dict) -> None:
@@ -1232,7 +1392,7 @@ def _render_file_downloads(result: dict, job_id: str) -> None:
 
 def _render_comparison_table(comparison: dict) -> None:
     st.markdown(build_comparison_html(comparison), unsafe_allow_html=True)
-    st.caption("Green = strongest predicted binding (most negative kcal/mol). N/A = not docked in that job.")
+    st.caption("Green = strongest predicted binding (most negative kcal/mol). N/A = not docked in that session.")
 
 
 # ── Layout ────────────────────────────────────────────────────────────────────

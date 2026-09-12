@@ -24,15 +24,34 @@ the GUI does *not* yet have is `history`/`undo`/named `save_results`
 affordances — those exist in the CLI against the same `state_manager` this
 stage wires in, and are tracked as GUI-parity future work. Everything below
 describes the interactive CLI session (`nlp_orchestrator.py --interactive`)
-except where a Stage 11.2 note calls out GUI behavior explicitly.
+except where a Stage 11.2/11.3 note calls out GUI behavior explicitly.
 
-**Not covered by this:** resuming a killed/crashed process. Undo/restore
-operates on `session.last_results`, which only exists in the memory of a
-live interactive session -- if the process is killed, there is currently no
-code path that reloads checkpoints to resume where it left off. The atomic
-writes below guarantee files on disk are never left half-written, but that's
-a different guarantee from being able to pick a workflow back up after a
-crash.
+**Stage 11.3** added GUI-side session resumption: the sidebar's **Load**
+button (both Session History and Failed Sessions) reconstructs a
+`WorkflowStateManager` against the selected job's existing `job_dir` and
+calls `session.activate(job_id, state_manager, last_results=...)`, so a
+session picked up after a browser refresh (which resets Streamlit's
+in-memory state entirely) can be redocked immediately rather than only
+viewed read-only — see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#session-history). Stage 11.3 also added a
+**Stop** button (cooperative cancellation, checked between steps —
+see `WorkflowOrchestrator.execute_workflow`'s `cancel_event` parameter) that
+persists a new `"cancelled"` workflow status alongside the existing
+`"completed"`/`"failed"` ones; a cancelled job is not "completed" so it
+appears in the Failed Sessions list, not Session History (see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#failed-sessions)).
+
+**Not covered by this:** resuming a killed/crashed *process* (not to be
+confused with the Load-based session resumption above, which only ever acts
+on a job whose `execute_workflow()` call already returned and wrote its
+files). Undo/restore operates on `session.last_results`, which only exists
+in the memory of a live interactive session -- if the process running
+`execute_workflow()` itself is killed mid-call (not stopped via the GUI's
+cooperative Stop button, which always finishes cleanly), there is currently
+no code path that reloads checkpoints to resume the *interrupted* call
+itself. The atomic writes below guarantee files on disk are never left
+half-written, but that's a different guarantee from being able to pick an
+in-flight workflow call back up after a hard crash.
 
 ## Files Written Per Job
 For each job directory (`orchestrator_output/job_<id>/`), the system writes:
@@ -297,8 +316,8 @@ persistence file (parameters, state, checkpoints) is involved; comparison is pur
 read-only operation over completed jobs.
 
 Column headers use each job's top-level `job_name` field when present (the optional,
-non-unique display label set from the GUI's **Job name** field or renamed later via the
-sidebar's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-job)), falling
+non-unique display label set from the GUI's **Session name** field or renamed later via the
+sidebar's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)), falling
 back to the job directory basename (i.e. the job ID) when a job has no name.
 
 ### CLI usage

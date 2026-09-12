@@ -230,6 +230,72 @@ class TestOrchestratorBridge:
 
         assert captured["state_manager"] is None
 
+    def test_stop_requested_false_before_any_run(self):
+        bridge = OrchestratorBridge()
+        assert bridge.stop_requested() is False
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_request_stop_sets_stop_requested(self, MockOrchestrator):
+        started = threading.Event()
+        released = threading.Event()
+
+        def fake_execute(*args, **kwargs):
+            started.set()
+            released.wait(timeout=3)
+            return {"status": "cancelled"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "job_test", "/tmp")
+        started.wait(timeout=3)
+
+        assert bridge.stop_requested() is False
+        bridge.request_stop()
+        assert bridge.stop_requested() is True
+
+        released.set()
+        bridge._thread.join(timeout=5)
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_cancel_event_passed_through_to_execute_workflow(self, MockOrchestrator):
+        captured = {}
+
+        def fake_execute(workflow, job_id=None, job_name=None, state_manager=None, cancel_event=None, **kwargs):
+            captured["cancel_event"] = cancel_event
+            return {"status": "completed"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "job_test", "/tmp")
+        bridge._thread.join(timeout=5)
+
+        assert isinstance(captured["cancel_event"], threading.Event)
+        assert captured["cancel_event"] is bridge._cancel_event
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_second_start_gets_a_fresh_cancel_event(self, MockOrchestrator):
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.return_value = {"status": "completed"}
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "j1", "/tmp")
+        bridge._thread.join(timeout=5)
+        bridge.request_stop()
+        assert bridge.stop_requested() is True
+
+        # A second run must not inherit the first run's already-set event --
+        # otherwise every subsequent run would appear pre-cancelled.
+        bridge.start_workflow({}, "j2", "/tmp")
+        bridge._thread.join(timeout=5)
+        assert bridge.stop_requested() is False
+
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
     def test_second_start_resets_previous_result(self, MockOrchestrator):
         started = threading.Event()

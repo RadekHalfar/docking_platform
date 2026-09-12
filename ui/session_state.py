@@ -30,19 +30,21 @@ _WIDGET_DEFAULTS = {
     "param_max_workers": DETECTED_CPU_COUNT,
 }
 
+# Shared by init() (first load) and start_new_session() (detaching from a
+# job without a full page reload) so the greeting text lives in one place.
+_GREETING_MESSAGE = {
+    "role": "assistant",
+    "content": (
+        "Hello! Describe your docking workflow or use the form on the right.\n\n"
+        "Example: *Download 6lu7 and dock ATP with center 10 20 30 box 25 30 35*"
+    ),
+}
+
 
 def init() -> None:
     """Initialize all session state keys if not already set. Call once at app startup."""
     if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": (
-                    "Hello! Describe your docking workflow or use the form on the right.\n\n"
-                    "Example: *Download 6lu7 and dock ATP with center 10 20 30 box 25 30 35*"
-                ),
-            }
-        ]
+        st.session_state.messages = [dict(_GREETING_MESSAGE)]
 
     if "parser" not in st.session_state:
         st.session_state.parser = WorkflowParser()
@@ -97,6 +99,26 @@ def apply_settings(new_settings: dict) -> None:
     st.session_state.settings = new_settings
     save_settings(new_settings)
     st.session_state.llm_client = _build_llm_client(new_settings)
+
+
+def start_new_session() -> None:
+    """Detach from the current job/session while keeping parameter widgets
+    and LLM settings untouched.
+
+    Clears job_id/viewed_job_id/bridge/interactive_session/chat so the next
+    "Run Docking" click starts a brand-new job_dir/revision history, without
+    losing whatever the user has already typed into the form. Used by the
+    "New Session" button and by deleting the session currently active/in
+    view (ui/app.py).
+    """
+    st.session_state.interactive_session = InteractiveSession()
+    st.session_state.job_id = None
+    st.session_state.job_name = ""
+    st.session_state.viewed_job_id = None
+    st.session_state.bridge = None
+    st.session_state["_job_done"] = False
+    st.session_state.pop("_pending_rerun", None)
+    st.session_state.messages = [dict(_GREETING_MESSAGE)]
 
 
 def get_params() -> dict:

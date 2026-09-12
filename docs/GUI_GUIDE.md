@@ -3,7 +3,7 @@
 The Streamlit UI (`ui/app.py`) is a browser front-end for the docking platform,
 served at http://localhost:3000 by the `ui` service in `docker-compose.yml`.
 It has three panels — Chat, Input & Parameters, Results — plus a sidebar for
-LLM settings and job history.
+LLM settings and session history.
 
 ## Prerequisites
 
@@ -46,14 +46,14 @@ resets Streamlit's in-memory session — and a container restart).
 To reset to the values from `.env` / `docker-compose.yml`, delete
 `cache/.docking_platform_settings.json` and refresh the page.
 
-## Naming a Job
+## Naming a Session
 
-The **Input & Parameters** panel has an optional **Job name** field, just
+The **Input & Parameters** panel has an optional **Session name** field, just
 above the **Run Docking** button (60 characters max). It's a free-text label
 purely for your own reference — it doesn't need to be unique, and it never
 replaces the system-generated job ID, which remains the actual unique
-identifier on disk and everywhere else in the app. Leave it blank and the job
-just shows up under its job ID, exactly as before this field existed.
+identifier on disk and everywhere else in the app. Leave it blank and the
+session just shows up under its job ID, exactly as before this field existed.
 
 ## Redocking After a Parameter Change
 
@@ -61,68 +61,109 @@ The GUI keeps a continuing **session** for the job you just ran, the same way
 the CLI's `--interactive` mode does: `st.session_state.interactive_session`
 holds one `InteractiveSession` bound to that job's `WorkflowStateManager`, so
 editing parameters and clicking **Run Docking** again doesn't start a
-brand-new, unrelated job — it redocks the same one.
+brand-new, unrelated session — it redocks the same one.
 
 - **First click** (no active session yet): behaves exactly as before — a new
   job ID is generated and all five steps run.
-- **Later clicks**, with a job already active: the form's current parameters
-  are diffed against the last-saved checkpoint. If nothing changed, you're
-  told there's nothing to redock. If something did, only the steps that
-  actually depend on the changed parameter(s) are planned for re-execution
-  (e.g. changing the docking box only reruns **Run docking** and **Generate
-  visualization** — protein/ligand preparation is skipped). The **Run
-  Docking**/**Reset** buttons are replaced by a **rerun plan** summary and a
-  **Confirm redock** / **Cancel** button pair — nothing runs until you click
-  **Confirm redock**, mirroring the CLI's `[Y/n]` prompt before a partial
-  rerun.
+- **Later clicks**, with a session already active: the form's current
+  parameters are diffed against the last-saved checkpoint. If nothing
+  changed, you're told there's nothing to redock. If something did, only the
+  steps that actually depend on the changed parameter(s) are planned for
+  re-execution (e.g. changing the docking box only reruns **Run docking**
+  and **Generate visualization** — protein/ligand preparation is skipped).
+  The **Run Docking**/**New Session**/**Reset** buttons are replaced by a
+  **rerun plan** summary and a **Confirm redock** / **Cancel** button pair —
+  nothing runs until you click **Confirm redock**, mirroring the CLI's
+  `[Y/n]` prompt before a partial rerun.
 - If a required parameter for one of the planned steps is missing (e.g. you
   cleared the docking box), redocking is blocked with an error naming exactly
   which parameter and step need it, instead of silently failing partway
   through.
-- `job.log` and `workflow_results.json` for that job accumulate across every
-  redock in the session — the results panel and downloads always reflect the
-  full history, not just the most recent partial run.
+- `job.log` and `workflow_results.json` for that session accumulate across
+  every redock — the results panel and downloads always reflect the full
+  history, not just the most recent partial run.
 
-**Reset** still ends the session entirely (clears all GUI state, including
-the active job); there is no "detach without losing your parameter widgets"
-option yet — that's planned for a later stage.
+## Starting Fresh: New Session vs. Reset
 
-## Job History
+Once a session is active, the button row next to **Run Docking** offers two
+different ways to move on, each preserving something different:
 
-Every completed job (one whose `workflow_results.json` has
-`"status": "completed"`) appears as a row in the sidebar's **Job History**
-list, newest first. If you gave the job a name, that name is shown in bold
-ahead of the job ID; otherwise the row falls back to the job ID, protein ID,
-and ligand count only. The list is rebuilt from disk on every page load, so
-it reflects jobs run from the GUI or the CLI (`nlp_orchestrator.py`). Each
-row has:
+- **New Session** — detaches from the current session (job ID, chat, the
+  active `WorkflowStateManager`) but keeps your entered parameters and LLM
+  settings, so you can immediately start a related but independent docking
+  run without retyping the form. Disabled when there's no active session to
+  detach from.
+- **Reset** — clears everything in the form, including entered parameters
+  (only your LLM provider settings survive). Use this when you want a
+  genuinely blank slate.
 
-- A **checkbox** — select 2+ jobs to compare (see below).
-- A **Load** button — loads that job's results into the **Job Viewer** tab
-  (see below), so you can review any past run without re-docking.
-- A **Rename** button — toggles an inline text field to change the job's
-  name after the fact (e.g. once you know which run turned out to matter).
-  Click **Save** to write the new name straight into that job's
-  `workflow_results.json`, or **Cancel** to leave it unchanged. Only
-  completed jobs already listed here can be renamed; a job still in progress
-  keeps the name you gave it at submission until it finishes.
+## Session History
 
-## Viewing a Job (Live or Historical)
+Every completed session (one whose `workflow_results.json` has
+`"status": "completed"`) appears as a row in the sidebar's **Session
+History** list, newest first. If you gave the session a name, that name is
+shown in bold ahead of the job ID; otherwise the row falls back to the job
+ID, protein ID, and ligand count only. The list is rebuilt from disk on
+every page load, so it reflects sessions run from the GUI or the CLI
+(`nlp_orchestrator.py`). Each row has:
 
-The Results panel's **Job Viewer** tab (renamed from "Current Job") shows
-either:
+- A **checkbox** — select 2+ sessions to compare (see below).
+- A **Load** button — both shows that session's results in the **Session
+  Viewer** tab (see below) *and* resumes it as the active interactive
+  session, so you can immediately continue redocking it (with a changed
+  parameter, say) instead of only viewing it read-only. This also means a
+  browser refresh followed by **Load** picks a session back up exactly where
+  you left off, rather than starting a new one on the next "Run Docking".
+- A **Rename** button — toggles an inline text field to change the
+  session's name after the fact (e.g. once you know which run turned out to
+  matter). Click **Save** to write the new name straight into that session's
+  `workflow_results.json`, or **Cancel** to leave it unchanged.
+- A **Delete** button — toggles a warning plus **Confirm delete** /
+  **Cancel**; confirming permanently removes the session's entire output
+  directory. Disabled (with an explanatory caption) if this browser tab is
+  currently running a redock of that same session — use **Stop** (see
+  below) first. This only detects the current tab's own in-progress run; it
+  cannot see another browser tab or the CLI acting on the same job ID.
 
-- the job you just started with **Run Docking** — progress streams in while
-  it runs, then the chart/image/downloads appear on completion; or
-- a past job you clicked **Load** on in the sidebar — its results are read
-  directly from `workflow_results.json` on disk, so this works for jobs from
-  a previous browser session or run via the CLI, with no re-run needed.
+## Failed Sessions
 
-If the job has a name, the status caption ("... is running", "... completed",
-"Viewing job ...") shows it alongside the job ID, so it stays clear which run
-you're looking at even after switching between several loaded jobs.
+A session that ended with `"status": "failed"` or `"cancelled"` (stopped via
+the **Stop** button, see below) doesn't show up in Session History — it
+appears instead in the sidebar's **Failed Sessions** list, with the same
+Load/Rename/Delete controls, plus a short preview of the first recorded
+error in place of the ligand count. This keeps a failed or intentionally
+stopped run from silently disappearing while still keeping it out of the
+"successful runs" list Session History and job comparison rely on.
 
-Once a job's results are showing, you get:
+## Stopping a Running Session
+
+While a session is running, the results panel shows a **Stop** button next
+to the progress bar. Clicking it requests cooperative cancellation: the
+in-flight step (a single MCP call, e.g. docking or preparation) is **not**
+interrupted mid-request — it finishes first (each such call has its own
+timeout, so this is bounded, typically well under a minute for a single
+ligand and up to a few minutes worst case) — and no further step starts
+after that. The session then settles as `"cancelled"` in `job.log` and
+`workflow_results.json`, and shows up under **Failed Sessions** so it can be
+inspected, redocked, or deleted like any other non-completed session.
+
+## Viewing a Session (Live or Historical)
+
+The Results panel's **Session Viewer** tab shows either:
+
+- the session you just started with **Run Docking** — progress streams in
+  while it runs, then the chart/image/downloads appear on completion; or
+- a past session you clicked **Load** on in the sidebar — its results are
+  read directly from `workflow_results.json` on disk, so this works for
+  sessions from a previous browser session or run via the CLI, with no
+  re-run needed.
+
+If the session has a name, the status caption ("... is running", "...
+completed", "Viewing session ...") shows it alongside the job ID, so it
+stays clear which run you're looking at even after switching between
+several loaded sessions.
+
+Once a session's results are showing, you get:
 
 - An affinity bar chart (best binder first), in a fixed-height scrollable
   window so a long chart doesn't push the 3D viewer down the page.
@@ -135,19 +176,24 @@ Once a job's results are showing, you get:
   (`pdbqt` / `pdb` / `sdf` / `mol2`, defaulting to `pdbqt` — Moldina's native
   output) applies to every ligand's download button, so you can grab the
   whole multi-pose file per ligand in whichever format your downstream tool
-  expects. PDB/SDF/MOL2 are generated once per job (during the same step
+  expects. PDB/SDF/MOL2 are generated once per session (during the same step
   that used to run PyMOL) via a Meeko PDBQT→RDKit round trip that restores
   proper bond orders, with an OpenBabel fallback if that fails for a
   particular ligand.
-- An **Other Files** section below it for anything else in the job directory
-  (e.g. `workflow_results.json`).
+- An **Other Files** section below it for anything else in the session's
+  directory (e.g. `workflow_results.json`).
+- A **Session Log** expander (running, completed, or failed/cancelled) —
+  the last ~500 lines of `job.log`, the same human-readable narration the
+  CLI's interactive session writes (start/step/finish lines, parameter
+  diffs, full tracebacks on failure), plus a button to download the whole
+  file.
 
 ### Picking the Docking Box Visually
 
-Before running a job, the **Input & Parameters** panel has a **Pick Docking
-Box Visually** control: click **Load receptor for box picking** to run just
-enough of the workflow to fetch and prepare the receptor (no ligands, no
-docking yet), then the same 3Dmol.js viewer appears with:
+Before running a session, the **Input & Parameters** panel has a **Pick
+Docking Box Visually** control: click **Load receptor for box picking** to
+run just enough of the workflow to fetch and prepare the receptor (no
+ligands, no docking yet), then the same 3Dmol.js viewer appears with:
 
 - **Box size X/Y/Z** sliders — resize the search box live.
 - Click any receptor atom to set the box **center** — a red marker and label
@@ -164,13 +210,14 @@ This is a lighter, purely in-browser alternative to the CLI's
 [docs/PYMOL_INTERACTIVE.md](PYMOL_INTERACTIVE.md)) — it doesn't require that
 service to be running.
 
-## Comparing Jobs
+## Comparing Sessions
 
-Check two or more jobs in the sidebar and click **Compare selected jobs**.
-The **Compare Jobs** tab in the Results panel shows a table with ligands as
-rows and jobs as columns — column headers use each job's name when it has
-one, falling back to the job ID otherwise; cells are the best binding
-affinity (kcal/mol) for that ligand in that job, or "N/A" if the ligand
-wasn't docked in that job. The strongest predicted binder per ligand (most
-negative kcal/mol) is highlighted green — rendered as a plain HTML table (not
-`st.dataframe`) so the highlight stays readable in both light and dark theme.
+Check two or more sessions in the sidebar's Session History and click
+**Compare selected sessions**. The **Compare Sessions** tab in the Results
+panel shows a table with ligands as rows and sessions as columns — column
+headers use each session's name when it has one, falling back to the job ID
+otherwise; cells are the best binding affinity (kcal/mol) for that ligand in
+that session, or "N/A" if the ligand wasn't docked in that session. The
+strongest predicted binder per ligand (most negative kcal/mol) is
+highlighted green — rendered as a plain HTML table (not `st.dataframe`) so
+the highlight stays readable in both light and dark theme.

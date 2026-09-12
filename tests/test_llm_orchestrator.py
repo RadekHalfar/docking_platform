@@ -8,6 +8,7 @@ import pytest
 import json
 import platform
 import requests
+import threading
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -646,6 +647,92 @@ class TestWorkflowResultsMerge:
         results_file = tmp_path / "fresh_test" / "workflow_results.json"
         saved = json.loads(results_file.read_text())
         assert saved["services_executed"] == ["get_input_files"]
+
+
+class TestWorkflowCancellation:
+    """Stage 11.3: cooperative cancellation via execute_workflow(cancel_event=...)."""
+
+    def test_no_cancel_event_behaves_exactly_as_before(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        results = orchestrator.execute_workflow(workflow, job_id="no_cancel_test")
+
+        assert results["status"] == "completed"
+        assert results["services_executed"] == ["get_input_files"]
+
+    def test_cancel_event_already_set_skips_every_step(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+        )
+        cancel_event = threading.Event()
+        cancel_event.set()
+        workflow = {
+            "services": ["get_input_files", "prepare_ligands"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        results = orchestrator.execute_workflow(
+            workflow, job_id="cancel_before_test", cancel_event=cancel_event
+        )
+
+        assert results["status"] == "cancelled"
+        assert results["services_executed"] == []
+        assert "Workflow cancelled by user request" in results["errors"]
+        orchestrator.call_mcp_tool.assert_not_called()
+
+    def test_cancel_event_set_mid_run_stops_before_next_step(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        cancel_event = threading.Event()
+
+        def _fake_call(*args, **kwargs):
+            # Simulate the GUI's Stop button being clicked while
+            # get_input_files' MCP call is "in flight" -- by the time it
+            # returns, cancellation has been requested, so prepare_ligands
+            # (also requested) must never start.
+            cancel_event.set()
+            return {"protein_path": "/app/6lu7.pdb", "ligand_paths": ["/app/ATP.sdf"]}
+
+        orchestrator.call_mcp_tool = Mock(side_effect=_fake_call)
+        workflow = {
+            "services": ["get_input_files", "prepare_ligands"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], "formats": {"protein": "pdb", "ligand": "sdf"}},
+        }
+
+        results = orchestrator.execute_workflow(
+            workflow, job_id="cancel_mid_test", cancel_event=cancel_event
+        )
+
+        assert results["status"] == "cancelled"
+        assert results["services_executed"] == ["get_input_files"]
+        assert "prepare_ligands" not in results["results"]
+        assert "Workflow cancelled by user request" in results["errors"]
+        assert orchestrator.call_mcp_tool.call_count == 1
+
+    def test_cancelled_run_is_logged_and_merged_to_disk(self, tmp_path):
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        cancel_event = threading.Event()
+        cancel_event.set()
+        workflow = {
+            "services": ["get_input_files"],
+            "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+        }
+
+        orchestrator.execute_workflow(workflow, job_id="cancel_disk_test", cancel_event=cancel_event)
+
+        results_file = tmp_path / "cancel_disk_test" / "workflow_results.json"
+        saved = json.loads(results_file.read_text())
+        assert saved["status"] == "cancelled"
+
+        job_log = (tmp_path / "cancel_disk_test" / "job.log").read_text()
+        assert "status=cancelled" in job_log
 
 
 class TestWorkflowOrchestratorErrors:

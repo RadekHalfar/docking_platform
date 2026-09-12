@@ -37,6 +37,7 @@ class OrchestratorBridge:
         self._log_queue: queue.Queue = queue.Queue()
         self._result: Optional[Dict[str, Any]] = None
         self._error: Optional[str] = None
+        self._cancel_event: threading.Event = threading.Event()
 
     def start_workflow(
         self,
@@ -65,12 +66,13 @@ class OrchestratorBridge:
         """
         self._result = None
         self._error = None
+        self._cancel_event = threading.Event()  # fresh event per run
         run_workflow = dict(workflow)
         if services is not None:
             run_workflow["services"] = services
         self._thread = threading.Thread(
             target=self._run,
-            args=(run_workflow, job_id, output_base, job_name, state_manager),
+            args=(run_workflow, job_id, output_base, job_name, state_manager, self._cancel_event),
             daemon=True,
         )
         self._thread.start()
@@ -82,6 +84,7 @@ class OrchestratorBridge:
         output_base: str,
         job_name: str = "",
         state_manager: Optional[Any] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> None:
         from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, WorkflowOrchestrator
 
@@ -92,7 +95,11 @@ class OrchestratorBridge:
                     output_base=output_base, verbosity=VERBOSITY_LOW
                 )
                 result = orchestrator.execute_workflow(
-                    workflow, job_id=job_id, job_name=job_name, state_manager=state_manager
+                    workflow,
+                    job_id=job_id,
+                    job_name=job_name,
+                    state_manager=state_manager,
+                    cancel_event=cancel_event,
                 )
             self._result = result
         except Exception as exc:
@@ -102,6 +109,19 @@ class OrchestratorBridge:
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    def request_stop(self) -> None:
+        """Request cooperative cancellation of the in-progress run.
+
+        Takes effect once the current step's in-flight MCP call (bounded by
+        its own timeout) returns and before the next step starts -- not
+        immediate. See ``WorkflowOrchestrator.execute_workflow``'s
+        ``cancel_event`` docstring for the exact semantics.
+        """
+        self._cancel_event.set()
+
+    def stop_requested(self) -> bool:
+        return self._cancel_event.is_set()
 
     def get_log_lines(self) -> List[str]:
         """Drain and return all lines queued since the last call."""

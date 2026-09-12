@@ -3,11 +3,12 @@ import json
 
 import pytest
 
-from ui.job_history import escape_markdown, list_completed_jobs, rename_job
+from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 
 
 def _write_workflow_results(
-    job_dir, *, status="completed", protein_path=None, dock_results=None, job_name=None
+    job_dir, *, status="completed", protein_path=None, dock_results=None, job_name=None,
+    errors=None,
 ):
     job_dir.mkdir(parents=True, exist_ok=True)
     data = {
@@ -19,6 +20,8 @@ def _write_workflow_results(
     }
     if job_name is not None:
         data["job_name"] = job_name
+    if errors is not None:
+        data["errors"] = errors
     (job_dir / "workflow_results.json").write_text(json.dumps(data))
 
 
@@ -107,6 +110,93 @@ class TestListCompletedJobs:
         jobs = list_completed_jobs(str(tmp_path))
 
         assert jobs[0]["job_name"] == ""
+
+
+class TestListFailedJobs:
+    def test_finds_failed_jobs(self, tmp_path):
+        _write_workflow_results(
+            tmp_path / "job_bad",
+            status="failed",
+            protein_path="/app/orchestrator_output/job_bad/downloads/6LU7.pdb",
+            errors=["MCP call to protein-preparer failed"],
+        )
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert len(jobs) == 1
+        assert jobs[0]["job_id"] == "job_bad"
+        assert jobs[0]["protein_id"] == "6LU7"
+        assert jobs[0]["first_error"] == "MCP call to protein-preparer failed"
+
+    def test_finds_cancelled_jobs(self, tmp_path):
+        _write_workflow_results(
+            tmp_path / "job_stopped",
+            status="cancelled",
+            errors=["Workflow cancelled by user request"],
+        )
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert [j["job_id"] for j in jobs] == ["job_stopped"]
+        assert jobs[0]["first_error"] == "Workflow cancelled by user request"
+
+    def test_excludes_completed_jobs(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_ok", status="completed")
+        _write_workflow_results(tmp_path / "job_bad", status="failed", errors=["boom"])
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert [j["job_id"] for j in jobs] == ["job_bad"]
+
+    def test_missing_errors_defaults_to_unknown(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_bad", status="failed")
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert jobs[0]["first_error"] == "Unknown error"
+
+    def test_empty_errors_list_defaults_to_unknown(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_bad", status="failed", errors=[])
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert jobs[0]["first_error"] == "Unknown error"
+
+    def test_surfaces_only_first_error(self, tmp_path):
+        _write_workflow_results(
+            tmp_path / "job_bad", status="failed", errors=["first problem", "second problem"]
+        )
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert jobs[0]["first_error"] == "first problem"
+
+    def test_sorts_newest_first(self, tmp_path):
+        _write_workflow_results(tmp_path / "job_20260101_000000_aaa", status="failed", errors=["x"])
+        _write_workflow_results(tmp_path / "job_20260201_000000_bbb", status="failed", errors=["x"])
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert [j["job_id"] for j in jobs] == [
+            "job_20260201_000000_bbb",
+            "job_20260101_000000_aaa",
+        ]
+
+    def test_empty_dir_returns_empty_list(self, tmp_path):
+        assert list_failed_jobs(str(tmp_path)) == []
+
+    def test_nonexistent_dir_returns_empty_list(self, tmp_path):
+        assert list_failed_jobs(str(tmp_path / "does_not_exist")) == []
+
+    def test_no_ligand_count_field(self, tmp_path):
+        """Failed jobs surface first_error, not ligand_count -- the two
+        list functions' extra field is genuinely different, not just an
+        alternate name for the same data."""
+        _write_workflow_results(tmp_path / "job_bad", status="failed", errors=["boom"])
+
+        jobs = list_failed_jobs(str(tmp_path))
+
+        assert "ligand_count" not in jobs[0]
 
 
 class TestRenameJob:

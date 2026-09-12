@@ -600,11 +600,19 @@ orchestrator_output/
 
 `job_name` is an optional, non-unique display label — `job_id` remains the
 sole unique identifier and is unaffected by it. It defaults to `""` when not
-supplied. The GUI sets it from the **Job name** field at submission time (or
-via the sidebar's **Rename** button afterward — see
-[docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-job)); the CLI (`nlp_orchestrator.py`)
+supplied. The GUI sets it from the **Session name** field at submission time
+(or via the sidebar's **Rename** button afterward — see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)); the CLI (`nlp_orchestrator.py`)
 does not currently set it, so CLI-run jobs always persist `"job_name": ""`
 unless `execute_workflow(..., job_name=...)` is called directly.
+
+`status` is one of `"completed"`, `"failed"`, or (Stage 11.3) `"cancelled"` —
+the last one written when a caller passes `execute_workflow(...,
+cancel_event=...)` and that event gets set (e.g. the GUI's **Stop** button,
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#stopping-a-running-session)) before the
+next step starts; `errors` then includes `"Workflow cancelled by user
+request"`. A cancelled job's `services_executed`/`results` reflect whatever
+actually finished before cancellation, exactly as a partial run's would.
 
 Since Phase 11 (v2.0), `execute_workflow()` **merges** into any
 `workflow_results.json` already on disk for that `job_dir` instead of

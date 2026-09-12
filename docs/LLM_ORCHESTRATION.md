@@ -969,7 +969,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 - [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
 - [x] More LLM backends (OpenAI, Anthropic, MetaCentrum, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
 - [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))
-- [x] Multi-intent command sequencing in one input line (`dev_plan.md` Phase 10 — see [Multi-intent command sequencing](#multi-intent-command-sequencing-phase-10))
+- [x] Multi-intent command sequencing in one input line (`CHANGELOG.md` v1.0, Phase 10 — see [Multi-intent command sequencing](#multi-intent-command-sequencing-phase-10))
 
 ### Planned Features
 

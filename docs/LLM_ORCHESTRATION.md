@@ -904,7 +904,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 - [x] Local ligand/protein files, not just RCSB (`--protein-file`, `--ligand-files`, `--ligand-folder` — see [Local File Input](#local-file-input))
 - [x] Web UI (the Streamlit GUI, `ui/app.py` — see [GUI_GUIDE.md](GUI_GUIDE.md))
 - [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
-- [x] More LLM backends (OpenAI, Anthropic, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
+- [x] More LLM backends (OpenAI, Anthropic, MetaCentrum, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
 - [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))
 
 ### Planned Features
@@ -922,7 +922,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 A: Only for initial model download and RCSB structure downloads. LLM runs locally.
 
 **Q: Can I use a different LLM?**  
-A: Yes, in two ways: switch Ollama models via `--llm-model` without rebuild, or switch providers entirely — Ollama, OpenAI, Anthropic, and any OpenAI-compatible server (LM Studio, vLLM, Groq, ...) all ship as built-in adapters. See [Supported LLM Providers](#supported-llm-providers).
+A: Yes, in two ways: switch Ollama models via `--llm-model` without rebuild, or switch providers entirely — Ollama, OpenAI, Anthropic, MetaCentrum, and any OpenAI-compatible server (LM Studio, vLLM, Groq, ...) all ship as built-in adapters. See [Supported LLM Providers](#supported-llm-providers).
 
 **Q: How accurate is the parameter parsing?**  
 A: Very good for clear, explicit commands. If ambiguous, the system will prompt for clarification.
@@ -942,6 +942,12 @@ A: Yes, in interactive mode you can provide missing parameters. For programmatic
 
 The platform works with any of the providers below — no code changes required. Set the
 provider in your `.env` file (copy `.env.example`) or via CLI flags.
+
+All providers share the same generic `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`/
+`LLM_BASE_URL` environment variables rather than vendor-prefixed ones (e.g. there's no
+separate `OPENAI_API_KEY` and `METACENTRUM_API_KEY`) — only one provider is active at a
+time, selected via `LLM_PROVIDER`, so its variables are simply reused for whichever
+provider you pick.
 
 ### Ollama (default — local, private, free)
 
@@ -980,6 +986,34 @@ LLM_MODEL=claude-haiku-4-5-20251001
 
 CLI: `--llm-provider anthropic --llm-api-key sk-ant-... --llm-model claude-haiku-4-5-20251001`
 
+### MetaCentrum (e-INFRA CZ hosted LLM gateway)
+
+Academic/research cloud provider hosted by e-INFRA CZ. Requires an e-INFRA CZ bearer
+token. Its gateway speaks the same OpenAI chat-completions API as the adapters above, so
+`MetaCentrumAdapter` is a thin subclass of `OpenAICompatibleAdapter` with a built-in
+default base URL and a longer default timeout.
+
+```bash
+LLM_PROVIDER=metacentrum
+LLM_API_KEY=<your e-infra CZ bearer token>
+LLM_MODEL=<verify via GET https://llm.ai.e-infra.cz/v1/models>
+# LLM_BASE_URL=https://llm.ai.e-infra.cz/v1   # only needed to override the default
+```
+
+CLI: `--llm-provider metacentrum --llm-api-key <token> --llm-model <model>`
+
+**Before using a model name from documentation or a colleague, verify it actually exists**
+on the gateway: `curl -H "Authorization: Bearer <token>" https://llm.ai.e-infra.cz/v1/models`.
+A model name that looks right in docs is not guaranteed to be deployed.
+
+**Known caveat:** MetaCentrum's non-streaming endpoint has a hard, non-overridable
+~30-minute server-side timeout. This project only sends short parameter-extraction
+prompts, so a configurable client-side timeout (`MetaCentrumAdapter`'s `timeout` param,
+default 300s) is used instead of implementing SSE streaming. If a future caller needs
+long-form generation against MetaCentrum, either raise `timeout` further or add a
+streaming code path — non-streaming calls that run past 30 minutes will otherwise be
+killed by the server regardless of client-side settings.
+
 ### OpenAI-compatible (LM Studio, vLLM, Groq, Together AI, etc.)
 
 Any server exposing `POST /chat/completions` and `GET /models` in the OpenAI format.
@@ -1008,6 +1042,7 @@ CLI: `--llm-provider openai_compatible --llm-base-url <url> --llm-api-key <key> 
 | OpenAI-compatible (local) | Yes | Free |
 | OpenAI | No | Per token |
 | Anthropic | No | Per token |
+| MetaCentrum (e-INFRA CZ) | No | Academic account — verify your allocation's terms; not necessarily per-token billed |
 | Groq / Together AI | No | Free tier / per token |
 
 ---

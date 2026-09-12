@@ -337,7 +337,7 @@ docking_platform/
 │   ├── pymol_interactive/      # Interactive noVNC PyMOL helper service (noVNC 6080 / API 8090)
 │   └── llm_orchestrator/       # LLM-based workflow orchestration
 │       ├── llm_base.py         # Provider interface
-│       ├── llm_adapters.py     # Provider implementations (Ollama/OpenAI/Anthropic/OpenAI-compatible)
+│       ├── llm_adapters.py     # Provider implementations (Ollama/OpenAI/Anthropic/MetaCentrum/OpenAI-compatible)
 │       ├── llm_factory.py      # Provider factory
 │       ├── workflow_llm_parser.py    # LLM-facing extraction (parse/classify/extract updates)
 │       ├── workflow_parser.py        # Stateful validation/enrichment (WorkflowParser)

@@ -27,6 +27,9 @@ venv/
 ENV/
 env/
 
+# Secrets (real .env holds live API keys/tokens -- .env.example stays tracked)
+.env
+
 # IDE
 .vscode/
 .idea/
@@ -75,3 +78,5 @@ dev_reports/*
 docs/MCP_GENERAL_PRESENTATION_SPEAKER_NOTES.md
 docs/MCP_DEVELOPMENT_PRESENTATION_2_SPEAKER_NOTES.md
 dev_plan.md
+development_process_rules.md
+workplan_creation_guide.md

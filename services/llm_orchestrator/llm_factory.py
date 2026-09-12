@@ -5,8 +5,16 @@ Provides a single place to instantiate provider-specific adapters.
 """
 from typing import Optional
 
-from .llm_adapters import AnthropicAdapter, OllamaAdapter, OpenAIAdapter, OpenAICompatibleAdapter
+from .llm_adapters import (
+    AnthropicAdapter,
+    MetaCentrumAdapter,
+    OllamaAdapter,
+    OpenAIAdapter,
+    OpenAICompatibleAdapter,
+)
 from .llm_base import BaseLLMClient
+
+KNOWN_PROVIDERS = ("ollama", "openai", "anthropic", "openai_compatible", "metacentrum")
 
 
 def create_llm_client(
@@ -19,14 +27,16 @@ def create_llm_client(
     """Create an LLM client for the selected provider.
 
     Args:
-        provider: One of 'ollama', 'openai', 'anthropic', 'openai_compatible'.
+        provider: One of 'ollama', 'openai', 'anthropic', 'openai_compatible',
+                  'metacentrum'.
         endpoint: Ollama endpoint URL (used only for the 'ollama' provider).
         model: Model name to use.
-        api_key: API key for cloud providers (OpenAI, Anthropic) or optional
-                 auth for openai_compatible servers.
+        api_key: API key for cloud providers (OpenAI, Anthropic, MetaCentrum)
+                 or optional auth for openai_compatible servers.
         base_url: Base URL for 'openai_compatible' servers (e.g.
                   http://localhost:1234/v1 for LM Studio). Falls back to
-                  endpoint when not set.
+                  endpoint when not set. For 'metacentrum', overrides the
+                  default https://llm.ai.e-infra.cz/v1 gateway URL.
     """
     normalized = provider.strip().lower()
 
@@ -46,4 +56,13 @@ def create_llm_client(
             api_key=api_key or "",
         )
 
-    raise ValueError(f"Unsupported LLM provider: {provider!r}. Choose from: ollama, openai, anthropic, openai_compatible")
+    if normalized == "metacentrum":
+        return MetaCentrumAdapter(
+            api_key=api_key or "",
+            model=model,
+            base_url=base_url or None,
+        )
+
+    raise ValueError(
+        f"Unsupported LLM provider: {provider!r}. Choose from: {', '.join(KNOWN_PROVIDERS)}"
+    )

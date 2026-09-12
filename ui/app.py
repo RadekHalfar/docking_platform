@@ -199,6 +199,7 @@ _PROVIDER_LABELS = {
     "ollama": "Ollama (local)",
     "openai": "OpenAI",
     "anthropic": "Anthropic",
+    "metacentrum": "MetaCentrum (e-INFRA CZ)",
     "openai_compatible": "Other local server",
 }
 _PROVIDER_KEYS = {label: key for key, label in _PROVIDER_LABELS.items()}
@@ -244,7 +245,11 @@ def _render_settings_form() -> None:
     provider = _PROVIDER_KEYS[provider_label]
 
     endpoint = settings.get("endpoint", "")
-    base_url = settings.get("base_url", "")
+    # Only openai_compatible has a base_url input below; for every other
+    # provider (including metacentrum, which has no override field yet)
+    # drop a stale value left over from a prior openai_compatible session
+    # instead of silently carrying it into the new client.
+    base_url = settings.get("base_url", "") if provider == "openai_compatible" else ""
     api_key = settings.get("api_key", "")
     current_model = settings.get("model", "")
 
@@ -275,7 +280,7 @@ def _render_settings_form() -> None:
     else:
         model = st.text_input("Model", value=current_model)
 
-    if provider in ("openai", "anthropic", "openai_compatible"):
+    if provider in ("openai", "anthropic", "metacentrum", "openai_compatible"):
         api_key = st.text_input("API Key", value=api_key, type="password")
 
     if st.button("Apply settings"):

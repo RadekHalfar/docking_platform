@@ -17,9 +17,9 @@ LLM settings and job history.
 The sidebar **Settings** panel lets you change the LLM provider, model,
 endpoint, and API key without editing `.env` or restarting the container.
 
-- **LLM Provider**: `Ollama (local)`, `OpenAI`, `Anthropic`, or `Other local
-  server` (any OpenAI-compatible endpoint — LM Studio, vLLM, Jan, llama.cpp,
-  Groq, Together AI).
+- **LLM Provider**: `Ollama (local)`, `OpenAI`, `Anthropic`,
+  `MetaCentrum (e-INFRA CZ)`, or `Other local server` (any OpenAI-compatible
+  endpoint — LM Studio, vLLM, Jan, llama.cpp, Groq, Together AI).
 - **Model**: for `Ollama (local)`, this is a dropdown populated live from the
   Ollama server's `/api/tags` (i.e. whatever you've `ollama pull`-ed), so you
   don't need to remember exact tag names. It falls back to a free-text field
@@ -34,7 +34,8 @@ endpoint, and API key without editing `.env` or restarting the container.
   there's no sensible default — these fields *are* how you tell the platform
   where your custom server lives (LM Studio, vLLM, etc.).
 - **API Key**: shown only for providers that need one (OpenAI, Anthropic,
-  Other local server). Entered per-session — **never written to disk**.
+  MetaCentrum, Other local server). Entered per-session — **never written to
+  disk**.
 
 Click **Apply settings** to rebuild the LLM client immediately and persist
 provider/model/endpoint to `~/.docking_platform_settings.json` inside the

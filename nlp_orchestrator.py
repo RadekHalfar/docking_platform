@@ -873,7 +873,7 @@ Examples:
     parser.add_argument(
         "--llm-provider",
         default=os.getenv("LLM_PROVIDER", "ollama"),
-        help="LLM provider name (default: ollama)"
+        help="LLM provider name: ollama, openai, anthropic, metacentrum, or openai_compatible (default: ollama)"
     )
     parser.add_argument(
         "--llm-endpoint",
@@ -893,7 +893,7 @@ Examples:
     parser.add_argument(
         "--llm-base-url",
         default=os.getenv("LLM_BASE_URL"),
-        help="Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio)"
+        help="Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio) or to override metacentrum's default gateway URL"
     )
     parser.add_argument(
         "--output-dir",

@@ -8,14 +8,26 @@ from typing import Optional
 
 from common.http_retry import build_llm_retry_session
 
+# Default per-request timeout (seconds) for adapters that don't override it.
+# Cloud-hosted providers with slower/larger models (e.g. MetaCentrum) pass a
+# higher value explicitly -- see MetaCentrumAdapter in llm_adapters.py.
+DEFAULT_LLM_TIMEOUT_SECONDS = 120.0
+
 
 class BaseLLMClient(ABC):
     """Abstract base class for provider-specific LLM clients."""
 
-    def __init__(self, endpoint: str, model: str, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        endpoint: str,
+        model: str,
+        api_key: Optional[str] = None,
+        timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS,
+    ):
         self.endpoint = endpoint
         self.model = model
         self.api_key = api_key
+        self.timeout = timeout
         # Retries connection failures/read timeouts/transient 5xx with
         # backoff -- see common/http_retry.py for why LLM calls can afford
         # a more liberal retry policy than MCP tool calls.

@@ -9,7 +9,7 @@ from typing import Optional
 
 import requests
 
-from .llm_base import BaseLLMClient
+from .llm_base import DEFAULT_LLM_TIMEOUT_SECONDS, BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +106,8 @@ class OpenAIAdapter(BaseLLMClient):
 
     _BASE = "https://api.openai.com/v1"
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
-        super().__init__(endpoint=self._BASE, model=model, api_key=api_key)
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini", timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS):
+        super().__init__(endpoint=self._BASE, model=model, api_key=api_key, timeout=timeout)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -123,7 +123,7 @@ class OpenAIAdapter(BaseLLMClient):
                 f"{self.endpoint}/chat/completions",
                 headers=self._headers(),
                 json=payload,
-                timeout=120,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
@@ -157,8 +157,13 @@ class AnthropicAdapter(BaseLLMClient):
     _BASE = "https://api.anthropic.com"
     _API_VERSION = "2023-06-01"
 
-    def __init__(self, api_key: str, model: str = "claude-haiku-4-5-20251001"):
-        super().__init__(endpoint=self._BASE, model=model, api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-haiku-4-5-20251001",
+        timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS,
+    ):
+        super().__init__(endpoint=self._BASE, model=model, api_key=api_key, timeout=timeout)
 
     def _headers(self) -> dict:
         return {
@@ -181,7 +186,7 @@ class AnthropicAdapter(BaseLLMClient):
                 f"{self.endpoint}/v1/messages",
                 headers=self._headers(),
                 json=payload,
-                timeout=120,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()["content"][0]["text"]
@@ -222,8 +227,14 @@ class OpenAICompatibleAdapter(BaseLLMClient):
     don't require authentication.
     """
 
-    def __init__(self, base_url: str, model: str, api_key: str = ""):
-        super().__init__(endpoint=base_url.rstrip("/"), model=model, api_key=api_key)
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str = "",
+        timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS,
+    ):
+        super().__init__(endpoint=base_url.rstrip("/"), model=model, api_key=api_key, timeout=timeout)
 
     def _headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -242,7 +253,7 @@ class OpenAICompatibleAdapter(BaseLLMClient):
                 f"{self.endpoint}/chat/completions",
                 headers=self._headers(),
                 json=payload,
-                timeout=120,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
@@ -272,3 +283,38 @@ class OpenAICompatibleAdapter(BaseLLMClient):
         except requests.RequestException as e:
             logger.error(f"Failed to list models from {self.endpoint}: {e}")
             return []
+
+
+class MetaCentrumAdapter(OpenAICompatibleAdapter):
+    """LLM adapter for MetaCentrum's e-INFRA CZ hosted LLM gateway.
+
+    The gateway (https://llm.ai.e-infra.cz/v1) speaks the same OpenAI
+    chat-completions schema as OpenAICompatibleAdapter, so this class adds
+    nothing but MetaCentrum-friendly defaults on top of it: a default
+    base_url and a longer default timeout (cloud-hosted large models are
+    slower than a local LM Studio/vLLM instance).
+
+    Known caveat (verified against the real gateway): non-streaming requests
+    have a hard, non-overridable ~30-minute server-side timeout. This
+    project only ever sends short parameter-extraction prompts, so a shorter
+    client-side timeout is used instead of implementing SSE streaming --
+    increase `timeout` (or add a streaming path) if a future caller ever
+    needs to generate long-form text against MetaCentrum.
+    """
+
+    _DEFAULT_BASE_URL = "https://llm.ai.e-infra.cz/v1"
+    _DEFAULT_TIMEOUT_SECONDS = 300.0
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: Optional[str] = None,
+        timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    ):
+        super().__init__(
+            base_url=base_url or self._DEFAULT_BASE_URL,
+            model=model,
+            api_key=api_key,
+            timeout=timeout,
+        )

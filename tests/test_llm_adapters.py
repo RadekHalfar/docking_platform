@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.llm_adapters import (
     AnthropicAdapter,
+    MetaCentrumAdapter,
     OllamaAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
@@ -292,6 +293,77 @@ class TestOpenAICompatibleAdapter:
             adapter.generate("prompt")
 
 
+class TestMetaCentrumAdapter:
+    """Tests for the MetaCentrum (e-INFRA CZ) hosted LLM gateway provider."""
+
+    def _make_chat_response(self, content: str):
+        mock = Mock()
+        mock.raise_for_status.return_value = None
+        mock.json.return_value = {"choices": [{"message": {"content": content}}]}
+        return mock
+
+    def test_defaults_to_e_infra_base_url(self):
+        adapter = MetaCentrumAdapter(api_key="token", model="m")
+        assert adapter.endpoint == "https://llm.ai.e-infra.cz/v1"
+
+    def test_default_timeout_is_longer_than_local_providers(self):
+        adapter = MetaCentrumAdapter(api_key="token", model="m")
+        assert adapter.timeout == 300.0
+
+    def test_base_url_override(self):
+        adapter = MetaCentrumAdapter(
+            api_key="token", model="m", base_url="https://custom.example/v1"
+        )
+        assert adapter.endpoint == "https://custom.example/v1"
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
+    def test_generate_success(self, mock_post):
+        mock_post.return_value = self._make_chat_response("hello from metacentrum")
+        adapter = MetaCentrumAdapter(api_key="token", model="m")
+        assert adapter.generate("prompt") == "hello from metacentrum"
+        assert "https://llm.ai.e-infra.cz/v1/chat/completions" in mock_post.call_args.args[0]
+        assert mock_post.call_args.kwargs["timeout"] == 300.0
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
+    def test_generate_sends_bearer_auth(self, mock_post):
+        mock_post.return_value = self._make_chat_response("ok")
+        adapter = MetaCentrumAdapter(api_key="e-infra-token", model="m")
+        adapter.generate("prompt")
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer e-infra-token"
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.post")
+    def test_generate_raises_on_http_error(self, mock_post):
+        err = requests.HTTPError("401 Unauthorized")
+        err.response = Mock(status_code=401)
+        mock_post.return_value.raise_for_status.side_effect = err
+        adapter = MetaCentrumAdapter(api_key="bad-token", model="m")
+        with pytest.raises(RuntimeError, match="Failed to generate"):
+            adapter.generate("prompt")
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_check_health_success(self, mock_get):
+        mock_get.return_value.status_code = 200
+        adapter = MetaCentrumAdapter(api_key="token", model="m")
+        assert adapter.check_health() is True
+        assert "https://llm.ai.e-infra.cz/v1/models" in mock_get.call_args.args[0]
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_check_health_failure(self, mock_get):
+        mock_get.side_effect = requests.ConnectionError()
+        adapter = MetaCentrumAdapter(api_key="token", model="m")
+        assert adapter.check_health() is False
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_list_models(self, mock_get):
+        mock_get.return_value.raise_for_status.return_value = None
+        mock_get.return_value.json.return_value = {
+            "data": [{"id": "llama-3.3-70b-instruct"}]
+        }
+        models = MetaCentrumAdapter(api_key="token", model="m").list_models()
+        assert models == ["llama-3.3-70b-instruct"]
+
+
 class TestLLMFactory:
     """Tests for provider factory behavior."""
 
@@ -322,6 +394,20 @@ class TestLLMFactory:
         assert isinstance(client, OpenAICompatibleAdapter)
         assert client.endpoint == "http://localhost:8000/v1"
 
+    def test_create_metacentrum_client_defaults_base_url(self):
+        client = create_llm_client("metacentrum", "", "model", api_key="e-infra-token")
+        assert isinstance(client, MetaCentrumAdapter)
+        assert client.endpoint == "https://llm.ai.e-infra.cz/v1"
+        assert client.api_key == "e-infra-token"
+
+    def test_create_metacentrum_client_honors_base_url_override(self):
+        client = create_llm_client(
+            "metacentrum", "", "model",
+            api_key="e-infra-token", base_url="https://custom.example/v1",
+        )
+        assert isinstance(client, MetaCentrumAdapter)
+        assert client.endpoint == "https://custom.example/v1"
+
     def test_create_llm_client_raises_on_unknown_provider(self):
         with pytest.raises(ValueError, match="Unsupported LLM provider"):
             create_llm_client("unknown_provider", "http://x", "model")
@@ -331,6 +417,7 @@ class TestLLMFactory:
         ("openai", OpenAIAdapter),
         ("anthropic", AnthropicAdapter),
         ("openai_compatible", OpenAICompatibleAdapter),
+        ("metacentrum", MetaCentrumAdapter),
     ])
     def test_factory_returns_correct_type_per_provider(self, provider, expected_type):
         client = create_llm_client(

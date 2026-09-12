@@ -2,6 +2,7 @@
 import streamlit as st
 
 from services.llm_orchestrator import create_llm_client
+from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.settings import load_settings, save_settings
 from ui.worker_cap import detect_moldina_worker_cap
@@ -69,6 +70,9 @@ def init() -> None:
 
     if "comparison" not in st.session_state:
         st.session_state.comparison = None
+
+    if "interactive_session" not in st.session_state:
+        st.session_state.interactive_session = InteractiveSession()
 
     for key, default in _WIDGET_DEFAULTS.items():
         if key not in st.session_state:

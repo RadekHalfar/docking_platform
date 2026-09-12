@@ -8,8 +8,12 @@ from pathlib import Path
 import streamlit as st
 
 from common.utils import generate_job_id
+from services.llm_orchestrator.interactive_session import compute_changed_params
 from services.llm_orchestrator.job_comparator import compare_jobs
+from services.llm_orchestrator.rerun_planner import compute_rerun_steps, describe_rerun_plan
+from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
+from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
@@ -149,6 +153,11 @@ def _handle_run_docking() -> None:
     st.session_state.params.update(form_params)
     params = st.session_state.params.copy()
 
+    session = st.session_state.interactive_session
+    if session.has_active_job():
+        _handle_redock_request(session, params)
+        return
+
     # Always include visualization — it runs after docking and produces the PNG.
     services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
     try:
@@ -177,12 +186,90 @@ def _handle_run_docking() -> None:
     st.session_state.viewed_job_id = job_id
     st.session_state["_job_done"] = False
 
+    state_manager = WorkflowStateManager(OUTPUT_BASE / job_id)
+    state_manager.save_parameters_checkpoint(validated["parameters"], source="initial_parse")
+    session.activate(job_id, state_manager)
+
     bridge = OrchestratorBridge()
-    bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), job_name=job_name)
+    bridge.start_workflow(
+        validated, job_id, str(OUTPUT_BASE), job_name=job_name, state_manager=state_manager
+    )
     st.session_state.bridge = bridge
 
     st.session_state.messages.append(
         {"role": "assistant", "content": f"Starting docking job `{job_id}`..."}
+    )
+    st.rerun()
+
+
+def _handle_redock_request(session, params: dict) -> None:
+    """Diff params against the active session's last checkpoint and, if a
+    rerun is warranted, stage a plan for confirmation.
+
+    Mirrors the CLI's ``_execute_partial_rerun`` (describe_rerun_plan +
+    ``[Y/n]`` prompt) via a two-step "Run Docking" → "Confirm redock" button
+    pair, since Streamlit has no blocking ``input()``.
+    """
+    old_params = session.state_manager.load_latest_parameters() or {}
+    changed = compute_changed_params(old_params, params)
+    if not changed:
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "No parameter changes detected — nothing to redock."}
+        )
+        st.rerun()
+        return
+
+    session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
+
+    original_services = (session.last_results or {}).get("services_executed", [])
+    steps = compute_rerun_steps(changed, original_services=original_services)
+    if not steps:
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Parameters updated, but no steps need to be re-executed."}
+        )
+        st.rerun()
+        return
+
+    latest_params = session.state_manager.load_latest_parameters() or {}
+    missing: list = []
+    for step in steps:
+        for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
+            if not latest_params.get(param):
+                missing.append(f"{param} (required by '{step}')")
+    if missing:
+        st.error("Cannot redock — required parameters are missing: " + ", ".join(sorted(set(missing))))
+        return
+
+    st.session_state["_pending_rerun"] = {"steps": steps, "params": latest_params}
+    st.rerun()
+
+
+def _execute_confirmed_redock() -> None:
+    pending = st.session_state.pop("_pending_rerun", None)
+    if not pending:
+        return
+
+    session = st.session_state.interactive_session
+    rerun_workflow = {"services": pending["steps"], "parameters": pending["params"]}
+
+    st.session_state["_job_done"] = False
+    st.session_state.viewed_job_id = session.job_id
+
+    bridge = OrchestratorBridge()
+    bridge.start_workflow(
+        rerun_workflow,
+        session.job_id,
+        str(OUTPUT_BASE),
+        job_name=st.session_state.get("job_name", ""),
+        state_manager=session.state_manager,
+    )
+    st.session_state.bridge = bridge
+
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": f"Redocking `{session.job_id}` — steps: {', '.join(pending['steps'])}...",
+        }
     )
     st.rerun()
 
@@ -381,16 +468,29 @@ def render_chat() -> None:
     if bridge and not bridge.is_running():
         result = bridge.get_result()
         error = bridge.get_error()
-        if result and result.get("status") == "completed" and not st.session_state.get("_job_done"):
-            st.session_state["_job_done"] = True
-            st.session_state.messages.append(
-                {"role": "assistant", "content": "Workflow completed successfully!"}
-            )
-        elif error and not st.session_state.get("_job_done"):
-            st.session_state["_job_done"] = True
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"Workflow failed: {error}"}
-            )
+        if not st.session_state.get("_job_done"):
+            # Sync the session's view of "what's been run" from the
+            # already-merged result execute_workflow() returns, so a
+            # subsequent redock's original_services/last_results reflect
+            # this run instead of going stale -- reusing the on-disk merge
+            # execute_workflow() already does rather than re-deriving it here
+            # (see docs/reviews/stage_11_1_r1.md finding #5).
+            session = st.session_state.interactive_session
+            if result is not None and session.has_active_job() and session.job_id == st.session_state.job_id:
+                session.last_results = result
+
+            if result and result.get("status") == "completed":
+                st.session_state["_job_done"] = True
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": "Workflow completed successfully!"}
+                )
+            elif error:
+                st.session_state["_job_done"] = True
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Workflow failed: {error}"}
+                )
+            elif result and result.get("status") == "failed":
+                st.session_state["_job_done"] = True
 
     if prompt := st.chat_input("Describe your workflow..."):
         _on_chat_submit(prompt)
@@ -502,13 +602,25 @@ def render_parameters_panel() -> None:
     )
 
     st.divider()
-    col_run, col_reset = st.columns(2)
-    with col_run:
-        if st.button("Run Docking", type="primary", use_container_width=True):
-            _handle_run_docking()
-    with col_reset:
-        if st.button("Reset", use_container_width=True):
-            _reset_session()
+    pending_rerun = st.session_state.get("_pending_rerun")
+    if pending_rerun:
+        st.info(describe_rerun_plan(pending_rerun["steps"]))
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("Confirm redock", type="primary", use_container_width=True):
+                _execute_confirmed_redock()
+        with col_cancel:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.pop("_pending_rerun", None)
+                st.rerun()
+    else:
+        col_run, col_reset = st.columns(2)
+        with col_run:
+            if st.button("Run Docking", type="primary", use_container_width=True):
+                _handle_run_docking()
+        with col_reset:
+            if st.button("Reset", use_container_width=True):
+                _reset_session()
 
 
 def _on_protein_id_change() -> None:

@@ -192,6 +192,45 @@ class TestOrchestratorBridge:
         assert captured["job_name"] == ""
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_state_manager_passed_through_to_execute_workflow(self, MockOrchestrator):
+        captured = {}
+        sentinel_state_manager = object()
+
+        def fake_execute(workflow, job_id=None, job_name=None, state_manager=None, **kwargs):
+            captured["state_manager"] = state_manager
+            return {"status": "completed"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow(
+            {}, "job_test", "/tmp", state_manager=sentinel_state_manager
+        )
+        bridge._thread.join(timeout=5)
+
+        assert captured["state_manager"] is sentinel_state_manager
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_state_manager_defaults_to_none(self, MockOrchestrator):
+        captured = {}
+
+        def fake_execute(workflow, job_id=None, job_name=None, state_manager=None, **kwargs):
+            captured["state_manager"] = state_manager
+            return {"status": "completed"}
+
+        mock_instance = MagicMock()
+        mock_instance.execute_workflow.side_effect = fake_execute
+        MockOrchestrator.return_value = mock_instance
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "job_test", "/tmp")
+        bridge._thread.join(timeout=5)
+
+        assert captured["state_manager"] is None
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
     def test_second_start_resets_previous_result(self, MockOrchestrator):
         started = threading.Event()
         released = threading.Event()

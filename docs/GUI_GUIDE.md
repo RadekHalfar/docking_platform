@@ -55,6 +55,38 @@ replaces the system-generated job ID, which remains the actual unique
 identifier on disk and everywhere else in the app. Leave it blank and the job
 just shows up under its job ID, exactly as before this field existed.
 
+## Redocking After a Parameter Change
+
+The GUI keeps a continuing **session** for the job you just ran, the same way
+the CLI's `--interactive` mode does: `st.session_state.interactive_session`
+holds one `InteractiveSession` bound to that job's `WorkflowStateManager`, so
+editing parameters and clicking **Run Docking** again doesn't start a
+brand-new, unrelated job — it redocks the same one.
+
+- **First click** (no active session yet): behaves exactly as before — a new
+  job ID is generated and all five steps run.
+- **Later clicks**, with a job already active: the form's current parameters
+  are diffed against the last-saved checkpoint. If nothing changed, you're
+  told there's nothing to redock. If something did, only the steps that
+  actually depend on the changed parameter(s) are planned for re-execution
+  (e.g. changing the docking box only reruns **Run docking** and **Generate
+  visualization** — protein/ligand preparation is skipped). The **Run
+  Docking**/**Reset** buttons are replaced by a **rerun plan** summary and a
+  **Confirm redock** / **Cancel** button pair — nothing runs until you click
+  **Confirm redock**, mirroring the CLI's `[Y/n]` prompt before a partial
+  rerun.
+- If a required parameter for one of the planned steps is missing (e.g. you
+  cleared the docking box), redocking is blocked with an error naming exactly
+  which parameter and step need it, instead of silently failing partway
+  through.
+- `job.log` and `workflow_results.json` for that job accumulate across every
+  redock in the session — the results panel and downloads always reflect the
+  full history, not just the most recent partial run.
+
+**Reset** still ends the session entirely (clears all GUI state, including
+the active job); there is no "detach without losing your parameter widgets"
+option yet — that's planned for a later stage.
+
 ## Job History
 
 Every completed job (one whose `workflow_results.json` has

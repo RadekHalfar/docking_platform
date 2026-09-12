@@ -11,10 +11,24 @@ from typing import Any, Dict, List, Optional, Set, cast
 
 from common.file_io import atomic_write_json
 from common.job_log import append_job_log
+from common.param_diff import changed_parameter_keys
 from .workflow_definition import get_ligand_display_names, get_protein_display_name
 from .workflow_state_manager import WorkflowStateManager
 
 logger = logging.getLogger(__name__)
+
+
+def compute_changed_params(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> Set[str]:
+    """Return the set of parameter keys that changed between two snapshots.
+
+    Thin wrapper around :func:`common.param_diff.changed_parameter_keys` -- the
+    GUI's one-shot equivalent of how the CLI's ``InteractiveSession``
+    incrementally accumulates ``pending_changed_params`` across individual
+    ``set ...`` commands: the GUI submits the whole form at once, so a single
+    diff against the last on-disk checkpoint is all that's needed.
+    """
+    return set(changed_parameter_keys(old, new))
+
 
 # ---------------------------------------------------------------------------
 # Bundle name validation

@@ -7,11 +7,24 @@ The workflow uses a hybrid persistence model that combines:
 
 This is implemented in `services/llm_orchestrator/workflow_state_manager.py` and integrated into parser, orchestrator, and CLI flow.
 
-**CLI only.** `ui/orchestrator_bridge.py` never passes a `state_manager=` to
-`execute_workflow()`, so the Streamlit web UI has none of this: no
-checkpointing, no `history`, no `undo`, no partial rerun. The UI only runs
-one-shot workflows. Everything below describes the interactive CLI session
-(`nlp_orchestrator.py --interactive`).
+**GUI and CLI, as of Stage 11.2.** `ui/orchestrator_bridge.py::start_workflow()`
+now accepts and threads through a `state_manager`, and `ui/app.py` keeps one
+`InteractiveSession` (`st.session_state.interactive_session`) bound to the
+active job's `WorkflowStateManager` — the first "Run Docking" click creates
+it (`save_parameters_checkpoint(..., source="initial_parse")`), and every
+later click while that job is active diffs the form against the last
+checkpoint (`interactive_session.py::compute_changed_params()`, a thin
+wrapper over the same `common/param_diff.py::changed_parameter_keys()` the
+CLI's job.log diff lines use) and, if anything changed, checkpoints the new
+parameters, computes a minimal rerun plan with the same
+`rerun_planner.compute_rerun_steps()` the CLI uses, and executes it behind a
+**Confirm redock** button (see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#redocking-after-a-parameter-change)). What
+the GUI does *not* yet have is `history`/`undo`/named `save_results`
+affordances — those exist in the CLI against the same `state_manager` this
+stage wires in, and are tracked as GUI-parity future work. Everything below
+describes the interactive CLI session (`nlp_orchestrator.py --interactive`)
+except where a Stage 11.2 note calls out GUI behavior explicitly.
 
 **Not covered by this:** resuming a killed/crashed process. Undo/restore
 operates on `session.last_results`, which only exists in the memory of a
@@ -44,8 +57,9 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
     [docs/LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md). Written by
     `WorkflowStateManager` and `WorkflowOrchestrator.execute_workflow()`
     regardless of whether a `state_manager` is attached, so it exists for
-    UI one-shot jobs too, even though the checkpoint/revision files above
-    remain CLI-only until Stage 11.2 wires a `state_manager` into the GUI.
+    every job. Since Stage 11.2, the GUI attaches a `state_manager` for its
+    own jobs too (not just the CLI's), so the checkpoint/revision files above
+    are now written for GUI jobs as well.
 
 ## Atomic Writes
 All JSON writes are atomic:

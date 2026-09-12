@@ -3,6 +3,7 @@ Common utilities for the docking system.
 """
 import hashlib
 import logging
+import os
 import secrets
 from pathlib import Path
 from typing import Dict
@@ -14,15 +15,44 @@ logger = logging.getLogger(__name__)
 def ensure_directory(path: str) -> Path:
     """
     Ensure a directory exists, create if it doesn't.
-    
+
     Args:
         path: Directory path
-        
+
     Returns:
         Path object
     """
     dir_path = Path(path)
     dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
+
+
+def ensure_shared_directory(path: str) -> Path:
+    """Ensure a directory exists and is writable by every service container.
+
+    Use this (instead of :func:`ensure_directory`) only for directories under
+    the shared ``orchestrator_output`` job tree that one container creates
+    but a *different* container must later write into (e.g. the orchestrator
+    process creates ``job_<id>/downloads/`` and then the separate
+    ``rcsb_downloader`` container, running as a different, non-root uid,
+    writes the actual downloaded file into it). A plain ``mkdir`` there
+    inherits the creating process's umask (typically root's default 022,
+    producing mode 755), which blocks a different, non-root uid from
+    creating files inside it — this explicitly ``chmod``s to 0o777 after
+    creation, bypassing umask, so any container/uid can write into it.
+    Directories used only by the single process that creates them (e.g.
+    ``WorkflowStateManager``'s checkpoints, a saved-results bundle) don't
+    need this — plain :func:`ensure_directory` is correct there.
+    """
+    dir_path = Path(path)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(dir_path, 0o777)
+    except OSError:
+        # Best-effort: some filesystems (notably native Windows paths, as
+        # opposed to a Linux container's view of a Docker Desktop bind
+        # mount) don't support POSIX permission bits at all.
+        logger.debug("ensure_shared_directory: chmod not supported for %s", dir_path)
     return dir_path
 
 

@@ -22,6 +22,8 @@ from .workflow_llm_parser import (
     extract_box_source_choice_with_llm,
     classify_session_intent,
     extract_updates_from_command_with_llm,
+    split_command_sequence,
+    _llm_split_command_sequence,
 )
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
@@ -52,6 +54,8 @@ __all__ = [
     'extract_box_source_choice_with_llm',
     'classify_session_intent',
     'extract_updates_from_command_with_llm',
+    'split_command_sequence',
+    '_llm_split_command_sequence',
     'load_job_affinities',
     'compare_jobs',
     'find_prunable_jobs',

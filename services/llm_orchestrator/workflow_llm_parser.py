@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import requests
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .llm_base import BaseLLMClient
 from .workflow_parser import WorkflowParser
@@ -453,6 +453,120 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
         return {"intent": "update_parameters", "name": None}
 
     return None
+
+
+_CHAIN_BOUNDARY_RE = re.compile(r"\s+(?:and\s+then|then|and)\s+", re.IGNORECASE)
+
+
+def split_command_sequence(text: str) -> List[str]:
+    """Split *text* into ordered command segments at conjunction boundaries.
+
+    A boundary (``" and "``, ``" then "``, ``" and then "``) is only accepted
+    when the text immediately following it independently matches
+    :func:`_deterministic_intent` — i.e. looks like the start of its own
+    complete command. This keeps a single compound command like
+    ``"set center 5,6,7 and box 20,20,20"`` (whose tail ``"box 20,20,20"``
+    matches no known command prefix) from being incorrectly split, while
+    still splitting ``"change ligand to HEM and rerun docking"`` (whose tail
+    ``"rerun docking"`` matches ``rerun_steps``).
+
+    Returns ``[text.strip()]`` unchanged when no valid boundary is found —
+    callers use ``len(result) == 1`` to detect "no chain detected".
+    """
+    stripped = text.strip()
+    segments: List[str] = []
+    head = 0
+    found_cut = False
+
+    for match in _CHAIN_BOUNDARY_RE.finditer(stripped):
+        tail = stripped[match.end():].strip()
+        if not tail or _deterministic_intent(tail) is None:
+            continue
+        segment = stripped[head:match.start()].strip()
+        if not segment:
+            continue
+        segments.append(segment)
+        head = match.end()
+        found_cut = True
+
+    if not found_cut:
+        return [stripped]
+
+    tail = stripped[head:].strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+_SEGMENT_SPLIT_SYSTEM = (
+    "You split one user input into an ordered list of separate, complete "
+    "follow-up commands for an active molecular docking session, when it "
+    "genuinely contains more than one command chained together (for example "
+    "with 'and' or 'then'). Each command must be a complete, standalone "
+    "instruction someone could type on its own, using words from the "
+    "original input only:\n"
+    "- new_workflow, search_ligand, update_parameters, use_pymol_box, "
+    "rerun_steps, show_state, show_history, undo_revision, save_results, "
+    "end_session, help\n\n"
+    'Return JSON only with this exact shape: {"segments": ["<command 1>", "<command 2>", ...]}. '
+    "If the input is really just one command, return it unchanged as the only element. "
+    "Never invent words that are not in the original input. "
+    "Never include markdown, explanations, or code fences."
+)
+
+
+def _llm_split_command_sequence(llm_client: BaseLLMClient, text: str) -> List[str]:
+    """Ask the LLM to split *text* into ordered plain-text command segments.
+
+    Used only as a second attempt after :func:`split_command_sequence` finds
+    no valid boundary. Every proposed segment is a plain natural-language
+    command string (not a pre-resolved intent/parameter object) so it can
+    re-enter the normal :func:`classify_session_intent` /
+    ``extract_updates_from_command_with_llm`` pipeline unchanged, exactly like
+    a deterministically-split segment would.
+
+    Returns ``[text]`` unchanged on any failure to produce a validated,
+    multi-segment split: malformed/missing JSON, fewer than two segments, a
+    segment that classifies to ``"unknown"``, a segment dropping words from
+    the original input, or an LLM/network error.
+    """
+    stripped = text.strip()
+    prompt = f"Split this session command if it contains more than one command:\n\n{stripped}"
+    try:
+        raw = llm_client.generate(prompt, system=_SEGMENT_SPLIT_SYSTEM, temperature=0.1)
+    except (requests.RequestException, RuntimeError) as exc:
+        logger.warning("LLM command-sequence split failed for %r: %s", stripped, exc)
+        return [stripped]
+
+    payload = _extract_json_object(raw)
+    if not payload:
+        return [stripped]
+
+    segments = payload.get("segments")
+    if not isinstance(segments, list) or len(segments) < 2:
+        return [stripped]
+
+    cleaned: List[str] = []
+    for segment in segments:
+        if not isinstance(segment, str) or not segment.strip():
+            return [stripped]
+        cleaned.append(segment.strip())
+
+    # Anti-hallucination check: every original word must reappear somewhere
+    # across the returned segments (whitespace/punctuation may be normalized,
+    # but no word may be dropped or invented). The connector word itself
+    # ("and"/"then") is expected to disappear — it's the separator, not
+    # content — so it's excluded from the original word count.
+    original_words = re.sub(r"\b(?:and|then)\b", " ", stripped, flags=re.IGNORECASE).split()
+    combined_words = " ".join(cleaned).split()
+    if len(combined_words) < len(original_words):
+        return [stripped]
+
+    for segment in cleaned:
+        if classify_session_intent(llm_client, segment)["intent"] == "unknown":
+            return [stripped]
+
+    return cleaned
 
 
 def classify_session_intent(

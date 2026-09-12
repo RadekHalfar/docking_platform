@@ -5,6 +5,8 @@ import pytest
 from services.llm_orchestrator.workflow_llm_parser import (
     classify_session_intent,
     extract_updates_from_command_with_llm,
+    split_command_sequence,
+    _llm_split_command_sequence,
 )
 
 
@@ -122,3 +124,87 @@ def test_extract_updates_empty_on_bad_llm_output_or_exception(llm_client, user_c
 
     updates = extract_updates_from_command_with_llm(llm_client, user_command)
     assert updates == {}
+
+
+# ---------------------------------------------------------------------------
+# Multi-intent command sequencing (Phase 10) — deterministic splitter
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("state and save results as trial_a", ["state", "save results as trial_a"]),
+        ("show history then undo 14", ["show history", "undo 14"]),
+        (
+            "change ligand to HEM and rerun docking",
+            ["change ligand to HEM", "rerun docking"],
+        ),
+        (
+            "state and save results as trial_a and end session",
+            ["state", "save results as trial_a", "end session"],
+        ),
+    ],
+)
+def test_split_command_sequence_valid_chains(text, expected):
+    assert split_command_sequence(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "set center 5,6,7 and box 20,20,20",
+        "state",
+        "search ligand aspirin and vitamin c",
+    ],
+)
+def test_split_command_sequence_no_split_when_tail_unrecognized(text):
+    """A tail that doesn't independently match a known command must not be split off."""
+    assert split_command_sequence(text) == [text]
+
+
+# ---------------------------------------------------------------------------
+# Multi-intent command sequencing (Phase 10) — LLM-assisted second pass
+# ---------------------------------------------------------------------------
+
+def test_llm_split_command_sequence_returns_validated_segments(llm_client):
+    # Both proposed segments must classify deterministically (without another
+    # llm_client.generate call) so the mocked split response above doesn't
+    # leak into the per-segment validation pass.
+    llm_client.generate.return_value = '{"segments": ["state", "save results as trial_a"]}'
+    segments = _llm_split_command_sequence(llm_client, "state then save results as trial_a")
+    assert segments == ["state", "save results as trial_a"]
+
+
+def test_llm_split_command_sequence_falls_back_on_unknown_segment(llm_client):
+    llm_client.generate.return_value = '{"segments": ["blarg florp zorp", "also nonsense"]}'
+    text = "blarg florp zorp then also nonsense"
+    assert _llm_split_command_sequence(llm_client, text) == [text]
+
+
+@pytest.mark.parametrize(
+    "llm_output",
+    [
+        "not json at all",
+        '{"segments": "state"}',
+        '{"segments": ["state"]}',
+        '{"segments": ["state", ""]}',
+        '{"other_key": ["state", "save results"]}',
+    ],
+)
+def test_llm_split_command_sequence_falls_back_on_malformed_output(llm_client, llm_output):
+    llm_client.generate.return_value = llm_output
+    text = "state then save results"
+    assert _llm_split_command_sequence(llm_client, text) == [text]
+
+
+def test_llm_split_command_sequence_falls_back_when_words_dropped(llm_client):
+    """Anti-hallucination guard: segments must not drop words from the original input."""
+    llm_client.generate.return_value = '{"segments": ["state", "save"]}'
+    text = "state then save results as trial_a"
+    assert _llm_split_command_sequence(llm_client, text) == [text]
+
+
+def test_llm_split_command_sequence_falls_back_on_exception(llm_client):
+    llm_client.generate.side_effect = RuntimeError("LLM unavailable")
+    text = "state then save results"
+    assert _llm_split_command_sequence(llm_client, text) == [text]

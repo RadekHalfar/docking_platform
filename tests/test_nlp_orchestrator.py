@@ -1050,3 +1050,351 @@ def test_format_comparison_table_shows_na_for_missing_values():
     assert "-8.4" in table
     assert "-7.1" in table
 
+
+# ---------------------------------------------------------------------------
+# Phase 10: Multi-intent command sequencing
+# ---------------------------------------------------------------------------
+
+def test_multi_intent_two_actions_run_in_order(monkeypatch, tmp_path, capsys, llm_client):
+    """'state and save results as trial_a' should run both actions, in order."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain1"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint(
+                {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+                source="initial_parse",
+            )
+            (job_dir / "docking_results").mkdir(parents=True, exist_ok=True)
+            (job_dir / "docking_results" / "ATP_out.pdbqt").write_text("dummy")
+            sess.activate(
+                "job_chain1", sm,
+                last_results={
+                    "status": "completed",
+                    "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+                    "results": {},
+                },
+            )
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+
+    answers = iter([
+        "Download 6lu7 and ATP, prepare and dock",
+        "state and save results as trial_a",
+        "y",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    result = cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Multi-step command detected (2 steps)" in output
+    assert output.index("Session State") < output.index("Saved bundle 'trial_a'")
+    assert "Multi-step command summary: 2/2 steps completed." in output
+    assert (job_dir / "saved_results" / "trial_a" / "metadata.json").exists()
+
+
+def test_multi_intent_control_then_mutation_persists_update(monkeypatch, tmp_path, capsys, llm_client):
+    """'state and change ligand to HEM' should print state first, then persist the update."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain2"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint(
+                {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+                source="initial_parse",
+            )
+            sess.activate(
+                "job_chain2", sm,
+                last_results={
+                    "status": "completed",
+                    "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+                    "results": {},
+                },
+            )
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["HEM"]},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP, prepare and dock",
+        "state and change ligand to HEM",
+        "y",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    output = capsys.readouterr().out
+    assert output.index("Session State") < output.index("Parameters updated")
+
+    sm = WorkflowStateManager(job_dir)
+    assert sm.load_latest_parameters()["ligand_ids"] == ["HEM"]
+
+
+def test_multi_intent_second_step_failure_keeps_first_effect(monkeypatch, tmp_path, capsys, llm_client):
+    """If step 2 fails, step 1's effect stays applied and the summary explains the stop."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain3"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            # Deliberately missing center/box_size so the rerun pre-flight check fails.
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+            sess.activate(
+                "job_chain3", sm,
+                last_results={
+                    "status": "completed",
+                    "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+                    "results": {},
+                },
+            )
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["HEM"]},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP, dock",
+        "change ligand to HEM and rerun docking",
+        "y",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    output = capsys.readouterr().out
+    assert "required parameters are missing" in output
+    assert "Multi-step command summary: 1/2 steps completed." in output
+    assert 'Stopped after step 2 ("rerun docking")' in output
+
+    sm = WorkflowStateManager(job_dir)
+    assert sm.load_latest_parameters()["ligand_ids"] == ["HEM"]
+
+
+def test_multi_intent_and_only_ambiguous_input_falls_back_silently(monkeypatch, tmp_path, capsys, llm_client):
+    """An 'and'-only compound command that can't be split runs unchanged, with no LLM split attempt."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain4"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+            sess.activate("job_chain4", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+
+    extract_calls = []
+
+    def fake_extract(_llm, text):
+        extract_calls.append(text)
+        return {"center": [5.0, 6.0, 7.0], "box_size": [20.0, 20.0, 20.0]}
+
+    monkeypatch.setattr(cli, "extract_updates_from_command_with_llm", fake_extract)
+
+    llm_split_calls = []
+
+    def fake_llm_split(_llm, text):
+        llm_split_calls.append(text)
+        return [text]
+
+    monkeypatch.setattr(cli, "_llm_split_command_sequence", fake_llm_split)
+
+    answers = iter([
+        "Download 6lu7 and ATP, dock",
+        "set center 5,6,7 and box 20,20,20",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    # Proves the old single-call path ran unchanged, and the LLM split
+    # second-pass was never even attempted for an "and"-only input.
+    assert extract_calls == ["set center 5,6,7 and box 20,20,20"]
+    assert llm_split_calls == []
+    output = capsys.readouterr().out
+    assert "Note: treating this as a single command" not in output
+
+
+def test_multi_intent_then_ambiguous_input_falls_back_with_guidance(monkeypatch, tmp_path, capsys, llm_client):
+    """A 'then'-containing input the LLM split also can't parse prints a guidance note."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain5"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+            sess.activate("job_chain5", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(cli, "_llm_split_command_sequence", lambda _llm, text: [text])
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: {"intent": "end_session"} if text.strip().lower() == "end" else {"intent": "unknown"},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP, dock",
+        "dock it then somehow fix it",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    output = capsys.readouterr().out
+    assert "Note: treating this as a single command" in output
+
+
+def test_multi_intent_llm_second_pass_recovers_chain(monkeypatch, tmp_path, capsys, llm_client):
+    """When the deterministic splitter finds nothing, a 'then' input still gets a real LLM split attempt."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain6"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+            sess.activate("job_chain6", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(
+        cli, "_llm_split_command_sequence",
+        lambda _llm, _text: ["please show me the state", "then end the session"],
+    )
+    monkeypatch.setattr(
+        cli, "classify_session_intent",
+        lambda _llm, text: {"intent": "show_state"} if "state" in text.lower() else {"intent": "end_session"},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP",
+        "please show me the state then end the session",
+        "y",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    result = cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Multi-step command detected (2 steps)" in output
+    assert "Session State" in output
+    assert "Goodbye!" in output
+
+
+def test_multi_intent_confirm_decline_cancels_chain(monkeypatch, tmp_path, capsys, llm_client):
+    """Declining the multi-step confirmation must run neither step's side effect."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain7"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+            sess.activate("job_chain7", sm, last_results={"status": "completed", "services_executed": []})
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"ligand_ids": ["HEM"]},
+    )
+
+    answers = iter([
+        "Download 6lu7 and ATP",
+        "state and change ligand to HEM",
+        "n",
+        "end",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    output = capsys.readouterr().out
+    assert "Multi-step command cancelled." in output
+
+    sm = WorkflowStateManager(job_dir)
+    assert sm.load_latest_parameters()["ligand_ids"] == ["ATP"]  # unchanged — neither step ran
+
+
+def test_multi_intent_end_session_mid_chain_stops_session(monkeypatch, tmp_path, capsys, llm_client):
+    """'save results as x and end session' should save, then end the session immediately."""
+    orchestrator = Mock()
+    parser_obj = WorkflowParser()
+    job_dir = Path(tmp_path) / "job_chain8"
+
+    def fake_process(user_input, *_args, **kwargs):
+        sess = kwargs.get("session")
+        if sess is not None:
+            sm = WorkflowStateManager(job_dir)
+            sm.save_parameters_checkpoint(
+                {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
+                source="initial_parse",
+            )
+            (job_dir / "docking_results").mkdir(parents=True, exist_ok=True)
+            (job_dir / "docking_results" / "ATP_out.pdbqt").write_text("dummy")
+            sess.activate(
+                "job_chain8", sm,
+                last_results={
+                    "status": "completed",
+                    "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+                    "results": {},
+                },
+            )
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+
+    answers = iter([
+        "Download 6lu7 and ATP, dock",
+        "save results as trial_end and end session",
+        "y",
+    ])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    result = cli._run_interactive_loop(llm_client, orchestrator, parser_obj, cli.CLARIFICATION_MODE_HYBRID)
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Saved bundle 'trial_end'" in output
+    assert "Goodbye!" in output
+    assert (job_dir / "saved_results" / "trial_end" / "metadata.json").exists()
+

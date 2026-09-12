@@ -1,8 +1,13 @@
 """
 Unit tests for common utilities.
 """
+import os
+import stat
+
+import pytest
+
 from common.utils import (
-    ensure_directory, compute_file_checksum,
+    ensure_directory, ensure_shared_directory, compute_file_checksum,
     generate_job_id, validate_pdb_id, sanitize_filename
 )
 from common.file_io import atomic_write_json, load_json_dict
@@ -14,6 +19,33 @@ def test_ensure_directory(tmp_path):
     result = ensure_directory(str(test_dir))
     assert result.exists()
     assert result.is_dir()
+
+
+def test_ensure_shared_directory_creates_dir(tmp_path):
+    """ensure_shared_directory should create nested directories like ensure_directory."""
+    test_dir = tmp_path / "shared" / "nested" / "dir"
+    result = ensure_shared_directory(str(test_dir))
+    assert result.exists()
+    assert result.is_dir()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits aren't meaningful on native Windows paths")
+def test_ensure_shared_directory_is_world_writable(tmp_path):
+    """The directory must be writable by a uid other than its creator's (world write bit set)."""
+    test_dir = tmp_path / "shared_dir"
+    result = ensure_shared_directory(str(test_dir))
+    mode = stat.S_IMODE(os.stat(result).st_mode)
+    assert mode & stat.S_IWOTH, f"expected world-writable (o+w), got mode {oct(mode)}"
+
+
+def test_ensure_shared_directory_fixes_existing_restrictive_dir(tmp_path):
+    """Calling it on an already-existing, restrictively-permissioned directory must still widen it."""
+    test_dir = tmp_path / "already_exists"
+    test_dir.mkdir(mode=0o755)
+    ensure_shared_directory(str(test_dir))
+    if os.name != "nt":
+        mode = stat.S_IMODE(os.stat(test_dir).st_mode)
+        assert mode & stat.S_IWOTH
 
 
 def test_compute_file_checksum(tmp_path):

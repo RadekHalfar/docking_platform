@@ -224,17 +224,80 @@ Then type commands interactively:
 4. Use `new <request>` to explicitly start a fresh workflow in the same session.
 5. Use `end`/`quit`/`exit` or "end session" to stop.
 
-#### Current command granularity
+#### Multi-intent command sequencing (Phase 10)
 
-For now, pass one intent per user input line.
+A single input line may chain more than one follow-up command with `and`,
+`then`, or `and then`:
 
-Examples:
-- ✅ `state`
-- ✅ `save results as hem_box_a`
-- ❌ `state and save results as hem_box_a`
+```
+🧬 [job_abc123] > state and save results as hem_box_a
+🧬 [job_abc123] > show history then undo 14
+🧬 [job_abc123] > change ligand to HEM and rerun docking
+```
 
-When one input contains multiple intents, only one intent is dispatched in the current implementation.
-Planned improvement: `dev_plan.md` Phase 10 adds ordered multi-intent command sequencing.
+Each recognized step is printed as a numbered plan, then executed in order
+after one confirmation for the whole sequence:
+
+```
+Multi-step command detected (2 steps):
+  1. change ligand to HEM
+  2. rerun docking
+Execute these 2 steps in order? [Y/n]: y
+
+[Step 1/2] change ligand to HEM
+...
+[Step 2/2] rerun docking
+...
+
+Multi-step command summary: 2/2 steps completed.
+```
+
+Execution **stops at the first step that fails** — the effects of any
+earlier, already-completed steps are kept (they were already persisted to
+disk before the failing step ran). The summary explains where it stopped:
+
+```
+Multi-step command summary: 1/2 steps completed. Stopped after step 2 ("rerun docking") failed.
+```
+
+An `end_session` step anywhere in the chain (e.g.
+`save results as x and end session`) ends the session immediately after
+running, same as typing it alone.
+
+**How splitting works:** a boundary word (`and`/`then`) is only treated as a
+split point when the text right after it independently looks like a
+complete command on its own (deterministic pattern match — the same one
+used for single-command classification, see below). This is what lets
+`"set center 5,6,7 and box 20,20,20"` — a single compound
+`update_parameters` command whose second half (`"box 20,20,20"`) isn't a
+command on its own — run exactly as it always has, as one command, while
+`"change ligand to HEM and rerun docking"` correctly splits in two (its
+second half, `"rerun docking"`, is a recognizable command by itself).
+
+For a `then`-containing input the deterministic splitter can't parse (e.g.
+free-form phrasing like `"please show me the state then save it as trial
+one"`), one additional LLM call is tried as a second pass — it proposes a
+plain-text split, each piece is re-validated with the normal classifier
+before being trusted, and the result is discarded (falling back to the
+single-command path) if that validation fails. This second pass is **not**
+attempted for `and`-only input, since "and" appears too often in ordinary
+single commands to justify an LLM call on every occurrence. If even the
+`then` case can't be split, a short guidance note is printed and the whole
+input is dispatched as one command, unchanged:
+
+```
+🧬 [job_abc123] > dock it then somehow fix it
+Note: treating this as a single command — chain complete commands with 'and'/'then', e.g. 'state and save results as trial_a'.
+```
+
+Splitting only ever applies to follow-up commands in an already-active
+session — a `new <request>` (or the very first command before any job
+exists) is always treated as one atomic natural-language request, since its
+own text may legitimately contain "and"/"then"/"dock" as ordinary workflow
+vocabulary (e.g. `"new Download 6lu7 and ADP, prepare and dock"`).
+
+Migration note: before Phase 10, one input had to contain exactly one
+intent (see the intent table below) — chaining was not supported.
 
 #### Intent classification for follow-up commands (Phase 2)
 
@@ -906,12 +969,12 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 - [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
 - [x] More LLM backends (OpenAI, Anthropic, MetaCentrum, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
 - [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))
+- [x] Multi-intent command sequencing in one input line (`dev_plan.md` Phase 10 — see [Multi-intent command sequencing](#multi-intent-command-sequencing-phase-10))
 
 ### Planned Features
 
 - [ ] Batch workflow execution across multiple independent jobs (as opposed to the existing single-job [batch docking from a folder](BATCH_DOCKING.md))
 - [ ] Workflow templates
-- [ ] Multi-intent command sequencing in one input line (`dev_plan.md` Phase 10 — see [Current command granularity](#current-command-granularity))
 - [ ] Parameter suggestions based on protein structure
 
 ---

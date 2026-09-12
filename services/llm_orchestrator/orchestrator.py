@@ -18,6 +18,7 @@ from common.file_utils import scan_ligand_folder
 from common.http_retry import build_mcp_retry_session
 from common.mcp_client import call_mcp_tool as _shared_call_mcp_tool
 from common.path_utils import to_container_path
+from common.utils import ensure_shared_directory
 from services.llm_orchestrator.workflow_definition import get_service_urls_from_env
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class WorkflowOrchestrator:
             verbosity: Verbosity level (VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO)
         """
         self.output_base = Path(output_base).resolve()
-        self.output_base.mkdir(parents=True, exist_ok=True)
+        ensure_shared_directory(self.output_base)
         
         # Store the base directory for path conversion
         self.workspace_root = Path.cwd().resolve()
@@ -232,7 +233,7 @@ class WorkflowOrchestrator:
         
         # Create job directory
         job_dir = self.output_base / self.current_job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
+        ensure_shared_directory(job_dir)
         
         results = {
             "job_id": self.current_job_id,
@@ -257,7 +258,7 @@ class WorkflowOrchestrator:
                     logger.info("="*80)
                 
                 download_dir = job_dir / "downloads"
-                download_dir.mkdir(exist_ok=True)
+                ensure_shared_directory(download_dir)
 
                 local_protein_file = params.get("protein_file")
 
@@ -339,7 +340,7 @@ class WorkflowOrchestrator:
             # Step 2: Prepare ligands
             if "prepare_ligands" in services or "prepare_protein" in services:
                 prepared_dir = job_dir / "prepared"
-                prepared_dir.mkdir(exist_ok=True)
+                ensure_shared_directory(prepared_dir)
             
             if "prepare_ligands" in services:
                 _reload_latest_from_disk()
@@ -437,7 +438,7 @@ class WorkflowOrchestrator:
                     raise RuntimeError("No prepared ligands available for docking")
                 
                 docking_dir = job_dir / "docking_results"
-                docking_dir.mkdir(exist_ok=True)
+                ensure_shared_directory(docking_dir)
                 
                 if self.verbosity != VERBOSITY_LOW:
                     logger.info(f"Docking parameters:")
@@ -513,7 +514,7 @@ class WorkflowOrchestrator:
                     ]
 
                 viz_dir = job_dir / "visualization"
-                viz_dir.mkdir(exist_ok=True)
+                ensure_shared_directory(viz_dir)
 
                 if pose_results:
                     # ligand-preparer converts poses one ligand at a time (Meeko

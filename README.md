@@ -243,6 +243,11 @@ python nlp_orchestrator.py --interactive
 #   new <request>                  -> start a fresh workflow in current session
 #   end / quit / exit              -> stop session
 #
+# Chained commands: join multiple follow-up commands with "and"/"then" to run
+# them in order after one confirmation, e.g.:
+#   🧬 > state and save results as trial_a
+#   🧬 > change ligand to HEM and rerun docking
+#
 # Example multi-variant session:
 #   🧬 > Download 6lu7 and ATP, prepare and dock with center 10,20,30 and box 25,25,25
 #   🧬 > save results as atp_box1

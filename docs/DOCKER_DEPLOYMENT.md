@@ -479,6 +479,28 @@ chmod -R 777 ./cache ./demo_output
 
 **Solution (Windows):**
 - Ensure Docker Desktop has access to the drive
+
+**`orchestrator_output` specifically — `[Errno 13] Permission denied` on a
+job's `downloads`/`prepared`/`docking_results`/`visualization` file:** this
+is not a one-time host setup issue like the two above — it's a real
+cross-container UID mismatch that the code now handles automatically, so
+you shouldn't need to `chmod` anything by hand. Whichever process starts a
+job (`script-runner`, or `nlp_orchestrator.py` run directly) creates each
+job's output subdirectories as **root**, but `rcsb_downloader`,
+`ligand_preparer`, `protein_preparer`, and `moldina_runner` write their
+actual output files as the non-root `appuser` (uid 1000) — a directory
+created by root with the default mode (755) blocks a different, non-root
+uid from creating files in it. `services/llm_orchestrator/orchestrator.py`
+creates every job-output subdirectory via
+`common.utils.ensure_shared_directory()`, which explicitly widens
+permissions after creation so this works out of the box. If you still hit
+this (e.g. after manually creating a job directory by hand, or restoring
+`orchestrator_output` from a backup/archive that preserved restrictive
+permissions), the fix is the same as above — widen the specific job
+directory:
+```bash
+docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orchestrator_output/job_<id>
+```
 - Settings → Resources → File Sharing
 
 ### Network Issues

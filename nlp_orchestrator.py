@@ -29,6 +29,8 @@ from services.llm_orchestrator import (
     extract_box_source_choice_with_llm,
     classify_session_intent,
     extract_updates_from_command_with_llm,
+    split_command_sequence,
+    _llm_split_command_sequence,
     save_results_bundle,
     validate_bundle_name,
     compare_jobs,
@@ -441,11 +443,15 @@ def _handle_show_history(session: "InteractiveSession") -> None:
 def _handle_undo_revision(
     rev_str: Optional[str],
     session: "InteractiveSession",
-) -> None:
-    """Restore a prior revision and suggest a follow-up rerun."""
+) -> bool:
+    """Restore a prior revision and suggest a follow-up rerun.
+
+    Returns True when a revision was successfully restored, False otherwise
+    (no active job, invalid/missing revision number, or unknown revision).
+    """
     if session.state_manager is None:
         print("No active job — cannot undo.")
-        return
+        return False
 
     # Resolve revision number.
     revision: Optional[int] = None
@@ -461,13 +467,13 @@ def _handle_undo_revision(
             revision = int(raw)
         except (ValueError, EOFError, KeyboardInterrupt):
             print("Invalid or no revision number provided. Undo cancelled.")
-            return
+            return False
 
     try:
         data = session.state_manager.restore_revision(revision)
     except ValueError as exc:
         print(f"❌ {exc}")
-        return
+        return False
 
     print(f"\n✅ Revision {revision} restored.")
 
@@ -492,21 +498,28 @@ def _handle_undo_revision(
         session.pending_changed_params |= CORE_PARAMS
         print("\n  ⚠️  Parameters changed. Type 'rerun' to re-execute affected steps.")
 
+    return True
+
 
 def _handle_save_results(
     intent_result: Dict[str, Any],
     session: "InteractiveSession",
-) -> None:
-    """Execute the save_results intent: resolve name/scope, copy artifacts, write metadata."""
+) -> bool:
+    """Execute the save_results intent: resolve name/scope, copy artifacts, write metadata.
+
+    Returns True when a bundle was successfully saved, False otherwise (no
+    active job, unsaved parameter changes, cancelled/invalid name, or a
+    filesystem save failure).
+    """
     if session.state_manager is None:
         print("No active job state manager — cannot save results.")
-        return
+        return False
 
     if session.pending_changed_params:
         changed = ", ".join(sorted(session.pending_changed_params))
         print(f"❌ Cannot save: parameters changed since last docking ({changed}).")
         print("   Run 'rerun' first, or 'undo' to revert parameters.")
-        return
+        return False
 
     job_dir = session.state_manager.job_dir
     scope: str = (intent_result or {}).get("scope") or "all"
@@ -518,16 +531,16 @@ def _handle_save_results(
             name = input("Enter a name for this result bundle: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nSave cancelled.")
-            return
+            return False
         if not name:
             print("No name provided. Save cancelled.")
-            return
+            return False
 
     # Validate before any filesystem work.
     err = validate_bundle_name(name)
     if err:
         print(f"❌ Invalid bundle name: {err}")
-        return
+        return False
 
     revision = session.state_manager.get_current_revision()
     parameters = session.state_manager.load_latest_parameters() or {}
@@ -541,7 +554,7 @@ def _handle_save_results(
             choice = input("Overwrite? [y/N]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\nSave cancelled.")
-            return
+            return False
         if choice not in ("y", "yes"):
             # Offer auto-suffix fallback.
             suffix = datetime.now(timezone.utc).strftime("%H%M%S")
@@ -565,6 +578,203 @@ def _handle_save_results(
             print("   ⚠️  No artifacts were available to copy into the bundle.")
     else:
         print(f"❌ Save failed: {result['error']}")
+
+    return bool(result["success"])
+
+
+def _dispatch_intent(
+    intent_result: Optional[Dict[str, Any]],
+    user_input: str,
+    llm_client: BaseLLMClient,
+    orchestrator: WorkflowOrchestrator,
+    parser_obj: WorkflowParser,
+    session: "InteractiveSession",
+    clarification_mode: str,
+    protein_file: Optional[str],
+    ligand_files: Optional[List[str]],
+    ligand_folder: Optional[str],
+) -> bool:
+    """Execute one already-classified session intent.
+
+    Returns True on success/no-op, False on a failure that should halt a
+    multi-intent chain (see ``_run_command_chain``). The single-intent path
+    in ``_run_interactive_loop`` calls this too and simply ignores the
+    return value, so single-intent behavior is unchanged.
+    """
+    intent = (intent_result or {}).get("intent")
+
+    if intent == "end_session":
+        session.session_active = False
+        print("Goodbye!")
+        return True
+
+    if intent == "help":
+        _print_interactive_help()
+        return True
+
+    if intent == "show_state":
+        print("\n" + session.format_state_summary())
+        return True
+
+    if intent == "show_history":
+        _handle_show_history(session)
+        return True
+
+    if intent == "new_workflow":
+        parts = user_input.split(maxsplit=1)
+        new_req = parts[1].strip() if len(parts) > 1 and user_input.lower().startswith("new ") else user_input.strip()
+        if not new_req:
+            print("Please provide a workflow request.")
+        else:
+            process_workflow(
+                new_req,
+                llm_client,
+                orchestrator,
+                parser_obj,
+                clarification_mode=clarification_mode,
+                session=session,
+                protein_file=protein_file,
+                ligand_files=ligand_files,
+                ligand_folder=ligand_folder,
+            )
+        return True
+
+    # Intents below require an active job.
+    if intent and intent != "unknown" and not session.has_active_job():
+        print("No active job yet. Start a workflow first.")
+        return False
+
+    if intent == "update_parameters":
+        changed = _handle_update_parameters(user_input, llm_client, session)
+        if changed:
+            session.pending_changed_params |= changed
+            print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
+        return True
+
+    if intent == "search_ligand":
+        applied = _handle_search_ligand(
+            orchestrator=orchestrator,
+            session=session,
+            query_name=(intent_result or {}).get("name"),
+        )
+        if applied and _ask_yes_no("Continue now with rerun of affected steps? [Y/n]: ", default_yes=True):
+            original = (session.last_results or {}).get("services_executed", [])
+            if original:
+                _execute_partial_rerun(
+                    session,
+                    orchestrator,
+                    changed_params=session.pending_changed_params or {"ligand_ids"},
+                )
+                session.pending_changed_params = set()
+        return True
+
+    if intent == "rerun_steps":
+        original = (session.last_results or {}).get("services_executed", [])
+        if original:
+            rerun_params = session.pending_changed_params if session.pending_changed_params else CORE_PARAMS
+            result = _execute_partial_rerun(
+                session, orchestrator, changed_params=rerun_params,
+            )
+            session.pending_changed_params = set()
+            return result is not None
+        else:
+            print("No previous workflow execution to rerun. Use 'new <request>' instead.")
+            return False
+
+    if intent == "save_results":
+        return _handle_save_results(intent_result or {}, session)
+
+    if intent == "undo_revision":
+        rev = (intent_result or {}).get("name")
+        return _handle_undo_revision(rev, session)
+
+    if intent == "use_pymol_box":
+        print("PyMOL box selection is not available (Phase 6 was skipped).")
+        print("Set coordinates manually: 'set center to x,y,z' and 'set box size to x,y,z'.")
+        return True
+
+    if intent == "visualize_in_pymol":
+        if session.last_results and "visualize" in (session.last_results.get("services_executed") or []):
+            _integrate_with_pymol_interactive(session.last_results)
+        elif session.last_results:
+            print("Visualization was not part of this workflow. Include 'visualize' in your next request.")
+        else:
+            print("No workflow results available to load into PyMOL.")
+        return True
+
+    # No recognised intent — if there's an active job, we don't know
+    # what the user meant; otherwise treat as a new workflow request.
+    if session.has_active_job():
+        print("I didn't understand that command. Type 'help' to see supported commands.")
+        return False
+    else:
+        process_workflow(
+            user_input,
+            llm_client,
+            orchestrator,
+            parser_obj,
+            clarification_mode=clarification_mode,
+            session=session,
+            protein_file=protein_file,
+            ligand_files=ligand_files,
+            ligand_folder=ligand_folder,
+        )
+        return True
+
+
+def _run_command_chain(
+    segments: List[str],
+    llm_client: BaseLLMClient,
+    orchestrator: WorkflowOrchestrator,
+    parser_obj: WorkflowParser,
+    session: "InteractiveSession",
+    clarification_mode: str,
+    protein_file: Optional[str],
+    ligand_files: Optional[List[str]],
+    ligand_folder: Optional[str],
+) -> None:
+    """Classify and execute each segment of a multi-intent command in order.
+
+    Stops at the first step that fails (or that ends the session), and
+    prints a partial-completion summary explaining why.
+    """
+    total = len(segments)
+    print(f"\nMulti-step command detected ({total} steps):")
+    for i, segment in enumerate(segments, 1):
+        print(f"  {i}. {segment}")
+
+    if not _ask_yes_no(f"Execute these {total} steps in order? [Y/n]: ", default_yes=True):
+        print("Multi-step command cancelled.")
+        return
+
+    completed = 0
+    stop_reason: Optional[str] = None
+    for i, segment in enumerate(segments, 1):
+        print(f"\n[Step {i}/{total}] {segment}")
+        intent_result = classify_session_intent(llm_client, segment)
+        ok = _dispatch_intent(
+            intent_result,
+            segment,
+            llm_client,
+            orchestrator,
+            parser_obj,
+            session,
+            clarification_mode,
+            protein_file,
+            ligand_files,
+            ligand_folder,
+        )
+        if ok:
+            completed += 1
+        else:
+            stop_reason = f'step {i} ("{segment}") failed'
+        if not ok or not session.session_active:
+            break
+
+    summary = f"\nMulti-step command summary: {completed}/{total} steps completed."
+    if stop_reason:
+        summary += f" Stopped after {stop_reason}."
+    print(summary)
 
 
 def _run_interactive_loop(
@@ -595,130 +805,57 @@ def _run_interactive_loop(
             if not user_input:
                 continue
 
+            # Multi-intent command sequencing (Phase 10) — only attempted for
+            # follow-up commands in an active session; a 'new <request>' is
+            # one atomic natural-language payload and must never be split.
+            if session.has_active_job() and not re.match(r"^new\s+\S", user_input, re.IGNORECASE):
+                segments = split_command_sequence(user_input)
+                # "then" is a much rarer, stronger signal of intentional chaining
+                # than bare "and" (which appears constantly in ordinary compound
+                # parameter commands, e.g. "set center X and box Y") — only
+                # spend an LLM call trying to recover a split for "then".
+                if len(segments) == 1 and re.search(r"\bthen\b", user_input, re.IGNORECASE):
+                    segments = _llm_split_command_sequence(llm_client, user_input)
+                if len(segments) >= 2:
+                    _run_command_chain(
+                        segments,
+                        llm_client,
+                        orchestrator,
+                        parser_obj,
+                        session,
+                        clarification_mode,
+                        protein_file,
+                        ligand_files,
+                        ligand_folder,
+                    )
+                    continue
+                if re.search(r"\bthen\b", user_input, re.IGNORECASE):
+                    print(
+                        "Note: treating this as a single command — chain complete "
+                        "commands with 'and'/'then', e.g. 'state and save results as trial_a'."
+                    )
+
             # Unified intent dispatch — deterministic patterns checked first,
             # LLM fallback only when an active job exists and pattern didn't match.
             intent_result = classify_session_intent(llm_client, user_input) if session.has_active_job() else None
             # When no active job, still honour deterministic commands.
             if intent_result is None:
                 intent_result = _deterministic_intent(user_input)
-            intent = (intent_result or {}).get("intent")
 
-            if intent == "end_session":
-                session.session_active = False
-                print("Goodbye!")
+            _dispatch_intent(
+                intent_result,
+                user_input,
+                llm_client,
+                orchestrator,
+                parser_obj,
+                session,
+                clarification_mode,
+                protein_file,
+                ligand_files,
+                ligand_folder,
+            )
+            if not session.session_active:
                 break
-
-            if intent == "help":
-                _print_interactive_help()
-                continue
-
-            if intent == "show_state":
-                print("\n" + session.format_state_summary())
-                continue
-
-            if intent == "show_history":
-                _handle_show_history(session)
-                continue
-
-            if intent == "new_workflow":
-                parts = user_input.split(maxsplit=1)
-                new_req = parts[1].strip() if len(parts) > 1 and user_input.lower().startswith("new ") else user_input.strip()
-                if not new_req:
-                    print("Please provide a workflow request.")
-                else:
-                    process_workflow(
-                        new_req,
-                        llm_client,
-                        orchestrator,
-                        parser_obj,
-                        clarification_mode=clarification_mode,
-                        session=session,
-                        protein_file=protein_file,
-                        ligand_files=ligand_files,
-                        ligand_folder=ligand_folder,
-                    )
-                continue
-
-            # Intents below require an active job.
-            if intent and intent != "unknown" and not session.has_active_job():
-                print("No active job yet. Start a workflow first.")
-                continue
-
-            if intent == "update_parameters":
-                changed = _handle_update_parameters(user_input, llm_client, session)
-                if changed:
-                    session.pending_changed_params |= changed
-                    print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
-                continue
-
-            if intent == "search_ligand":
-                applied = _handle_search_ligand(
-                    orchestrator=orchestrator,
-                    session=session,
-                    query_name=(intent_result or {}).get("name"),
-                )
-                if applied and _ask_yes_no("Continue now with rerun of affected steps? [Y/n]: ", default_yes=True):
-                    original = (session.last_results or {}).get("services_executed", [])
-                    if original:
-                        _execute_partial_rerun(
-                            session,
-                            orchestrator,
-                            changed_params=session.pending_changed_params or {"ligand_ids"},
-                        )
-                        session.pending_changed_params = set()
-                continue
-
-            if intent == "rerun_steps":
-                original = (session.last_results or {}).get("services_executed", [])
-                if original:
-                    rerun_params = session.pending_changed_params if session.pending_changed_params else CORE_PARAMS
-                    _execute_partial_rerun(
-                        session, orchestrator, changed_params=rerun_params,
-                    )
-                    session.pending_changed_params = set()
-                else:
-                    print("No previous workflow execution to rerun. Use 'new <request>' instead.")
-                continue
-
-            if intent == "save_results":
-                _handle_save_results(intent_result or {}, session)
-                continue
-
-            if intent == "undo_revision":
-                rev = (intent_result or {}).get("name")
-                _handle_undo_revision(rev, session)
-                continue
-
-            if intent == "use_pymol_box":
-                print("PyMOL box selection is not available (Phase 6 was skipped).")
-                print("Set coordinates manually: 'set center to x,y,z' and 'set box size to x,y,z'.")
-                continue
-
-            if intent == "visualize_in_pymol":
-                if session.last_results and "visualize" in (session.last_results.get("services_executed") or []):
-                    _integrate_with_pymol_interactive(session.last_results)
-                elif session.last_results:
-                    print("Visualization was not part of this workflow. Include 'visualize' in your next request.")
-                else:
-                    print("No workflow results available to load into PyMOL.")
-                continue
-
-            # No recognised intent — if there's an active job, we don't know
-            # what the user meant; otherwise treat as a new workflow request.
-            if session.has_active_job():
-                print("I didn't understand that command. Type 'help' to see supported commands.")
-            else:
-                process_workflow(
-                    user_input,
-                    llm_client,
-                    orchestrator,
-                    parser_obj,
-                    clarification_mode=clarification_mode,
-                    session=session,
-                    protein_file=protein_file,
-                    ligand_files=ligand_files,
-                    ligand_folder=ligand_folder,
-                )
 
         except KeyboardInterrupt:
             print("\nGoodbye!")

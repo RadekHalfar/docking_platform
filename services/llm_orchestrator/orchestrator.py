@@ -15,7 +15,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from common.file_io import load_json_dict
+from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.file_utils import scan_ligand_folder
 from common.http_retry import build_mcp_retry_session
 from common.job_log import append_job_log
@@ -130,7 +130,11 @@ class WorkflowOrchestrator:
                 print(json.dumps(data, indent=2))
                 print("─" * 80 + "\n")
 
-        job_dir = self.output_base / (self.current_job_id or "unknown_job")
+        # No current_job_id (e.g. a call made outside execute_workflow()) has
+        # nowhere well-defined to log to -- skip rather than fall back to a
+        # shared "unknown_job" directory that would interleave lines from
+        # unrelated calls.
+        job_dir = self.output_base / self.current_job_id if self.current_job_id else None
         call_start = time.time()
         try:
             result = _shared_call_mcp_tool(
@@ -143,17 +147,19 @@ class WorkflowOrchestrator:
             )
         except RuntimeError as e:
             logger.error(str(e))
-            append_job_log(
-                job_dir, "ERROR",
-                f"MCP call failed: {tool_name} @ {service_url} "
-                f"(after {time.time() - call_start:.1f}s): {e}",
-            )
+            if job_dir is not None:
+                append_job_log(
+                    job_dir, "ERROR",
+                    f"MCP call failed: {tool_name} @ {service_url} "
+                    f"(after {time.time() - call_start:.1f}s): {e}",
+                )
             raise
 
-        append_job_log(
-            job_dir, "INFO",
-            f"MCP call: {tool_name} @ {service_url} completed in {time.time() - call_start:.1f}s",
-        )
+        if job_dir is not None:
+            append_job_log(
+                job_dir, "INFO",
+                f"MCP call: {tool_name} @ {service_url} completed in {time.time() - call_start:.1f}s",
+            )
         return result if result is not None else {}
     
     def _copy_local_input(self, source_path: str, dest_dir: Path) -> str:
@@ -261,13 +267,9 @@ class WorkflowOrchestrator:
         logger.info(f"Services to execute: {services}")
 
         workflow_start = time.time()
-        step_start_times: Dict[str, float] = {}
 
-        def _step_started(step: str) -> None:
-            step_start_times[step] = time.time()
-
-        def _step_elapsed(step: str) -> float:
-            return time.time() - step_start_times.get(step, time.time())
+        def _log_step_done(step: str, start_time: float, detail: str) -> None:
+            append_job_log(job_dir, "INFO", f"{step} completed in {time.time() - start_time:.1f}s: {detail}")
 
         append_job_log(
             job_dir, "INFO",
@@ -279,7 +281,7 @@ class WorkflowOrchestrator:
             # Step 1: Get input files (RCSB download and/or local file copy)
             if "get_input_files" in services:
                 _reload_latest_from_disk()
-                _step_started("get_input_files")
+                step_t0 = time.time()
 
                 self._step_print("\n\U0001f4e5 STEP 1: Getting input files...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -364,9 +366,8 @@ class WorkflowOrchestrator:
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Got protein ({protein_source}): {self.workflow_state['protein_file']}")
                     logger.info(f"\u2705 Got {len(self.workflow_state['ligand_files'])} ligand(s) ({ligand_source})")
-                append_job_log(
-                    job_dir, "INFO",
-                    f"get_input_files completed in {_step_elapsed('get_input_files'):.1f}s: "
+                _log_step_done(
+                    "get_input_files", step_t0,
                     f"got protein ({protein_source}) and {len(self.workflow_state['ligand_files'])} "
                     f"ligand(s) ({ligand_source})",
                 )
@@ -380,7 +381,7 @@ class WorkflowOrchestrator:
             
             if "prepare_ligands" in services:
                 _reload_latest_from_disk()
-                _step_started("prepare_ligands")
+                step_t0 = time.time()
 
                 self._step_print("\n\U0001f9ea STEP 2: Preparing ligands...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -417,18 +418,14 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Prepared {len(prepared_ligands)} ligand(s)")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Prepared {len(prepared_ligands)} ligands")
-                append_job_log(
-                    job_dir, "INFO",
-                    f"prepare_ligands completed in {_step_elapsed('prepare_ligands'):.1f}s: "
-                    f"prepared {len(prepared_ligands)} ligand(s)",
-                )
+                _log_step_done("prepare_ligands", step_t0, f"prepared {len(prepared_ligands)} ligand(s)")
 
                 _save_step_checkpoint("prepare_ligands")
             
             # Step 3: Prepare protein
             if "prepare_protein" in services:
                 _reload_latest_from_disk()
-                _step_started("prepare_protein")
+                step_t0 = time.time()
 
                 self._step_print("\n\U0001f9ec STEP 3: Preparing protein...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -462,18 +459,14 @@ class WorkflowOrchestrator:
                     self._step_print("   \u2705 Protein prepared successfully")
                     if self.verbosity == VERBOSITY_NORMAL:
                         logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
-                    append_job_log(
-                        job_dir, "INFO",
-                        f"prepare_protein completed in {_step_elapsed('prepare_protein'):.1f}s: "
-                        f"{self.workflow_state['prepared_protein']}",
-                    )
+                    _log_step_done("prepare_protein", step_t0, f"{self.workflow_state['prepared_protein']}")
 
                 _save_step_checkpoint("prepare_protein")
             
             # Step 4: Run docking
             if "dock" in services:
                 _reload_latest_from_disk()
-                _step_started("dock")
+                step_t0 = time.time()
 
                 self._step_print("\n\u26db\ufe0f  STEP 4: Running molecular docking...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -536,9 +529,8 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Docking completed: {docking_result.get('successful', 0)} successful")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Docking completed: {docking_result.get('successful', 0)} successful")
-                append_job_log(
-                    job_dir, "INFO",
-                    f"dock completed in {_step_elapsed('dock'):.1f}s: "
+                _log_step_done(
+                    "dock", step_t0,
                     f"{docking_result.get('successful', 0)} successful. "
                     f"Per-ligand docking logs: {docking_dir}/<ligand_id>_moldina_output.log",
                 )
@@ -548,7 +540,7 @@ class WorkflowOrchestrator:
             # Step 5: Visualize
             if "visualize" in services:
                 _reload_latest_from_disk()
-                _step_started("visualize")
+                step_t0 = time.time()
 
                 self._step_print("\n\U0001f3a8 STEP 5: Generating visualization...")
                 if self.verbosity == VERBOSITY_NORMAL:
@@ -600,11 +592,7 @@ class WorkflowOrchestrator:
                 self._step_print(f"   \u2705 Visualization prepared: {len(viz_result.get('converted', []))} ligand(s)")
                 if self.verbosity == VERBOSITY_NORMAL:
                     logger.info(f"\u2705 Visualization prepared: {viz_result.get('converted')}")
-                append_job_log(
-                    job_dir, "INFO",
-                    f"visualize completed in {_step_elapsed('visualize'):.1f}s: "
-                    f"{len(viz_result.get('converted', []))} ligand(s)",
-                )
+                _log_step_done("visualize", step_t0, f"{len(viz_result.get('converted', []))} ligand(s)")
 
                 _save_step_checkpoint("visualize")
 
@@ -632,23 +620,40 @@ class WorkflowOrchestrator:
         # than one execute_workflow() call (e.g. a redock after a parameter
         # change) doesn't lose earlier steps' results from the persisted
         # snapshot -- this used to clobber on every call. No-op for a fresh
-        # job_dir (nothing to merge with).
-        existing_results = load_json_dict(job_dir / "workflow_results.json")
-        if existing_results:
-            merged_step_results = dict(existing_results.get("results", {}))
-            merged_step_results.update(results.get("results", {}))
-            results["results"] = merged_step_results
-            results["services_executed"] = [s for s in WORKFLOW_STEPS if s in merged_step_results]
-            if not results.get("job_name") and existing_results.get("job_name"):
-                results["job_name"] = existing_results["job_name"]
-
-        # Save results to file
+        # job_dir (nothing to merge with). Locked + atomic: two overlapping
+        # execute_workflow() calls against the same job_dir (e.g. GUI and
+        # CLI both redocking) must not race a read-modify-write here, the
+        # same hazard _next_revision() guards against for the manifest.
+        #
+        # NOTE (R1, Stage 11.1 review, docs/reviews/stage_11_1_r1.md finding
+        # #2): the merge only carries forward per-step results wholesale --
+        # it does not check whether a downstream step's persisted result is
+        # still valid for the upstream inputs this call just produced (e.g.
+        # a call that reruns get_input_files+dock but not visualize would
+        # leave a stale visualize entry from an earlier protein/ligand set
+        # merged in as if current). Deferred: today every caller reaches
+        # execute_workflow() via rerun_planner.compute_rerun_steps(), which
+        # always includes every downstream step when an upstream one
+        # reruns, so the stale-merge case cannot occur in practice yet.
+        # Revisit if a caller ever invokes execute_workflow() with a
+        # services list computed by something other than
+        # compute_rerun_steps() (see dev_plan.md Future Work).
+        results_lock_file = job_dir / ".workflow_results.lock"
         results_file = job_dir / "workflow_results.json"
         try:
-            with open(results_file, 'w') as f:
-                json.dump(results, f, indent=2)
+            with FileLock(results_lock_file):
+                existing_results = load_json_dict(results_file)
+                if existing_results:
+                    merged_step_results = dict(existing_results.get("results", {}))
+                    merged_step_results.update(results.get("results", {}))
+                    results["results"] = merged_step_results
+                    results["services_executed"] = [s for s in WORKFLOW_STEPS if s in merged_step_results]
+                    if not results.get("job_name") and existing_results.get("job_name"):
+                        results["job_name"] = existing_results["job_name"]
+
+                atomic_write_json(results_file, results)
             logger.info(f"Results saved to: {results_file}")
-        except IOError as e:
+        except OSError as e:
             logger.error("Failed to save results to %s: %s", results_file, e)
 
         return results

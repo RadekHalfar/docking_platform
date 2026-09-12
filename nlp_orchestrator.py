@@ -392,6 +392,14 @@ def _execute_partial_rerun(
     )
 
     # Update session with new results.
+    # Deferred (R1, Stage 11.1 review, docs/reviews/stage_11_1_r1.md finding
+    # #5): this hand-rolled merge duplicates the merge execute_workflow()
+    # now does itself against workflow_results.json on disk, and could
+    # diverge from it (e.g. `results` here misses a step that's actually on
+    # disk, or vice versa after an out-of-band edit). Revisit if that
+    # divergence is ever observed in practice, or next time this function is
+    # touched -- trust `results["services_executed"]`/`results["results"]`
+    # (already merged) instead of recomputing here.
     merged_results = dict(session.last_results or {})
     merged_results["services_executed"] = original_services  # keep full list
     merged_results["status"] = results.get("status", "failed")

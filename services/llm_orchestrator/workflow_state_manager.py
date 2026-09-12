@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.job_log import append_job_log
+from common.param_diff import changed_parameter_keys
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +81,19 @@ class WorkflowStateManager:
             events.append(event)
             self._write_manifest(manifest)
 
-        # Every parameters_update/state_update/undo_restore event -- the
-        # entire content of this manifest -- also gets a human-readable line
-        # in job.log, the one place a session's whole timeline is readable
-        # end-to-end. log_message lets callers (e.g. a parameters diff) log
-        # something richer than event_type/details alone would allow, without
-        # bloating the manifest itself with that same detail.
-        message = log_message if log_message is not None else self._default_log_message(event_type, details)
-        append_job_log(self.job_dir, "INFO", message)
+            # Every parameters_update/state_update/undo_restore event -- the
+            # entire content of this manifest -- also gets a human-readable
+            # line in job.log, the one place a session's whole timeline is
+            # readable end-to-end. log_message lets callers (e.g. a
+            # parameters diff) log something richer than event_type/details
+            # alone would allow, without bloating the manifest itself with
+            # that same detail. Written while still holding the manifest
+            # lock so job.log's line order can't be scrambled relative to
+            # the revision order two concurrent writers were just
+            # serialized into above.
+            message = log_message if log_message is not None else self._default_log_message(event_type, details)
+            append_job_log(self.job_dir, "INFO", message)
+
         return revision
 
     @staticmethod
@@ -103,11 +109,7 @@ class WorkflowStateManager:
         old_parameters: Optional[Dict[str, Any]], new_parameters: Dict[str, Any], source: str
     ) -> str:
         old_parameters = old_parameters or {}
-        changed_keys = sorted(
-            key
-            for key in set(old_parameters) | set(new_parameters)
-            if old_parameters.get(key) != new_parameters.get(key)
-        )
+        changed_keys = changed_parameter_keys(old_parameters, new_parameters)
         if not changed_keys:
             return f"Parameters checkpoint saved (source={source}); no changes"
 

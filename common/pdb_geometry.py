@@ -24,6 +24,18 @@ def parse_atom_coordinates(pdb_text: str) -> List[Tuple[float, float, float]]:
     per the PDB format spec); a line that doesn't parse cleanly is skipped
     rather than raising, since stray non-conforming lines are common in
     real-world PDB files.
+
+    NOTE (Review Stage R1, Phase 12): `services/protein_preparer/__init__.py`'s
+    manual-rigid-receptor fallback (~line 277-302) independently parses the
+    same x/y/z columns with the same malformed-line tolerance, for both
+    `ATOM` and `HETATM` (it needs every atom to write a receptor; this
+    function deliberately wants protein atoms only). Not unified here --
+    that would mean changing protein_preparer's own working fallback path
+    to depend on this module (or parameterizing this one with an
+    include-hetatm flag), a bigger cross-module change than a review-stage
+    cleanup. Revisit if a third caller needs the same coordinate columns,
+    or the next time protein_preparer's manual-rigid path is touched for
+    an unrelated reason.
     """
     coords: List[Tuple[float, float, float]] = []
     for line in pdb_text.splitlines():

@@ -514,12 +514,19 @@ _PROTEIN_CENTER_RE = re.compile(
 )
 
 # "look across all protein" / "cover the whole protein" / "whole protein
-# box" / "box size for the entire protein".
+# box" / "box size for the entire protein". Anchored to end-of-string
+# (allowing only trailing "box"/punctuation) rather than a bare .search()
+# match -- Review Stage R1 (Phase 12) found the unanchored version matched
+# "cover the whole protein pocket"/"...active site", silently swapping a
+# user's targeted box-resize request for a full-protein blind-docking box.
+# Requiring "protein" to end the phrase (mod "box"/punctuation) keeps the
+# intended cases matching while rejecting phrases that qualify "protein"
+# with something more specific than the whole structure.
 _WHOLE_PROTEIN_BOX_RE = re.compile(
     r"\b(?:look(?:s|ing)?\s+across|cover(?:s|ing)?|encompass(?:es|ing)?|span(?:s|ning)?)\s+"
-    r"(?:the\s+|all\s+)?(?:whole\s+|entire\s+)?protein\b"
-    r"|\b(?:whole|entire|all)\s+protein\s+box\b"
-    r"|\bbox\b.*\b(?:whole|entire)\s+protein\b",
+    r"(?:the\s+|all\s+)?(?:whole\s+|entire\s+)?protein(?:\s+box)?[\s.!?]*$"
+    r"|\b(?:whole|entire|all)\s+protein\s+box[\s.!?]*$"
+    r"|\bbox\b.{0,40}?\b(?:whole|entire)\s+protein(?:\s+box)?[\s.!?]*$",
     re.IGNORECASE,
 )
 
@@ -593,6 +600,18 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     # Must run before the generic update_parameters prefix match below --
     # "set up box center as protein center" and "use protein center" both
     # start with a word that prefix matches on.
+    #
+    # NOTE (Review Stage R1, Phase 12): unlike every other intent here,
+    # set_protein_geometry has no LLM-classifier fallback -- a paraphrase
+    # outside these two regexes (e.g. "put the box in the middle of the
+    # receptor") falls through to update_parameters, which correctly
+    # refuses to invent center/box_size but gives no hint this feature
+    # exists. Deliberately deferred, not missed: see dev_plan.md Phase 12
+    # Future Work ("LLM-based recognition of this command"). The numeric
+    # computation would stay fully deterministic either way -- only intent
+    # *recognition* would gain an LLM tier, mirroring use_pymol_box's
+    # existing two-tier setup. Revisit if real usage shows a common
+    # phrasing the regexes below miss.
     geometry_target = detect_protein_geometry_command(text)
     if geometry_target is not None:
         return {"intent": "set_protein_geometry", "name": geometry_target}

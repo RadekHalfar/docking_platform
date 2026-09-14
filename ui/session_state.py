@@ -101,6 +101,23 @@ def apply_settings(new_settings: dict) -> None:
     st.session_state.llm_client = _build_llm_client(new_settings)
 
 
+def clear_box_picker_state() -> None:
+    """Discard the box picker's loaded receptor/picked-center/size state.
+
+    Used whenever that state might no longer correspond to the protein
+    actually in play: starting a fresh box-picker load, the user
+    discarding it explicitly, and -- the case Review Stage R1 (Phase 12)
+    found missing -- detaching from or starting a new docking session,
+    where a previously-loaded receptor could otherwise be silently reused
+    for the wrong protein by a geometry chat command
+    ("set up box center as protein center" / "look across all protein",
+    via ``ui/app.py``'s ``_resolve_prepared_protein_pdb_path()``).
+    """
+    st.session_state.pop("_box_picker_receptor_pdb", None)
+    st.session_state.pop("picked_center", None)
+    st.session_state.pop("_box_picker_last_size", None)
+
+
 def start_new_session() -> None:
     """Detach from the current job/session while keeping parameter widgets
     and LLM settings untouched.
@@ -119,6 +136,7 @@ def start_new_session() -> None:
     st.session_state["_job_done"] = False
     st.session_state.pop("_pending_rerun", None)
     st.session_state.messages = [dict(_GREETING_MESSAGE)]
+    clear_box_picker_state()
 
 
 def get_params() -> dict:

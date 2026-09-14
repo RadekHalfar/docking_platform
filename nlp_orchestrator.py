@@ -237,6 +237,21 @@ def _handle_set_protein_geometry(
     return _persist_parameter_updates(updates, session)
 
 
+def _mark_changed_and_hint_rerun(
+    session: "InteractiveSession", changed: Set[str], prefix: str = ""
+) -> None:
+    """If *changed* is non-empty, record it for the next rerun and print a
+    hint. Shared tail of the ``update_parameters``/``set_protein_geometry``
+    branches in :func:`_dispatch_intent` -- both edit parameters via
+    :func:`_persist_parameter_updates` and need the same "nothing to do on
+    a no-op" / "tell the user to rerun" follow-up, differing only in an
+    optional leading confirmation phrase.
+    """
+    if changed:
+        session.pending_changed_params |= changed
+        print(f"\n{prefix}Type 'rerun' or 'dock' to re-execute affected steps.")
+
+
 def _handle_search_ligand(
     orchestrator: WorkflowOrchestrator,
     session: "InteractiveSession",
@@ -718,17 +733,13 @@ def _dispatch_intent(
 
     if intent == "update_parameters":
         changed = _handle_update_parameters(user_input, llm_client, session)
-        if changed:
-            session.pending_changed_params |= changed
-            print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
+        _mark_changed_and_hint_rerun(session, changed, prefix="Parameters updated. ")
         return True
 
     if intent == "set_protein_geometry":
         target = (intent_result or {}).get("name")
         changed = _handle_set_protein_geometry(target, session, orchestrator)
-        if changed:
-            session.pending_changed_params |= changed
-            print("\nType 'rerun' or 'dock' to re-execute affected steps.")
+        _mark_changed_and_hint_rerun(session, changed)
         return True
 
     if intent == "search_ligand":

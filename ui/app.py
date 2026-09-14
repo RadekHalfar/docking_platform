@@ -36,6 +36,7 @@ from ui.session_state import (
     DETECTED_CPU_COUNT,
     apply_parsed_params,
     apply_settings,
+    clear_box_picker_state,
     get_params,
     init,
     load_session_params,
@@ -131,7 +132,7 @@ def _collect_form_params() -> dict:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
-def _resolve_prepared_protein_pdb_path() -> Path | None:
+def _find_receptor_pdb_for_geometry() -> Path | None:
     """Find the prepared receptor PDB to compute protein geometry from.
 
     Prefers the box picker's already-loaded receptor (freshest, if the user
@@ -157,7 +158,7 @@ def _handle_protein_geometry_command(target: str) -> None:
     apply it, in response to a "set box center as protein center" / "look
     across all protein" chat command -- see
     ``detect_protein_geometry_command()``."""
-    receptor_path = _resolve_prepared_protein_pdb_path()
+    receptor_path = _find_receptor_pdb_for_geometry()
     if receptor_path is None:
         st.session_state.messages.append(
             {
@@ -262,6 +263,14 @@ def _handle_run_docking() -> None:
     if session.has_active_job():
         _handle_redock_request(session, params)
         return
+
+    # A brand-new job is about to start -- any box-picker receptor loaded
+    # for a previous (unrelated) protein/session no longer applies. Without
+    # this, _find_receptor_pdb_for_geometry() would keep preferring that
+    # stale path over this new job's own prepare_protein result once it
+    # completes, silently computing geometry chat commands from the wrong
+    # protein (Review Stage R1, Phase 12).
+    clear_box_picker_state()
 
     # Always include visualization — it runs after docking and produces the PNG.
     services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
@@ -1138,9 +1147,7 @@ def _handle_pick_box() -> None:
 
     job_id = generate_job_id()
     st.session_state["_box_picker_job_id"] = job_id
-    st.session_state.pop("_box_picker_receptor_pdb", None)
-    st.session_state.pop("picked_center", None)
-    st.session_state.pop("_box_picker_last_size", None)
+    clear_box_picker_state()
 
     bridge = OrchestratorBridge()
     bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), services=prep_services)
@@ -1163,10 +1170,7 @@ def _render_box_picker() -> None:
         if error:
             st.error(f"Could not prepare receptor: {error}")
         elif result and result.get("status") == "completed":
-            proteins = (
-                result.get("results", {}).get("prepare_protein", {}).get("prepared_proteins", [])
-            )
-            pdb_path = proteins[0].get("pdb_path") if proteins else None
+            pdb_path = resolve_prepared_protein_pdb_path(result)
             if pdb_path:
                 st.session_state["_box_picker_receptor_pdb"] = pdb_path
             else:
@@ -1229,9 +1233,7 @@ def _render_box_picker() -> None:
         st.caption("Click a receptor atom in the viewer to set the box center.")
 
     if st.button("Discard picked receptor"):
-        st.session_state.pop("_box_picker_receptor_pdb", None)
-        st.session_state.pop("picked_center", None)
-        st.session_state.pop("_box_picker_last_size", None)
+        clear_box_picker_state()
         st.rerun()
 
 

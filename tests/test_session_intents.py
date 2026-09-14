@@ -265,6 +265,13 @@ def test_detect_protein_geometry_command_box_size(command):
         "save results as trial_a",
         "set protein_id to 6lu7",
         "undo 5",
+        # Review Stage R1 (Phase 12): these mention "protein" near a box/
+        # cover/whole keyword but qualify it with a specific sub-region --
+        # must NOT be silently routed to a full-protein blind-docking box.
+        "cover the whole protein pocket",
+        "widen the box to cover the whole protein active site",
+        "resize the box, it should cover the whole protein binding region",
+        "widen the box a bit to cover more of the protein around the pocket",
     ],
 )
 def test_detect_protein_geometry_command_no_false_positives(command):

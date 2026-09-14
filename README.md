@@ -156,6 +156,8 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 
 # 5. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
+# GUI (Streamlit) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-streamlit-unit-tests):
+docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
 
 # 6. Interactive PyMOL in browser is already running (started in step 2 along
 #    with everything else -- no extra flag or command needed)

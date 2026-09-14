@@ -393,6 +393,32 @@ docker compose --profile dev run --rm \
 
 `SERVICE_HOST=host.docker.internal` allows containerized tests to reach host-published service ports.
 
+### GUI (Streamlit) Unit Tests
+
+`ui/app.py` and `ui/session_state.py` import `streamlit`, which is
+deliberately *not* installed in `script-runner`'s image (or in CI's
+`requirements.txt`) — only the `ui` container's own image has it
+(`Dockerfile.ui` layers streamlit/pandas/plotly on top of the same
+`mcp-docking-base:latest` `script-runner` uses, so `ui` already has
+`pytest`/`pytest-mock` too, no extra install needed). Tests that need
+streamlit (`tests/test_ui_*.py`) use `pytest.importorskip("streamlit")`, so
+they're silently skipped — not errored — under the default suite above.
+Run them for real via the `ui` image:
+
+```bash
+docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
+```
+
+This is a third, explicitly-invoked test tier (alongside the hermetic
+default and the opt-in `integration` marker) — not wired into CI, since
+CI's `requirements.txt`-based environment mirrors `script-runner`'s, not
+`ui`'s. Scope: the non-widget helper/state functions only
+(`_collect_form_params`, `_handle_protein_geometry_command`,
+`apply_parsed_params`, `start_new_session`, etc.) — the `_render_*`
+widget-rendering functions call `st.button`/`st.columns`/etc. directly and
+need a real Streamlit script-run context (or an `AppTest`-based harness) to
+exercise meaningfully, which this tier doesn't attempt.
+
 ### Manual Health Checks
 
 ```powershell

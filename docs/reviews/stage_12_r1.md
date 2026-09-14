@@ -244,24 +244,44 @@ reported as genuinely declined, with the specific reasoning for declining
 each, not padded into "fixed" to raise the count, and not left as a bare
 "accepted" label without a recommendation.
 
-## Testing note (pre-existing, not introduced by Phase 12)
+## Testing note (pre-existing, not introduced by Phase 12 — closed 2026-09-14)
 
-`ui/app.py` and `ui/session_state.py` (including this review's fixes —
-`clear_box_picker_state()`, `start_new_session()`) have no automated test
-coverage: `streamlit` is not installed in the `script-runner` container this
-project's whole test suite runs in (`docker compose --profile dev run --rm
-script-runner python -m pytest`), confirmed directly
-(`ModuleNotFoundError: No module named 'streamlit'`). This is a pre-existing
-condition across every GUI-touching stage since Stage 11.2, not something
-Phase 12 introduced — consistent with those stages' own documented reliance
-on live/manual verification for `ui/app.py` changes. Finding #1's fix was
-verified by direct code reading (a small, low-complexity 3-key-pop change
-reused at three call sites) plus a live check that `ui.app` and the new
-`clear_box_picker_state`/`start_new_session` import and run cleanly in the
-actual `ui` container (`docker compose restart ui`, HTTP 200, clean logs) —
-not by an automated test, and not by a real browser click-through
-(no Playwright/chromium-cli available in this environment, the same
-limitation every prior GUI stage recorded).
+At review time, `ui/app.py` and `ui/session_state.py` (including this
+review's fixes — `clear_box_picker_state()`, `start_new_session()`) had no
+automated test coverage: `streamlit` is not installed in the `script-runner`
+container this project's whole test suite runs in (`docker compose --profile
+dev run --rm script-runner python -m pytest`), confirmed directly
+(`ModuleNotFoundError: No module named 'streamlit'`). This was a
+pre-existing condition across every GUI-touching stage since Stage 11.2, not
+something Phase 12 introduced. Finding #1's fix was verified by direct code
+reading plus a live check that `ui.app` and the new functions import and run
+cleanly in the actual `ui` container — not by an automated test, and not by
+a real browser click-through (no Playwright/chromium-cli available in this
+environment).
+
+**Closed the same day, at the user's request.** `Dockerfile.ui` builds `FROM
+mcp-docking-base:latest` (the same base `script-runner` uses) and layers
+streamlit/pandas/plotly on top — meaning the `ui` container already had
+`pytest`/`pytest-mock` too, inherited from that shared base, no new
+dependency needed. Added `tests/test_ui_session_state.py` (14 tests) and
+`tests/test_ui_app_helpers.py` (13 tests) covering the non-widget
+helper/state functions in both files, each guarded with
+`pytest.importorskip("streamlit")` so they skip (not error) under the
+default `script-runner`/CI suite and only actually run via
+`docker compose run --rm ui python -m pytest tests/test_ui_*.py -v` — a
+third, explicitly-invoked test tier (see `docs/DOCKER_DEPLOYMENT.md`'s
+"GUI (Streamlit) Unit Tests" section, added alongside). This directly
+covers Finding #1's fix with a real regression test
+(`test_start_new_session_clears_stale_box_picker_receptor`), not just code
+inspection. Scope: pure-logic helpers only (`_collect_form_params`,
+`_find_receptor_pdb_for_geometry`, `_handle_protein_geometry_command`,
+`apply_parsed_params`, `start_new_session`, etc.) — the `_render_*`
+widget-rendering functions still have no automated coverage and need a real
+Streamlit script-run context (or an `AppTest`-based harness) to test
+meaningfully; that gap is now scoped and named rather than blanket "zero
+coverage." All 27 new tests pass in the `ui` container; the full
+`script-runner` suite stays green with the two new files reported as
+skipped (781 passed / 16 skipped / 1 deselected, up from 14 skipped).
 
 ---
 

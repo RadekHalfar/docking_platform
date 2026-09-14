@@ -4,6 +4,7 @@ import pytest
 
 from services.llm_orchestrator.workflow_llm_parser import (
     classify_session_intent,
+    detect_protein_geometry_command,
     extract_updates_from_command_with_llm,
     split_command_sequence,
     _llm_split_command_sequence,
@@ -208,3 +209,83 @@ def test_llm_split_command_sequence_falls_back_on_exception(llm_client):
     llm_client.generate.side_effect = RuntimeError("LLM unavailable")
     text = "state then save results"
     assert _llm_split_command_sequence(llm_client, text) == [text]
+
+
+# ---------------------------------------------------------------------------
+# detect_protein_geometry_command -- Stage 12.2 ("set box center as protein
+# center" / "look across all protein" chat commands). Pure regex, no LLM.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set up box center as protein center",
+        "set box center as protein center",
+        "set box center to protein center",
+        "use protein center",
+        "use protein center for the box",
+        "center the box on the protein",
+        "center box on protein",
+        "box center = protein center",
+        "Protein Center",
+    ],
+)
+def test_detect_protein_geometry_command_center(command):
+    assert detect_protein_geometry_command(command) == "center"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "look across all protein",
+        "look across the whole protein",
+        "look across entire protein",
+        "cover the whole protein",
+        "cover entire protein",
+        "box size to cover the whole protein",
+        "whole protein box",
+        "box size for the entire protein",
+        "Look Across All Protein",
+    ],
+)
+def test_detect_protein_geometry_command_box_size(command):
+    assert detect_protein_geometry_command(command) == "box_size"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set center to 10,20,30",
+        "set box size to 25,30,35",
+        "change ligand to HEM",
+        "use pymol box",
+        "use pymol selection sele",
+        "rerun",
+        "dock",
+        "save results as trial_a",
+        "set protein_id to 6lu7",
+        "undo 5",
+    ],
+)
+def test_detect_protein_geometry_command_no_false_positives(command):
+    assert detect_protein_geometry_command(command) is None
+
+
+@pytest.mark.parametrize(
+    "command,expected_intent",
+    [
+        ("set up box center as protein center", "update_parameters"),
+        ("look across all protein", "unknown"),
+    ],
+)
+def test_geometry_phrases_not_yet_wired_into_session_intent_classification(
+    llm_client, command, expected_intent
+):
+    """Documents current (Stage 12.2) state: detect_protein_geometry_command()
+    exists and is correct in isolation, but _deterministic_intent() doesn't
+    call it yet -- that wiring is Stage 12.3. "set up..." still falls into
+    the generic update_parameters catch-all; "look across..." matches no
+    deterministic pattern and falls to the (here-mocked) LLM classifier."""
+    llm_client.generate.return_value = '{"intent": "unknown"}'
+    result = classify_session_intent(llm_client, command)
+    assert result["intent"] == expected_intent

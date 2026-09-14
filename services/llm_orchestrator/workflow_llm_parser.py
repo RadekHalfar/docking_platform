@@ -502,6 +502,44 @@ _SAVE_PREFIXES = (
 )
 
 
+# "set box center as protein center" / "use protein center" / "center the
+# box on the protein" -- deliberately requires the word "protein" near
+# "center" rather than matching "center" alone, since "set center to
+# 10,20,30" must keep going to update_parameters.
+_PROTEIN_CENTER_RE = re.compile(
+    r"\bprotein\s+center\b"
+    r"|\bcenter\b(?:\s+\S+){0,4}\s+protein\b",
+    re.IGNORECASE,
+)
+
+# "look across all protein" / "cover the whole protein" / "whole protein
+# box" / "box size for the entire protein".
+_WHOLE_PROTEIN_BOX_RE = re.compile(
+    r"\b(?:look(?:s|ing)?\s+across|cover(?:s|ing)?|encompass(?:es|ing)?|span(?:s|ning)?)\s+"
+    r"(?:the\s+|all\s+)?(?:whole\s+|entire\s+)?protein\b"
+    r"|\b(?:whole|entire|all)\s+protein\s+box\b"
+    r"|\bbox\b.*\b(?:whole|entire)\s+protein\b",
+    re.IGNORECASE,
+)
+
+
+def detect_protein_geometry_command(text: str) -> Optional[str]:
+    """Detect a chat command asking to auto-fill the docking box from the
+    loaded protein's own bounding-box geometry (see
+    :func:`common.pdb_geometry.compute_protein_center_and_box`).
+
+    Pure regex, no LLM call -- deliberately deterministic, matching this
+    codebase's existing rule that `center`/`box_size` are never guessed by
+    the LLM. Returns ``"center"``, ``"box_size"``, or ``None`` (no match,
+    caller should fall through to its normal parsing path).
+    """
+    if _PROTEIN_CENTER_RE.search(text):
+        return "center"
+    if _WHOLE_PROTEIN_BOX_RE.search(text):
+        return "box_size"
+    return None
+
+
 def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     """Return an intent result dict if *text* matches an unambiguous pattern, else None."""
     t = text.strip().lower()

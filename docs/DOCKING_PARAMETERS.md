@@ -501,6 +501,28 @@ center (a live translucent box shows the resulting region), and adjust the
 X/Y/Z size sliders until the box covers the binding site. See
 [GUI_GUIDE.md](GUI_GUIDE.md#picking-the-docking-box-visually).
 
+### Method 0b: Chat Command (Auto-Fill from Protein Geometry)
+
+Once a protein is loaded, two chat commands (GUI and CLI `--interactive`
+both) compute the box straight from the protein's own atom coordinates —
+no clicking, no manual numbers:
+
+- **"set up box center as protein center"** sets `center` to the
+  geometric midpoint of the protein's bounding box (`(min+max)/2` per
+  axis) — the point that guarantees a bounding-box-sized box is
+  actually centered on the whole structure, not just a rough middle.
+- **"look across all protein"** sets `box_size` to the protein's
+  bounding box extent per axis, **+10%** margin, guaranteeing the box
+  covers the entire structure.
+
+This is effectively **blind docking** — searching the whole protein
+instead of one focused binding site — which is slower and less targeted
+than a small, hand-picked box (see "Do not... Dock in entire protein" in
+Best Practices below). It's the right tool when the binding site is
+genuinely unknown and a broad first-pass search is wanted, not a
+replacement for a focused box when the site is already known. See
+[GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
+
 ### Method 1: Using PyMOL
 
 ```python

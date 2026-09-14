@@ -8,8 +8,12 @@ from pathlib import Path
 
 import streamlit as st
 
+from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
-from services.llm_orchestrator.interactive_session import compute_changed_params
+from services.llm_orchestrator.interactive_session import (
+    compute_changed_params,
+    resolve_prepared_protein_pdb_path,
+)
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.rerun_planner import (
     compute_rerun_steps,
@@ -17,6 +21,7 @@ from services.llm_orchestrator.rerun_planner import (
     missing_required_params,
 )
 from services.llm_orchestrator.workflow_llm_parser import (
+    detect_protein_geometry_command,
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
@@ -125,8 +130,77 @@ def _collect_form_params() -> dict:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
+def _resolve_prepared_protein_pdb_path() -> Path | None:
+    """Find the prepared receptor PDB to compute protein geometry from.
+
+    Prefers the box picker's already-loaded receptor (freshest, if the user
+    used that control), else falls back to the active session's last
+    completed ``prepare_protein`` result -- the same two sources the box
+    picker and results viewer already read from. Returns ``None`` if
+    neither is available or the file is no longer on disk.
+    """
+    raw_path = st.session_state.get("_box_picker_receptor_pdb")
+    if not raw_path:
+        session = st.session_state.get("interactive_session")
+        last_results = getattr(session, "last_results", None) if session else None
+        raw_path = resolve_prepared_protein_pdb_path(last_results)
+
+    if not raw_path:
+        return None
+    resolved = _resolve_container_path(raw_path)
+    return resolved if resolved.exists() else None
+
+
+def _handle_protein_geometry_command(target: str) -> None:
+    """Compute center/box_size from the loaded protein's bounding box and
+    apply it, in response to a "set box center as protein center" / "look
+    across all protein" chat command -- see
+    ``detect_protein_geometry_command()``."""
+    receptor_path = _resolve_prepared_protein_pdb_path()
+    if receptor_path is None:
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": (
+                    "I don't have a protein loaded yet. Set a protein first "
+                    "(click **Run Docking**, or **Load receptor for box "
+                    "picking**), then ask again."
+                ),
+            }
+        )
+        return
+
+    try:
+        pdb_text = _read_file_bytes(
+            str(receptor_path), receptor_path.stat().st_mtime
+        ).decode("utf-8", errors="replace")
+        center, box_size = compute_protein_center_and_box(pdb_text)
+    except (OSError, ValueError) as exc:
+        st.session_state.messages.append(
+            {"role": "assistant", "content": f"Could not compute protein geometry: {exc}"}
+        )
+        return
+
+    if target == "center":
+        apply_parsed_params({"center": center})
+        message = f"Protein center set to ({center[0]}, {center[1]}, {center[2]})."
+    else:
+        apply_parsed_params({"box_size": box_size})
+        message = (
+            f"Box size set to ({box_size[0]}, {box_size[1]}, {box_size[2]}) "
+            "to cover the whole protein (+10% margin)."
+        )
+    st.session_state.messages.append({"role": "assistant", "content": message})
+
+
 def _on_chat_submit(user_message: str) -> None:
     st.session_state.messages.append({"role": "user", "content": user_message})
+
+    geometry_target = detect_protein_geometry_command(user_message)
+    if geometry_target is not None:
+        _handle_protein_geometry_command(geometry_target)
+        return
+
     with st.spinner("Parsing with LLM..."):
         try:
             prior = st.session_state.parser.parsed_workflow

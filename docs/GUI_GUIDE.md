@@ -68,6 +68,33 @@ one. This follow-up parsing only kicks in once something has already
 been extracted in the current chat — the very first message in a chat is
 always parsed as a complete, standalone request.
 
+### Auto-Filling the Docking Box from the Protein
+
+Once a protein has been loaded (via **Run Docking**, or the box picker's
+**Load receptor for box picking** button — see below), two chat commands
+compute the docking box directly from that protein's own structure instead
+of you typing or picking coordinates:
+
+- **"set up box center as protein center"** (or "use protein center",
+  "center the box on the protein") sets `center` to the midpoint of the
+  protein's bounding box.
+- **"look across all protein"** (or "cover the whole protein", "whole
+  protein box") sets `box_size` to the protein's bounding box extent per
+  axis, **+10%** margin, so the box fully covers the structure. This is
+  effectively blind docking — a large box searches the whole protein
+  instead of one focused site, which is slower and less targeted than a
+  hand-picked box around a known binding site (see
+  [DOCKING_PARAMETERS.md](DOCKING_PARAMETERS.md#determining-docking-box-parameters)).
+
+Both commands write straight into the same **Docking Box** manual fields
+every other box-setting path uses (typed values, the visual picker), so
+**Run Docking** needs no separate step afterward, and a value can still be
+fine-tuned by hand or overwritten by a later command. If no protein is
+loaded yet, the assistant asks you to load one first rather than guessing —
+this codebase never invents `center`/`box_size` values. These two commands
+are recognized directly by pattern matching, not sent to the LLM (which has
+no access to the protein's coordinates and must never guess them either).
+
 ## Naming a Session
 
 The **Input & Parameters** panel has an optional **Session name** field, just
@@ -261,6 +288,13 @@ This is a lighter, purely in-browser alternative to the CLI's
 `pymol-interactive`-based box selection (see
 [docs/PYMOL_INTERACTIVE.md](PYMOL_INTERACTIVE.md)) — it doesn't require that
 service to be running.
+
+Once a receptor is loaded here (or a job has already run
+`prepare_protein`), the chat commands described in
+[Auto-Filling the Docking Box from the Protein](#auto-filling-the-docking-box-from-the-protein)
+are a faster alternative to clicking: "set up box center as protein
+center" / "look across all protein" compute the same kind of values
+without needing to click an atom or drag sliders.
 
 ## Comparing Sessions
 

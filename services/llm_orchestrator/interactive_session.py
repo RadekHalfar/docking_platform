@@ -30,6 +30,29 @@ def compute_changed_params(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -
     return set(changed_parameter_keys(old, new))
 
 
+def resolve_prepared_protein_pdb_path(last_results: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return the prepared receptor PDB path from a workflow results dict.
+
+    *last_results* is the ``workflow_results.json``-shaped dict
+    (``InteractiveSession.last_results`` / a GUI bridge's ``get_result()``):
+    ``{"results": {"prepare_protein": {"prepared_proteins": [...]}}, ...}``.
+    Used by both the GUI chat (``ui/app.py``) and the CLI's interactive
+    session (``nlp_orchestrator.py``) to find the file to read atom
+    coordinates from for the "set box center as protein center" / "look
+    across all protein" commands -- one definition of "where is the
+    prepared protein" instead of two independently-maintained dict-walks.
+    Returns ``None`` on any missing/empty step along the way rather than
+    raising, since "no protein prepared yet" is an expected, common state.
+    """
+    if not last_results:
+        return None
+    prepared = last_results.get("results", {}).get("prepare_protein", {})
+    proteins = prepared.get("prepared_proteins") or []
+    if not proteins:
+        return None
+    return proteins[0].get("pdb_path")
+
+
 # ---------------------------------------------------------------------------
 # Bundle name validation
 # ---------------------------------------------------------------------------

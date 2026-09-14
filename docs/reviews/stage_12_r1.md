@@ -13,16 +13,18 @@ one stage suffices rather than a separate Tier-2 + Tier-3 split) and covers
 both the GUI and CLI surfaces this phase touches.
 
 **Outcome:** 2 correctness findings, 5 quality findings
-(reuse/simplification/efficiency/altitude). 5 fixed directly (commit follows
-this report), 2 deferred with a written trigger, 2 accepted as documented
-risk (one of those an explicit "considered, declined" rather than a bare
-skip). Both correctness findings were real, reachable bugs — a stale
-box-picker receptor silently computing geometry for the wrong protein, and a
-regex broad enough to swap a user's targeted box-resize request for a full
-blind-docking box with no error and no LLM fallback to catch it. Full suite
-green after fixes: 775 passed / 14 skipped / 1 deselected, no regressions
-(`docker compose --profile dev run --rm script-runner python -m pytest -m
-"not integration"`, up from 771 passed before this review's fixes — +4 new
+(reuse/simplification/efficiency/altitude). 6 fixed directly (commit follows
+this report — finding #4 was initially deferred, then fixed the same day at
+the user's request; see its entry), 1 deferred with a written trigger, 2
+accepted as documented risk (one of those an explicit "considered, declined"
+rather than a bare skip). Both correctness findings were real, reachable
+bugs — a stale box-picker receptor silently computing geometry for the wrong
+protein, and a regex broad enough to swap a user's targeted box-resize
+request for a full blind-docking box with no error and no LLM fallback to
+catch it. Full suite green after all fixes: 781 passed / 14 skipped / 1
+deselected, no regressions (`docker compose --profile dev run --rm
+script-runner python -m pytest -m "not integration"`, up from 771 passed
+before this review's fixes — +4 new
 regression-guard tests for the tightened regex).
 
 ---
@@ -96,24 +98,39 @@ direct call to `resolve_prepared_protein_pdb_path(result)` — same shape
 behavior change.
 
 ### 4. `common/pdb_geometry.py::parse_atom_coordinates()` duplicates `protein_preparer`'s own PDB column parsing
-**File:** `common/pdb_geometry.py`
-**Triage: deferred, with trigger.**
+**Files:** `common/pdb_geometry.py`, `services/protein_preparer/__init__.py`
+**Triage: originally deferred, with trigger — since fixed at the user's
+request (2026-09-14, same day).**
 `services/protein_preparer/__init__.py`'s manual-rigid-receptor fallback
-(~line 277-302) independently parses the identical `line[30:38]`/`line[38:46]`/
-`line[46:54]` columns with the same malformed-line tolerance. Not unified
-here: the two deliberately differ (this module is `ATOM`-only by design, so
-"protein center" excludes waters/cofactors regardless of prep settings;
-`protein_preparer`'s fallback needs every atom, `ATOM` and `HETATM`, to
-write a usable receptor). Unifying them means either changing
-`protein_preparer`'s working fallback path to depend on this new module, or
-parameterizing this module with an include-`HETATM` flag it doesn't
-otherwise need — a bigger cross-module change than a review-stage cleanup.
-**Recommendation:** leave deferred; this isn't costing anything today since
-neither side is actively being modified. Trigger comment added at
-`common/pdb_geometry.py` (`parse_atom_coordinates()`'s docstring) and a
-matching `dev_plan.md` Future Work bullet, both naming the same
-revisit condition: a third caller needing the same columns, or the next
-unrelated touch to `protein_preparer`'s manual-rigid path.
+(~line 277-302) independently parsed the identical `line[30:38]`/`line[38:46]`/
+`line[46:54]` columns with the same malformed-line tolerance. Originally left
+unified on the reasoning that the two callers want different record types
+(`ATOM`-only here vs. `ATOM`+`HETATM` there) and unifying them looked like a
+bigger cross-module change than review scope. On reflection the actual fix
+is smaller than that framing suggested: the two callers don't need different
+*parsing*, only different *filtering* of the same parsed records. Fixed by
+extracting the shared low-level piece — a new `common/pdb_geometry.py::parse_pdb_atom_line()`
+returning a `PdbAtomRecord` (all fields either caller needs: `record_type`,
+`atom_name`, `res_name`, `chain`, `res_num`, `x`/`y`/`z`, `element`) for one
+`ATOM`/`HETATM` line, or `None` for a non-atom or malformed one.
+`parse_atom_coordinates()` now filters that to `record_type == "ATOM"`;
+`protein_preparer`'s `convert_to_pdbqt_manual()` now calls the same function
+and uses both record types, keeping its own PDBQT-line formatting/
+AutoDock-type-mapping logic (genuinely specific to that module, correctly
+left there). Verified byte-for-byte identical output against the pre-fix
+version (git `f402ddb`) for a 3-atom `ATOM`+`HETATM` fixture including a
+malformed 4th line (same warning, same skip, same written bytes), plus a
+real end-to-end `prepare_protein` run against `6lu7` through the live MCP
+stack (`conversion_method: manual_rigid`, `final_atoms: 4798`, geometry
+computed from the result matching every prior check:
+`center=[-25.544, 12.854, 58.25]`, `box_size=[55.736, 71.983, 65.124]`).
+6 new tests (`tests/test_pdb_geometry.py` for `parse_pdb_atom_line()` itself;
+`tests/test_protein_preparer.py` for `convert_to_pdbqt_manual()`'s
+`HETATM`-inclusion and malformed-line-skip, previously only exercised
+indirectly). Full suite green: 781 passed / 14 skipped / 1 deselected, up
+from 775, no regressions. The deferral's own trigger comment
+(`common/pdb_geometry.py`) and `dev_plan.md` Future Work bullet are removed
+below since the condition they were watching for is now moot.
 
 ### 5. Duplicated `update_parameters`/`set_protein_geometry` dispatch shape in `nlp_orchestrator.py`
 **File:** `nlp_orchestrator.py`

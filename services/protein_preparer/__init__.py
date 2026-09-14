@@ -32,6 +32,7 @@ except ImportError:
     RDKIT_AVAILABLE = False
     Chem = None  # type: ignore
 
+from common.pdb_geometry import parse_pdb_atom_line
 from common.utils import ensure_directory, compute_file_checksum
 
 logger = logging.getLogger(__name__)
@@ -272,34 +273,25 @@ class ProteinPreparer:
         with open(output_path, 'w') as out:
             # For rigid receptors, just ATOM lines with charges and types
             # No ROOT/ENDROOT/TORSDOF (those are for ligands)
-            
+
             for line in pdb_lines:
-                if line.startswith(('ATOM', 'HETATM')):
-                    try:
-                        # Parse PDB columns
-                        atom_num = line[6:11].strip()
-                        atom_name = line[12:16].strip()
-                        res_name = line[17:20].strip()
-                        chain = line[21]
-                        res_num = line[22:26].strip()
-                        x = float(line[30:38])
-                        y = float(line[38:46])
-                        z = float(line[46:54])
-                        element = line[76:78].strip() if len(line) > 77 else atom_name[0]
-                        
-                        # Get AutoDock type
-                        ad_type = get_ad_type(element)
-                        
-                        # Rigid receptor: zero charge
-                        charge = 0.000
-                        
-                        # Write PDBQT line
-                        atom_count += 1
-                        out.write(f"ATOM  {atom_count:5d} {atom_name:>4s} {res_name:>3s} {chain}{res_num:>4s}    "
-                                 f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00    {charge:+6.3f} {ad_type:>2s}\n")
-                    except (ValueError, IndexError) as e:
+                record = parse_pdb_atom_line(line)
+                if record is None:
+                    if line.startswith(('ATOM', 'HETATM')):
                         logger.warning(f"Skipping malformed line: {line.strip()}")
-                        continue
+                    continue
+
+                # Get AutoDock type
+                ad_type = get_ad_type(record.element)
+
+                # Rigid receptor: zero charge
+                charge = 0.000
+
+                # Write PDBQT line
+                atom_count += 1
+                out.write(f"ATOM  {atom_count:5d} {record.atom_name:>4s} {record.res_name:>3s} "
+                         f"{record.chain}{record.res_num:>4s}    "
+                         f"{record.x:8.3f}{record.y:8.3f}{record.z:8.3f}  1.00  0.00    {charge:+6.3f} {ad_type:>2s}\n")
         
         logger.info(f"Created rigid receptor PDBQT with {atom_count} atoms")
         return {

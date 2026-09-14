@@ -295,7 +295,37 @@ class TestProteinPreparer:
         # Check that manual_rigid conversion method is used (default for receptors)
         assert os.path.exists(output_path)
         assert result["conversion_method"] == "manual_rigid"
-    
+
+    def test_convert_to_pdbqt_manual_includes_hetatm_and_skips_malformed(self, temp_dir):
+        """convert_to_pdbqt_manual() writes both ATOM and HETATM records
+        (unlike common.pdb_geometry.parse_atom_coordinates(), which is
+        ATOM-only by design) and skips a malformed atom line without
+        failing the whole conversion -- exercises the shared
+        common.pdb_geometry.parse_pdb_atom_line() parser this method now
+        uses (Review Stage R1, Phase 12)."""
+        pdb_content = (
+            "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00  0.00           N\n"
+            "HETATM    2  O   HOH A   2     100.000 100.000 100.000  1.00  0.00           O\n"
+            "ATOM      3  X   AAA A   1                                                  \n"
+            "END\n"
+        )
+        pdb_path = os.path.join(temp_dir, "mixed.pdb")
+        output_path = os.path.join(temp_dir, "mixed.pdbqt")
+        with open(pdb_path, "w") as f:
+            f.write(pdb_content)
+
+        preparer = ProteinPreparer()
+        result = preparer.convert_to_pdbqt_manual(pdb_path, output_path)
+
+        assert result["success"] is True
+        assert result["atom_count"] == 2  # malformed 3rd line skipped
+
+        with open(output_path) as f:
+            lines = f.read().splitlines()
+        assert len(lines) == 2
+        assert lines[0].startswith("ATOM      1")
+        assert lines[1].startswith("ATOM      2")  # HETATM -> still written as "ATOM"
+
     def test_gasteiger_charges_assigned(self, sample_protein_pdb, temp_dir):
         """Test that Gasteiger charges are assigned."""
         preparer = ProteinPreparer()

@@ -1,16 +1,68 @@
-"""Protein bounding-box geometry from raw PDB text.
+"""Shared PDB fixed-column atom parsing, and protein bounding-box geometry
+derived from it.
 
-Used to auto-fill the docking box (`center`, `box_size`) from a prepared
-protein structure's own atom coordinates -- "set box center as protein
-center" / "look across all protein" chat commands (GUI: `ui/app.py`, CLI:
-`nlp_orchestrator.py`), both routed through
-`services/llm_orchestrator/workflow_llm_parser.py::detect_protein_geometry_command()`.
+The atom-line parser (`parse_pdb_atom_line`) is the single definition of
+"how to read one ATOM/HETATM line" for this codebase -- used both by the
+geometry computation below (`center`/`box_size` auto-fill: "set box center
+as protein center" / "look across all protein" chat commands, GUI:
+`ui/app.py`, CLI: `nlp_orchestrator.py`, both routed through
+`services/llm_orchestrator/workflow_llm_parser.py::detect_protein_geometry_command()`)
+and by `services/protein_preparer/__init__.py`'s manual-rigid-receptor PDBQT
+fallback, which previously duplicated this same column parsing independently
+(Review Stage R1, Phase 12, finding #4). The two callers still differ in
+which record types they use (`ATOM` only here vs. `ATOM`+`HETATM` there) and
+which fields they need -- that's each caller's own choice, not a difference
+in how a PDB atom line is parsed.
 """
 from __future__ import annotations
 
-from typing import List, Tuple
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 DEFAULT_PADDING_FRACTION = 0.10
+
+
+@dataclass(frozen=True)
+class PdbAtomRecord:
+    """One parsed ``ATOM``/``HETATM`` line's fields (fixed-column PDB format)."""
+
+    record_type: str  # "ATOM" or "HETATM"
+    atom_name: str
+    res_name: str
+    chain: str
+    res_num: str
+    x: float
+    y: float
+    z: float
+    element: str
+
+
+def parse_pdb_atom_line(line: str) -> Optional[PdbAtomRecord]:
+    """Parse one ``ATOM``/``HETATM`` line, or return ``None``.
+
+    Fixed-column PDB parsing (1-indexed per the PDB format spec): atom name
+    (13-16), residue name (18-20), chain (22), residue number (23-26), x/y/z
+    (31-38/39-46/47-54), element symbol (77-78, falling back to the atom
+    name's first character on a short line). Returns ``None`` for a line
+    that isn't an ``ATOM``/``HETATM`` record, or one that starts with that
+    prefix but doesn't parse cleanly -- stray non-conforming lines are
+    common in real-world PDB files, so callers skip rather than raise.
+    """
+    if not line.startswith(("ATOM", "HETATM")):
+        return None
+    record_type = "ATOM" if line.startswith("ATOM") else "HETATM"
+    try:
+        atom_name = line[12:16].strip()
+        res_name = line[17:20].strip()
+        chain = line[21]
+        res_num = line[22:26].strip()
+        x = float(line[30:38])
+        y = float(line[38:46])
+        z = float(line[46:54])
+        element = line[76:78].strip() if len(line) > 77 else atom_name[0]
+    except (ValueError, IndexError):
+        return None
+    return PdbAtomRecord(record_type, atom_name, res_name, chain, res_num, x, y, z, element)
 
 
 def parse_atom_coordinates(pdb_text: str) -> List[Tuple[float, float, float]]:
@@ -19,35 +71,13 @@ def parse_atom_coordinates(pdb_text: str) -> List[Tuple[float, float, float]]:
     ``HETATM`` records (waters, cofactors, ions) are deliberately excluded --
     this is what makes the result "protein" geometry rather than "whatever
     is left in the file" geometry, independent of the
-    `remove_waters`/`remove_heteroatoms` settings used to prepare it. Uses
-    fixed-column PDB parsing (columns 31-38/39-46/47-54 for x/y/z, 1-indexed
-    per the PDB format spec); a line that doesn't parse cleanly is skipped
-    rather than raising, since stray non-conforming lines are common in
-    real-world PDB files.
-
-    NOTE (Review Stage R1, Phase 12): `services/protein_preparer/__init__.py`'s
-    manual-rigid-receptor fallback (~line 277-302) independently parses the
-    same x/y/z columns with the same malformed-line tolerance, for both
-    `ATOM` and `HETATM` (it needs every atom to write a receptor; this
-    function deliberately wants protein atoms only). Not unified here --
-    that would mean changing protein_preparer's own working fallback path
-    to depend on this module (or parameterizing this one with an
-    include-hetatm flag), a bigger cross-module change than a review-stage
-    cleanup. Revisit if a third caller needs the same coordinate columns,
-    or the next time protein_preparer's manual-rigid path is touched for
-    an unrelated reason.
+    `remove_waters`/`remove_heteroatoms` settings used to prepare it.
     """
     coords: List[Tuple[float, float, float]] = []
     for line in pdb_text.splitlines():
-        if not line.startswith("ATOM"):
-            continue
-        try:
-            x = float(line[30:38])
-            y = float(line[38:46])
-            z = float(line[46:54])
-        except (ValueError, IndexError):
-            continue
-        coords.append((x, y, z))
+        record = parse_pdb_atom_line(line)
+        if record is not None and record.record_type == "ATOM":
+            coords.append((record.x, record.y, record.z))
     return coords
 
 

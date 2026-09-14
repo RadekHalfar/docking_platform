@@ -9,6 +9,7 @@ from typing import List, Optional, Set
 
 from services.llm_orchestrator.workflow_definition import (
     PARAM_INVALIDATION_MAP,
+    REQUIRED_PARAMETERS_BY_STEP,
     STEP_LABELS,
     WORKFLOW_STEPS,
 )
@@ -48,6 +49,23 @@ def compute_rerun_steps(
         invalidated &= allowed
 
     return [s for s in STEP_ORDER if s in invalidated]
+
+
+def missing_required_params(steps: List[str], params: dict) -> List[str]:
+    """Return "param (required by 'step')" strings for each required
+    parameter missing/falsy in ``params``, across all given steps.
+
+    Shared by the CLI's ``_execute_partial_rerun`` (nlp_orchestrator.py) and
+    the GUI's ``_handle_redock_request`` (ui/app.py) so a fix to what counts
+    as "missing" for a rerun only has to be made in one place (see
+    docs/reviews/stage_11_2_11_3_r2.md).
+    """
+    missing: List[str] = []
+    for step in steps:
+        for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
+            if not params.get(param):
+                missing.append(f"{param} (required by '{step}')")
+    return missing
 
 
 def describe_rerun_plan(steps: List[str]) -> str:

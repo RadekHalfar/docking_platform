@@ -28,7 +28,7 @@ from .workflow_llm_parser import (
 from .workflow_parser import WorkflowParser
 from .workflow_state_manager import WorkflowStateManager
 from .interactive_session import InteractiveSession, save_results_bundle, validate_bundle_name
-from .rerun_planner import compute_rerun_steps, describe_rerun_plan
+from .rerun_planner import compute_rerun_steps, describe_rerun_plan, missing_required_params
 from .job_comparator import load_job_affinities, compare_jobs
 from .job_cleanup import find_prunable_jobs, delete_jobs
 
@@ -41,6 +41,7 @@ __all__ = [
     'validate_bundle_name',
     'compute_rerun_steps',
     'describe_rerun_plan',
+    'missing_required_params',
     'BaseLLMClient',
     'OllamaAdapter',
     'OpenAIAdapter',

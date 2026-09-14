@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
+from common.file_io import FileLock, atomic_write_json
+
 _MD_SPECIAL_RE = re.compile(r'([\\`*_\[\]#])')
 
 
@@ -95,8 +97,17 @@ def list_failed_jobs(output_base: str) -> List[Dict[str, Any]]:
 
 
 def rename_job(job_dir: str, new_name: str) -> None:
-    """Update the job_name field of a job's workflow_results.json in place."""
+    """Update the job_name field of a job's workflow_results.json in place.
+
+    Locked and atomic to match the orchestrator's own read-merge-write of
+    this same file (services/llm_orchestrator/orchestrator.py, same
+    ``.workflow_results.lock`` path) -- without this, renaming a session
+    while it's actively being redocked could race that write and clobber
+    the redock's freshly-merged results with this function's stale read.
+    """
     results_file = Path(job_dir) / "workflow_results.json"
-    data = json.loads(results_file.read_text())
-    data["job_name"] = new_name.strip()[:60]
-    results_file.write_text(json.dumps(data, indent=2))
+    lock_file = Path(job_dir) / ".workflow_results.lock"
+    with FileLock(lock_file):
+        data = json.loads(results_file.read_text())
+        data["job_name"] = new_name.strip()[:60]
+        atomic_write_json(results_file, data)

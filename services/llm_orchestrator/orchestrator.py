@@ -288,6 +288,19 @@ class WorkflowOrchestrator:
 
         cancelled = False
 
+        # NOTE (R2, Stage 11.2/11.3 review, docs/reviews/stage_11_2_11_3_r2.md
+        # finding #12): the "<step> in services and not _maybe_cancel()" guard
+        # below is pasted identically onto all 5 step conditions rather than
+        # checked once inside a shared loop/dispatch point -- the same
+        # duplication class R1 already collapsed once for the per-step
+        # append_job_log() calls (see _log_step_done above). Deferred here
+        # because fixing it properly means restructuring this whole method
+        # into a step-list-driven loop, a materially bigger change than a
+        # review pass should make. Revisit next time a 6th workflow step is
+        # added (the highest-risk moment: a new step guard copy-pasted
+        # without the "and not _maybe_cancel()" clause would silently make
+        # Stop not apply to it) or when this method is next restructured for
+        # an unrelated reason.
         def _maybe_cancel() -> bool:
             # Checked once at the top of each step below, right after
             # confirming that step was even requested -- a step already in

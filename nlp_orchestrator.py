@@ -22,6 +22,7 @@ from services.llm_orchestrator import (
     InteractiveSession,
     compute_rerun_steps,
     describe_rerun_plan,
+    missing_required_params,
     create_llm_client,
     parse_workflow_with_llm,
     generate_llm_follow_up_question,
@@ -38,7 +39,7 @@ from services.llm_orchestrator import (
     delete_jobs,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
-from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP, CORE_PARAMS
+from services.llm_orchestrator.workflow_definition import CORE_PARAMS
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
 from common.utils import generate_job_id
 from common.file_io import atomic_write_json
@@ -357,11 +358,7 @@ def _execute_partial_rerun(
 
     # Pre-flight: verify all required parameters for the planned steps are present.
     latest_params = session.state_manager.load_latest_parameters() or {}
-    missing: List[str] = []
-    for step in steps:
-        for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
-            if not latest_params.get(param):
-                missing.append(f"{param} (required by '{step}')")
+    missing = missing_required_params(steps, latest_params)
     if missing:
         print("\n❌ Cannot rerun — required parameters are missing:")
         for m in sorted(set(missing)):

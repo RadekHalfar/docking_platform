@@ -245,6 +245,50 @@ class TestRenameJob:
         with pytest.raises(FileNotFoundError):
             rename_job(str(tmp_path / "does_not_exist"), "New name")
 
+    def test_uses_lock_and_atomic_write_leaving_no_droppings(self, tmp_path):
+        """Renaming shares the orchestrator's own .workflow_results.lock
+        (services/llm_orchestrator/orchestrator.py) and atomic_write_json --
+        without them, a rename racing a concurrent redock's locked
+        read-merge-write to the same file could clobber its freshly-merged
+        results (docs/reviews/stage_11_2_11_3_r2.md finding #3).
+        """
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(job_dir, job_name="Old name")
+
+        rename_job(str(job_dir), "New name")
+
+        assert not (job_dir / ".workflow_results.lock").exists()
+        assert not (job_dir / "workflow_results.json.tmp").exists()
+
+    def test_waits_for_lock_held_by_another_writer(self, tmp_path):
+        """A concurrent holder of .workflow_results.lock (e.g. the
+        orchestrator's own merge-write) must make rename_job wait rather
+        than race it -- proves rename_job actually acquires the same lock
+        instead of writing straight past it.
+        """
+        import threading
+        import time
+
+        from common.file_io import FileLock
+
+        job_dir = tmp_path / "job_a"
+        _write_workflow_results(job_dir, job_name="Old name")
+
+        lock = FileLock(job_dir / ".workflow_results.lock")
+        lock.acquire()
+        order: list = []
+
+        def _release_after_delay():
+            time.sleep(0.3)
+            order.append("released")
+            lock.release()
+
+        threading.Thread(target=_release_after_delay).start()
+        rename_job(str(job_dir), "New name")
+        order.append("renamed")
+
+        assert order == ["released", "renamed"]
+
 
 class TestEscapeMarkdown:
     def test_plain_text_unchanged(self):

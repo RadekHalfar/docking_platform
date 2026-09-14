@@ -92,10 +92,13 @@ different ways to move on, each preserving something different:
   active `WorkflowStateManager`) but keeps your entered parameters and LLM
   settings, so you can immediately start a related but independent docking
   run without retyping the form. Disabled when there's no active session to
-  detach from.
+  detach from, and while this browser tab has a session actively running —
+  detaching from a still-running session would leave it running in the
+  background with no way to see it finish or stop it.
 - **Reset** — clears everything in the form, including entered parameters
   (only your LLM provider settings survive). Use this when you want a
-  genuinely blank slate.
+  genuinely blank slate. Disabled while this browser tab has a session
+  actively running, for the same reason as New Session above.
 
 ## Session History
 
@@ -114,6 +117,9 @@ every page load, so it reflects sessions run from the GUI or the CLI
   parameter, say) instead of only viewing it read-only. This also means a
   browser refresh followed by **Load** picks a session back up exactly where
   you left off, rather than starting a new one on the next "Run Docking".
+  Every **Load** button is disabled while this browser tab has a session
+  actively running — switching sessions mid-run would leave the running one
+  orphaned in the background, same as New Session/Reset above.
 - A **Rename** button — toggles an inline text field to change the
   session's name after the fact (e.g. once you know which run turned out to
   matter). Click **Save** to write the new name straight into that session's

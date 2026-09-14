@@ -11,8 +11,11 @@ import streamlit as st
 from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import compute_changed_params
 from services.llm_orchestrator.job_comparator import compare_jobs
-from services.llm_orchestrator.rerun_planner import compute_rerun_steps, describe_rerun_plan
-from services.llm_orchestrator.workflow_definition import REQUIRED_PARAMETERS_BY_STEP
+from services.llm_orchestrator.rerun_planner import (
+    compute_rerun_steps,
+    describe_rerun_plan,
+    missing_required_params,
+)
 from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
@@ -238,17 +241,18 @@ def _handle_redock_request(session, params: dict) -> None:
         st.rerun()
         return
 
-    latest_params = session.state_manager.load_latest_parameters() or {}
-    missing: list = []
-    for step in steps:
-        for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
-            if not latest_params.get(param):
-                missing.append(f"{param} (required by '{step}')")
+    # params was just checkpointed unchanged above -- reuse it instead of a
+    # redundant round trip back through the checkpoint file.
+    missing = missing_required_params(steps, params)
     if missing:
         st.error("Cannot redock — required parameters are missing: " + ", ".join(sorted(set(missing))))
         return
 
-    st.session_state["_pending_rerun"] = {"steps": steps, "params": latest_params}
+    st.session_state["_pending_rerun"] = {
+        "job_id": session.job_id,
+        "steps": steps,
+        "params": params,
+    }
     st.rerun()
 
 
@@ -258,6 +262,14 @@ def _execute_confirmed_redock() -> None:
         return
 
     session = st.session_state.interactive_session
+    if pending.get("job_id") != session.job_id:
+        # The active session changed (e.g. a sidebar Load) after this plan
+        # was staged but before it was confirmed -- the staged steps/params
+        # were computed for a different job_id and must not be applied here.
+        st.error("Redock plan was for a different session and has been discarded — please try again.")
+        st.rerun()
+        return
+
     rerun_workflow = {"services": pending["steps"], "parameters": pending["params"]}
 
     st.session_state["_job_done"] = False
@@ -425,12 +437,39 @@ def _resume_session(job: dict) -> None:
     # overwriting session.last_results on the next rerun (that block only
     # runs while _job_done is False, i.e. for a run it's actively tracking).
     st.session_state["_job_done"] = True
+    # A redock staged for the *previous* active session is no longer valid
+    # once the active session switches to a different job_id -- discard it
+    # rather than risk it being confirmed against this new job later
+    # (_execute_confirmed_redock also checks job_id as a second guard).
+    st.session_state.pop("_pending_rerun", None)
     st.rerun()
 
 
 def _clear_all_job_caches() -> None:
     _cached_completed_jobs.clear()
     _cached_failed_jobs.clear()
+
+
+def _active_bridge_job_id() -> str | None:
+    """job_id this browser tab's own bridge is actively running, if any.
+
+    Only the current tab's own bridge is visible here -- a different
+    tab/process running the same job_id is not detectable, and that
+    residual gap is documented rather than silently assumed solved.
+
+    Used to guard every action that would detach ``st.session_state`` from
+    the job a live bridge is writing into (New Session, Reset, Load, Delete)
+    -- detaching without checking this first would orphan the running
+    background thread (it keeps writing to its job_dir with nothing left in
+    session_state able to observe or stop it) and, for Load/Delete
+    specifically, desyncs ``job_id`` from the bridge's real target, which
+    defeats the very running-job guard those actions rely on (see
+    docs/reviews/stage_11_2_11_3_r2.md).
+    """
+    bridge = st.session_state.get("bridge")
+    if bridge is not None and bridge.is_running():
+        return st.session_state.get("job_id")
+    return None
 
 
 def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str | None:
@@ -452,22 +491,26 @@ def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str |
                 selected_dir = job["job_dir"]
         else:
             st.markdown(label)
+    active_job_id = _active_bridge_job_id()
+    running_here = job["job_id"] == active_job_id
+    # Loading a *different* session while this tab's bridge is running would
+    # reassign st.session_state.job_id/interactive_session out from under
+    # the running bridge, orphaning it and desyncing running_here for the
+    # job it's actually running -- so Load is blocked for every row (not
+    # just this one) while any bridge is active in this tab.
     with col_load:
-        if st.button("Load", key=f"job_load_{job['job_id']}"):
+        if st.button(
+            "Load",
+            key=f"job_load_{job['job_id']}",
+            disabled=active_job_id is not None,
+            help="Stop the running session before loading another." if active_job_id is not None else None,
+        ):
             _resume_session(job)
     with col_rename:
         if st.button("Rename", key=f"job_rename_toggle_{job['job_id']}"):
             flag = f"_renaming_{job['job_id']}"
             st.session_state[flag] = not st.session_state.get(flag, False)
 
-    # Only the current browser session's own bridge is visible here -- a
-    # different tab/process running the same job_id is not detectable, and
-    # that residual gap is documented rather than silently assumed solved.
-    running_here = (
-        job["job_id"] == st.session_state.get("job_id")
-        and st.session_state.bridge is not None
-        and st.session_state.bridge.is_running()
-    )
     with col_delete:
         if st.button("Delete", key=f"job_delete_toggle_{job['job_id']}", disabled=running_here):
             flag = f"_deleting_{job['job_id']}"
@@ -611,6 +654,10 @@ def render_chat() -> None:
                 )
             elif result and result.get("status") == "failed":
                 st.session_state["_job_done"] = True
+                failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Workflow failed: {failure_detail}"}
+                )
 
     if prompt := st.chat_input("Describe your workflow..."):
         _on_chat_submit(prompt)
@@ -734,6 +781,13 @@ def render_parameters_panel() -> None:
                 st.session_state.pop("_pending_rerun", None)
                 st.rerun()
     else:
+        # New Session/Reset both detach st.session_state from whatever job
+        # is currently attached -- while this tab's own bridge is actively
+        # running that job, detaching would orphan the background thread
+        # (nothing left in session_state could observe or stop it) and
+        # desync the sidebar's running-job guards for it (see
+        # _active_bridge_job_id docstring).
+        running_job = _active_bridge_job_id()
         col_run, col_new, col_reset = st.columns(3)
         with col_run:
             if st.button("Run Docking", type="primary", use_container_width=True):
@@ -742,8 +796,12 @@ def render_parameters_panel() -> None:
             if st.button(
                 "New Session",
                 use_container_width=True,
-                disabled=not st.session_state.interactive_session.has_active_job(),
-                help="Keep your parameters, start a fresh session.",
+                disabled=not st.session_state.interactive_session.has_active_job() or running_job is not None,
+                help=(
+                    "A session is running — Stop it (in the results panel) before starting a new one."
+                    if running_job is not None
+                    else "Keep your parameters, start a fresh session."
+                ),
             ):
                 start_new_session()
                 st.rerun()
@@ -751,7 +809,12 @@ def render_parameters_panel() -> None:
             if st.button(
                 "Reset",
                 use_container_width=True,
-                help="Clear everything, including entered parameters.",
+                disabled=running_job is not None,
+                help=(
+                    "A session is running — Stop it (in the results panel) before resetting."
+                    if running_job is not None
+                    else "Clear everything, including entered parameters."
+                ),
             ):
                 _reset_session()
 
@@ -1139,6 +1202,37 @@ def _job_label(job_id: str, job_name: str | None) -> str:
     return f"`{job_id}`"
 
 
+def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, live: bool) -> bool:
+    """Render a completed/failed/cancelled result identically whether it
+    came from a live bridge or a straight disk read. Returns True if the
+    status was one this function handles, False so the caller can fall
+    through (e.g. to a "no results" caption).
+
+    Extracted so the live-bridge and disk-read branches of
+    _render_job_results() can't silently diverge on what a given status
+    renders, the way the live-bridge branch's error path once diverged from
+    every other branch by skipping _render_job_log() (see
+    docs/reviews/stage_11_2_11_3_r2.md).
+    """
+    status = result.get("status")
+    if status == "completed":
+        if live:
+            st.success(f"Session {job_label} completed")
+        else:
+            st.info(f"Viewing session {job_label}")
+        _render_affinity_chart(result)
+        _render_visualization(result, job_id)
+        _render_file_downloads(result, job_id)
+        _render_job_log(job_id)
+        return True
+
+    if status in ("failed", "cancelled"):
+        _render_workflow_failure(job_id, result)
+        return True
+
+    return False
+
+
 def _render_job_results() -> None:
     bridge: OrchestratorBridge = st.session_state.bridge
     active_job_id = st.session_state.job_id
@@ -1173,35 +1267,19 @@ def _render_job_results() -> None:
 
         if error:
             st.error(f"Session failed: {error}")
-            return
-
-        if result and result.get("status") == "completed":
-            st.success(f"Session {job_label} completed")
-            _render_affinity_chart(result)
-            _render_visualization(result, viewed_job_id)
-            _render_file_downloads(result, viewed_job_id)
             _render_job_log(viewed_job_id)
             return
 
-        if result and result.get("status") in ("failed", "cancelled"):
-            _render_workflow_failure(viewed_job_id, result)
+        if result and _render_completed_or_failed(result, viewed_job_id, job_label, live=True):
             return
 
     # Otherwise, view a session by reading its results straight from disk —
     # covers sessions Loaded from history and sessions with no live bridge.
     result = _load_workflow_results(viewed_job_id)
-    if result and result.get("status") == "completed":
+    if result:
         job_label = _job_label(viewed_job_id, result.get("job_name"))
-        st.info(f"Viewing session {job_label}")
-        _render_affinity_chart(result)
-        _render_visualization(result, viewed_job_id)
-        _render_file_downloads(result, viewed_job_id)
-        _render_job_log(viewed_job_id)
-        return
-
-    if result and result.get("status") in ("failed", "cancelled"):
-        _render_workflow_failure(viewed_job_id, result)
-        return
+        if _render_completed_or_failed(result, viewed_job_id, job_label, live=False):
+            return
 
     st.caption("No results found for this session.")
 

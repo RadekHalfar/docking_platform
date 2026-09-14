@@ -4,6 +4,7 @@ from services.llm_orchestrator.rerun_planner import (
     STEP_ORDER,
     compute_rerun_steps,
     describe_rerun_plan,
+    missing_required_params,
 )
 from services.llm_orchestrator.workflow_definition import (
     PARAM_INVALIDATION_MAP,
@@ -109,3 +110,36 @@ def test_describe_non_empty():
     assert "Generate visualization" in text
     assert "1." in text
     assert "2." in text
+
+
+# ---------------------------------------------------------------------------
+# missing_required_params — shared by the CLI (_execute_partial_rerun) and
+# the GUI (_handle_redock_request), see docs/reviews/stage_11_2_11_3_r2.md
+# ---------------------------------------------------------------------------
+
+def test_missing_required_params_none_missing():
+    params = {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [1, 2, 3], "box_size": [20, 20, 20]}
+    assert missing_required_params(["dock"], params) == []
+
+
+def test_missing_required_params_reports_step_name():
+    missing = missing_required_params(["dock"], {"protein_id": "6lu7"})
+    assert any("center" in m and "'dock'" in m for m in missing)
+    assert any("ligand_ids" in m and "'dock'" in m for m in missing)
+
+
+def test_missing_required_params_falsy_values_count_as_missing():
+    params = {"protein_id": "", "ligand_ids": [], "center": [1, 2, 3], "box_size": [20, 20, 20]}
+    missing = missing_required_params(["dock"], params)
+    assert any("protein_id" in m for m in missing)
+    assert any("ligand_ids" in m for m in missing)
+
+
+def test_missing_required_params_union_across_steps():
+    missing = missing_required_params(["prepare_ligands", "prepare_protein"], {})
+    assert any("ligand_ids" in m and "'prepare_ligands'" in m for m in missing)
+    assert any("protein_id" in m and "'prepare_protein'" in m for m in missing)
+
+
+def test_missing_required_params_empty_steps():
+    assert missing_required_params([], {}) == []

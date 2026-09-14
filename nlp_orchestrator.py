@@ -40,7 +40,10 @@ from services.llm_orchestrator import (
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS
+from services.llm_orchestrator.interactive_session import resolve_prepared_protein_pdb_path
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
+from common.pdb_geometry import compute_protein_center_and_box
+from common.path_utils import from_container_path
 from common.utils import generate_job_id
 from common.file_io import atomic_write_json
 
@@ -108,6 +111,8 @@ def _print_interactive_help() -> None:
     print("  - new <request>              # Start a fresh workflow in current session")
     print("  - change ligand to HEM       # Update parameters (natural language)")
     print("  - set center to 10,20,30     # Update docking box center")
+    print("  - set up box center as protein center  # Center box on the loaded protein")
+    print("  - look across all protein    # Size box to cover the whole protein (+10%)")
     print("  - search ligand aspirin       # Search RCSB ligands by name and choose one")
     print("  - state / show state         # Show active job state from disk")
     print("  - end / quit / exit          # End session")
@@ -120,6 +125,49 @@ def _print_interactive_help() -> None:
     print("  - undo <revision>            # Restore parameters/state to a prior revision")
     print("\nComing soon (stubs active):")
     print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
+
+
+def _persist_parameter_updates(
+    updates: Dict[str, Any],
+    session: "InteractiveSession",
+) -> Set[str]:
+    """Merge *updates* onto the session's last-checkpointed parameters, save
+    a new checkpoint revision, and keep docking_box.json in sync.
+
+    Returns the set of keys that actually changed (empty if none did, or if
+    there's no active state manager to persist into). Shared by
+    :func:`_handle_update_parameters` (LLM-extracted updates from a
+    free-text command) and :func:`_handle_set_protein_geometry` (updates
+    computed from the loaded protein's bounding box) -- one definition of
+    "apply and persist a parameter update" instead of two.
+    """
+    if session.state_manager is None:
+        print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
+        return set()
+
+    current = session.state_manager.load_latest_parameters() or {}
+    old_params = dict(current)
+    current.update(updates)
+    session.state_manager.save_parameters_checkpoint(current, source="interactive_update")
+    print("✅ Parameters saved to disk.")
+
+    # Compute what changed and offer partial rerun.
+    changed_keys = {k for k in updates if old_params.get(k) != updates[k]}
+
+    # Keep docking_box.json on disk in sync whenever box coordinates change
+    # so that every subsequent read of docking_box.json reflects the current
+    # state (e.g. save_results_bundle, PyMOL reload, debug inspection).
+    if changed_keys & _BOX_PARAMS and current.get("center") and current.get("box_size"):
+        _box_payload: Dict[str, Any] = {
+            "job_id": session.state_manager.job_dir.name,
+            "center": current["center"],
+            "box_size": current["box_size"],
+            "source": "interactive_update",
+        }
+        atomic_write_json(session.state_manager.job_dir / "docking_box.json", _box_payload)
+        logger.debug("Updated docking_box.json from interactive parameter change.")
+
+    return changed_keys
 
 
 def _handle_update_parameters(
@@ -141,33 +189,52 @@ def _handle_update_parameters(
     for key, value in updates.items():
         print(f"  {key}: {value}")
 
-    if session.state_manager is not None:
-        current = session.state_manager.load_latest_parameters() or {}
-        old_params = dict(current)
-        current.update(updates)
-        session.state_manager.save_parameters_checkpoint(current, source="interactive_update")
-        print("\u2705 Parameters saved to disk.")
+    return _persist_parameter_updates(updates, session)
 
-        # Compute what changed and offer partial rerun.
-        changed_keys = {k for k in updates if old_params.get(k) != updates[k]}
 
-        # Keep docking_box.json on disk in sync whenever box coordinates change
-        # so that every subsequent read of docking_box.json reflects the current
-        # state (e.g. save_results_bundle, PyMOL reload, debug inspection).
-        if changed_keys & _BOX_PARAMS and current.get("center") and current.get("box_size"):
-            _box_payload: Dict[str, Any] = {
-                "job_id": session.state_manager.job_dir.name,
-                "center": current["center"],
-                "box_size": current["box_size"],
-                "source": "interactive_update",
-            }
-            atomic_write_json(session.state_manager.job_dir / "docking_box.json", _box_payload)
-            logger.debug("Updated docking_box.json from interactive parameter change.")
+def _handle_set_protein_geometry(
+    target: Optional[str],
+    session: "InteractiveSession",
+    orchestrator: WorkflowOrchestrator,
+) -> Set[str]:
+    """Compute center/box_size from the loaded protein's own bounding box
+    and persist it -- the "set up box center as protein center" / "look
+    across all protein" commands.
 
-        return changed_keys
-    else:
-        print("\u26a0\ufe0f  No active state manager — parameters could not be persisted.")
+    Returns the set of changed parameter keys (empty on any no-op: no
+    protein loaded yet, the prepared file is gone, or the computation
+    failed) -- mirrors :func:`_handle_update_parameters`'s own "could not
+    extract" branch, an informational no-op rather than a chain-halting
+    failure.
+    """
+    raw_path = resolve_prepared_protein_pdb_path(session.last_results)
+    if not raw_path:
+        print("No prepared protein yet. Run a workflow through protein preparation first, then ask again.")
         return set()
+
+    # The path is as the protein_preparer MCP service's own container sees
+    # it (e.g. "/app/orchestrator_output/..."); translate to this process's
+    # own local mount of the same shared volume before reading it directly.
+    local_path = from_container_path(raw_path, orchestrator.output_base)
+    if not local_path.exists():
+        print(f"Prepared receptor no longer on disk: {local_path}")
+        return set()
+
+    try:
+        pdb_text = local_path.read_text(encoding="utf-8", errors="replace")
+        center, box_size = compute_protein_center_and_box(pdb_text)
+    except (OSError, ValueError) as exc:
+        print(f"Could not compute protein geometry: {exc}")
+        return set()
+
+    if target == "center":
+        updates: Dict[str, Any] = {"center": center}
+        print(f"Protein center: {center}")
+    else:
+        updates = {"box_size": box_size}
+        print(f"Box size to cover the whole protein (+10% margin): {box_size}")
+
+    return _persist_parameter_updates(updates, session)
 
 
 def _handle_search_ligand(
@@ -654,6 +721,14 @@ def _dispatch_intent(
         if changed:
             session.pending_changed_params |= changed
             print("\nParameters updated. Type 'rerun' or 'dock' to re-execute affected steps.")
+        return True
+
+    if intent == "set_protein_geometry":
+        target = (intent_result or {}).get("name")
+        changed = _handle_set_protein_geometry(target, session, orchestrator)
+        if changed:
+            session.pending_changed_params |= changed
+            print("\nType 'rerun' or 'dock' to re-execute affected steps.")
         return True
 
     if intent == "search_ligand":

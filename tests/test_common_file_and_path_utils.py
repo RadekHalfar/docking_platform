@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from common.file_io import atomic_write_json, load_json_dict
-from common.path_utils import normalize_path_for_docker, to_container_path
+from common.path_utils import from_container_path, normalize_path_for_docker, to_container_path
 
 
 def test_atomic_write_json_and_load_json_dict_roundtrip(tmp_path):
@@ -50,3 +50,61 @@ def test_to_container_path_preserves_absolute_windows_drive_style():
     """Absolute Windows paths should stay drive-qualified and slash-normalized."""
     mapped = to_container_path("C:\\Users\\test\\file.pdbqt", workspace_root=Path.cwd())
     assert mapped == "C:/Users/test/file.pdbqt"
+
+
+# ---------------------------------------------------------------------------
+# from_container_path -- reverse direction, Stage 12.3 (CLI reading a
+# prepared-protein path an MCP service returned, e.g. "/app/orchestrator_
+# output/job_x/..."). Shared by ui/app.py::_resolve_container_path() and
+# nlp_orchestrator.py.
+# ---------------------------------------------------------------------------
+
+def test_from_container_path_maps_default_container_root(tmp_path):
+    local_root = tmp_path / "orchestrator_output"
+    mapped = from_container_path(
+        "/app/orchestrator_output/job_x/prepared/6lu7_prepared.pdb", local_root
+    )
+    assert mapped == local_root / "job_x" / "prepared" / "6lu7_prepared.pdb"
+
+
+def test_from_container_path_custom_container_root(tmp_path):
+    local_root = tmp_path / "orchestrator_output"
+    mapped = from_container_path(
+        "/workspace/orchestrator_output/job_x/file.pdb",
+        local_root,
+        container_root="/workspace/orchestrator_output",
+    )
+    assert mapped == local_root / "job_x" / "file.pdb"
+
+
+def test_from_container_path_returns_unchanged_path_outside_container_root(tmp_path):
+    local_root = tmp_path / "orchestrator_output"
+    already_local = str(local_root / "job_x" / "file.pdb")
+    mapped = from_container_path(already_local, local_root)
+    assert mapped == Path(already_local)
+
+
+def test_from_container_path_normalizes_backslashes(tmp_path):
+    local_root = tmp_path / "orchestrator_output"
+    mapped = from_container_path(
+        "/app/orchestrator_output/job_x\\prepared\\6lu7_prepared.pdb", local_root
+    )
+    assert mapped == local_root / "job_x" / "prepared" / "6lu7_prepared.pdb"
+
+
+def test_from_container_path_is_inverse_of_to_container_path(tmp_path):
+    """Round-trip: to_container_path() then from_container_path() should
+    recover the original local file (this is exactly what happens when the
+    orchestrator sends a path to an MCP service and later reads a result
+    path that service derived from it)."""
+    workspace_root = tmp_path / "workspace"
+    local_root = workspace_root / "orchestrator_output"
+    target_file = local_root / "job_x" / "prepared" / "6lu7_prepared.pdb"
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text("ATOM", encoding="utf-8")
+
+    container_path = to_container_path(str(target_file), workspace_root=workspace_root)
+    recovered = from_container_path(container_path, local_root)
+
+    assert recovered == target_file
+    assert recovered.read_text(encoding="utf-8") == "ATOM"

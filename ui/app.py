@@ -8,6 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from common.path_utils import from_container_path
 from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import (
@@ -1440,14 +1441,13 @@ def _render_affinity_chart(result: dict) -> None:
 
 def _resolve_container_path(path: str) -> Path:
     """Remap /app/orchestrator_output/... → OUTPUT_BASE/... so the UI container
-    can access files written by MCP services that mount the volume at /app."""
-    p = Path(path)
-    try:
-        # e.g. /app/orchestrator_output/job_x/... → job_x/...
-        rel = p.relative_to("/app/orchestrator_output")
-        return OUTPUT_BASE / rel
-    except ValueError:
-        return p
+    can access files written by MCP services that mount the volume at /app.
+
+    Thin wrapper over :func:`common.path_utils.from_container_path` -- the
+    CLI's `nlp_orchestrator.py` needs the same "MCP service's own mount" ->
+    "this process's local mount" translation for the same reason (Stage 12.3).
+    """
+    return from_container_path(path, OUTPUT_BASE)
 
 
 def _split_sdf_records(sdf_text: str) -> list[str]:

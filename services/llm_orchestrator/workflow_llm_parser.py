@@ -438,6 +438,7 @@ _SESSION_INTENTS = frozenset({
     "search_ligand",
     "update_parameters",
     "use_pymol_box",
+    "set_protein_geometry",
     "rerun_steps",
     "show_state",
     "show_history",
@@ -588,6 +589,13 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
 
     if re.match(r"^use\s+pymol\b", t):
         return {"intent": "use_pymol_box", "name": None}
+
+    # Must run before the generic update_parameters prefix match below --
+    # "set up box center as protein center" and "use protein center" both
+    # start with a word that prefix matches on.
+    geometry_target = detect_protein_geometry_command(text)
+    if geometry_target is not None:
+        return {"intent": "set_protein_geometry", "name": geometry_target}
 
     # Common parameter-update prefixes — avoid LLM intent classification.
     if re.match(r"^(change|set|use|update|switch)\s+", t):

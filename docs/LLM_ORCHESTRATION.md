@@ -310,6 +310,7 @@ When a job is active, every command is classified into one of these intents befo
 | `end_session` | `end`, `end session`, `quit session` | Exit the session cleanly |
 | `new_workflow` | `new <request>` | Start a fresh workflow |
 | `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk, invalidate affected services |
+| `set_protein_geometry` | `set up box center as protein center`, `look across all protein` | Compute `center`/`box_size` from the loaded protein's own bounding box, persist to disk, invalidate affected services (Phase 12) |
 | `save_results` | `save results as hem_box_a` | Save named result bundle from current docking/visualization outputs |
 | `undo_revision` | `undo 14` | Restore parameters/state to a prior revision |
 | `rerun_steps` | `rerun`, `dock`, `rerun docking` | Re-execute invalidated steps with pre-flight validation |
@@ -327,6 +328,33 @@ After classifying `update_parameters`, the system:
 3. Saves a new checkpoint revision to disk.
 4. Immediately removes invalidated services from the executed set (e.g. changing `center` invalidates `dock` and `visualize`).
 5. Prints a confirmation with a hint to `rerun`.
+
+#### Set protein geometry (Phase 12)
+
+`set_protein_geometry` is classified deterministically, like the other
+common keywords — never sent to the LLM, since the LLM has no access to
+the protein's atom coordinates and this codebase never lets it guess
+`center`/`box_size` (`workflow_llm_parser.py::detect_protein_geometry_command()`,
+checked in `_deterministic_intent()` just before the generic
+`update_parameters` prefix match, so "set up box center as protein
+center" isn't swallowed by it). After classifying, the system:
+1. Reads the current session's last `prepare_protein` result
+   (`InteractiveSession.last_results`) for the prepared receptor PDB path,
+   translating it from the MCP service's own container mount to this
+   process's local one (`common.path_utils.from_container_path`).
+2. If no prepared protein exists yet, prints a message asking the user to
+   run protein preparation first — no error, no guess.
+3. Computes `center` (bounding-box midpoint) or `box_size` (bounding-box
+   extent, +10% margin) from the file's `ATOM` records
+   (`common.pdb_geometry.compute_protein_center_and_box`).
+4. Persists the result exactly like `update_parameters` does (same
+   `_persist_parameter_updates()` helper both intents share), invalidating
+   `dock`/`visualize` and printing a `rerun` hint.
+
+The GUI (`ui/app.py`) uses the same `detect_protein_geometry_command()`
+function ahead of its own chat-parsing call, so both commands work
+identically from the browser — see
+[GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
 
 #### Rerun steps
 

@@ -44,3 +44,29 @@ def to_container_path(path: str, workspace_root: Path, container_root: str = "/a
         return (Path(container_root) / rel_path).as_posix()
     except ValueError:
         return abs_path.as_posix()
+
+
+def from_container_path(
+    path: str, local_root: Path, container_root: str = "/app/orchestrator_output"
+) -> Path:
+    """Reverse of :func:`to_container_path`: remap a path as an MCP service
+    sees it on its own container mount (e.g. an ``"/app/orchestrator_output/
+    job_x/..."`` result field) back to *this* process's own local mount of
+    the same bind-mounted shared volume.
+
+    Every process that reads the shared ``orchestrator_output/job_<id>/``
+    tree -- each MCP service, the orchestrator/CLI process, and the ``ui``
+    container -- sees it at a different path (see ``dev_plan.md``'s Module
+    Interchange Contracts section). *local_root* is that caller's own view
+    of the ``orchestrator_output`` directory itself (``OUTPUT_BASE`` for the
+    ``ui`` container, ``WorkflowOrchestrator.output_base`` for the CLI).
+    Returns *path* unchanged (as a ``Path``) if it isn't under
+    *container_root* -- e.g. it's already a local path, or points somewhere
+    else entirely.
+    """
+    p = Path(normalize_path_for_docker(path))
+    try:
+        rel = p.relative_to(container_root)
+    except ValueError:
+        return p
+    return Path(local_root) / rel

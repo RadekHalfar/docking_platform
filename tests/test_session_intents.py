@@ -272,20 +272,27 @@ def test_detect_protein_geometry_command_no_false_positives(command):
 
 
 @pytest.mark.parametrize(
-    "command,expected_intent",
+    "command,expected_target",
     [
-        ("set up box center as protein center", "update_parameters"),
-        ("look across all protein", "unknown"),
+        ("set up box center as protein center", "center"),
+        ("look across all protein", "box_size"),
     ],
 )
-def test_geometry_phrases_not_yet_wired_into_session_intent_classification(
-    llm_client, command, expected_intent
-):
-    """Documents current (Stage 12.2) state: detect_protein_geometry_command()
-    exists and is correct in isolation, but _deterministic_intent() doesn't
-    call it yet -- that wiring is Stage 12.3. "set up..." still falls into
-    the generic update_parameters catch-all; "look across..." matches no
-    deterministic pattern and falls to the (here-mocked) LLM classifier."""
-    llm_client.generate.return_value = '{"intent": "unknown"}'
+def test_geometry_phrases_classify_as_set_protein_geometry(llm_client, command, expected_target):
+    """Stage 12.3: _deterministic_intent() (via classify_session_intent())
+    now recognizes both example commands deterministically -- no LLM call,
+    and the intent's "name" carries which field (center/box_size) to set,
+    consumed by nlp_orchestrator.py::_handle_set_protein_geometry()."""
     result = classify_session_intent(llm_client, command)
-    assert result["intent"] == expected_intent
+    assert result["intent"] == "set_protein_geometry"
+    assert result["name"] == expected_target
+    llm_client.generate.assert_not_called()
+
+
+def test_update_parameters_catchall_still_wins_for_non_geometry_set_commands(llm_client):
+    """Regression guard for Critical Finding #2: an ordinary 'set ...'
+    parameter command must still classify as update_parameters, not get
+    swallowed by the new geometry check placed just before it."""
+    result = classify_session_intent(llm_client, "set center to 10,20,30")
+    assert result["intent"] == "update_parameters"
+    llm_client.generate.assert_not_called()

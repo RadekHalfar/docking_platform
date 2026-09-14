@@ -704,6 +704,122 @@ def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path,
     assert changed == set()
 
 
+# ---------------------------------------------------------------------------
+# Stage 12.3: _handle_set_protein_geometry (CLI wiring for "set up box
+# center as protein center" / "look across all protein")
+# ---------------------------------------------------------------------------
+
+def _mini_protein_pdb_text() -> str:
+    fixture = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
+    return fixture.read_text()
+
+
+def test_handle_set_protein_geometry_no_prepared_protein(tmp_path):
+    """No prior prepare_protein result -> informational no-op, not a crash."""
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_nogeo")
+    state_manager.save_parameters_checkpoint({"protein_id": "6lu7"}, source="initial_parse")
+    session.activate("job_nogeo", state_manager, last_results=None)
+
+    orchestrator = Mock(output_base=Path(tmp_path) / "orchestrator_output")
+    changed = cli._handle_set_protein_geometry("center", session, orchestrator)
+    assert changed == set()
+
+
+def test_handle_set_protein_geometry_center(tmp_path):
+    """Resolves the container-side pdb_path to this process's local mount,
+    reads it, and persists the computed bounding-box midpoint as center."""
+    local_root = Path(tmp_path) / "orchestrator_output"
+    prepared_pdb = local_root / "job_geo" / "prepared" / "6lu7_prepared.pdb"
+    prepared_pdb.parent.mkdir(parents=True, exist_ok=True)
+    prepared_pdb.write_text(_mini_protein_pdb_text())
+
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(local_root / "job_geo")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "center": [1, 1, 1], "box_size": [5, 5, 5]},
+        source="initial_parse",
+    )
+    session.activate(
+        "job_geo",
+        state_manager,
+        last_results={
+            "results": {
+                "prepare_protein": {
+                    "prepared_proteins": [
+                        {"pdb_path": "/app/orchestrator_output/job_geo/prepared/6lu7_prepared.pdb"}
+                    ]
+                }
+            }
+        },
+    )
+
+    orchestrator = Mock(output_base=local_root)
+    changed = cli._handle_set_protein_geometry("center", session, orchestrator)
+
+    assert changed == {"center"}
+    params = state_manager.load_latest_parameters()
+    assert params["center"] == [6.0, 12.0, 18.0]
+    assert params["box_size"] == [5, 5, 5]  # untouched
+
+
+def test_handle_set_protein_geometry_box_size(tmp_path):
+    local_root = Path(tmp_path) / "orchestrator_output"
+    prepared_pdb = local_root / "job_geo2" / "prepared" / "6lu7_prepared.pdb"
+    prepared_pdb.parent.mkdir(parents=True, exist_ok=True)
+    prepared_pdb.write_text(_mini_protein_pdb_text())
+
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(local_root / "job_geo2")
+    state_manager.save_parameters_checkpoint({"protein_id": "6lu7"}, source="initial_parse")
+    session.activate(
+        "job_geo2",
+        state_manager,
+        last_results={
+            "results": {
+                "prepare_protein": {
+                    "prepared_proteins": [
+                        {"pdb_path": "/app/orchestrator_output/job_geo2/prepared/6lu7_prepared.pdb"}
+                    ]
+                }
+            }
+        },
+    )
+
+    orchestrator = Mock(output_base=local_root)
+    changed = cli._handle_set_protein_geometry("box_size", session, orchestrator)
+
+    assert changed == {"box_size"}
+    params = state_manager.load_latest_parameters()
+    assert params["box_size"] == [11.0, 22.0, 33.0]
+
+
+def test_handle_set_protein_geometry_file_missing_on_disk(tmp_path):
+    """pdb_path is known but the file isn't actually there -> no-op, no crash."""
+    local_root = Path(tmp_path) / "orchestrator_output"
+
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(local_root / "job_geo3")
+    state_manager.save_parameters_checkpoint({"protein_id": "6lu7"}, source="initial_parse")
+    session.activate(
+        "job_geo3",
+        state_manager,
+        last_results={
+            "results": {
+                "prepare_protein": {
+                    "prepared_proteins": [
+                        {"pdb_path": "/app/orchestrator_output/job_geo3/prepared/6lu7_prepared.pdb"}
+                    ]
+                }
+            }
+        },
+    )
+
+    orchestrator = Mock(output_base=local_root)
+    changed = cli._handle_set_protein_geometry("center", session, orchestrator)
+    assert changed == set()
+
+
 def test_handle_search_ligand_updates_session_parameters(monkeypatch, tmp_path):
     """Searching ligands by name should persist selected component ID."""
     session = InteractiveSession()

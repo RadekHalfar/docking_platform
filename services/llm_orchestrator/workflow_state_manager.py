@@ -25,6 +25,7 @@ class WorkflowStateManager:
         self.job_dir.mkdir(parents=True, exist_ok=True)
 
         self.parameters_file = self.job_dir / "workflow_parameters.json"
+        self.draft_parameters_file = self.job_dir / "draft_parameters.json"
         self.state_file = self.job_dir / "workflow_state.json"
         self.manifest_file = self.job_dir / "workflow_manifest.json"
         self.manifest_lock_file = self.job_dir / ".workflow_manifest.lock"
@@ -171,6 +172,28 @@ class WorkflowStateManager:
         if isinstance(params, dict):
             return params
         return None
+
+    def save_draft_parameters(self, parameters: Dict[str, Any]) -> None:
+        """Persist in-progress parameter edits that haven't been run/checkpointed
+        yet. Unlike save_parameters_checkpoint, this is overwritten in place --
+        no new revision, no job.log entry -- so it never affects the redock diff
+        baseline (load_latest_parameters()) or the audit history."""
+        atomic_write_json(self.draft_parameters_file, {
+            "timestamp": self._timestamp(),
+            "parameters": parameters,
+        })
+
+    def load_draft_parameters(self) -> Optional[Dict[str, Any]]:
+        """Load the draft saved by save_draft_parameters(), if any."""
+        payload = self._load_json_file(self.draft_parameters_file)
+        if not payload:
+            return None
+        params = payload.get("parameters")
+        return params if isinstance(params, dict) else None
+
+    def clear_draft_parameters(self) -> None:
+        """Remove the draft once its edits are captured in a real checkpoint."""
+        self.draft_parameters_file.unlink(missing_ok=True)
 
     def load_latest_state(self) -> Optional[Dict[str, Any]]:
         """Load latest runtime state snapshot."""

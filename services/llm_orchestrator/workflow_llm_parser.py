@@ -135,6 +135,22 @@ def _extract_json_object(raw: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_VISUALIZATION_KEYWORDS = [
+    'visualiz', 'visualis', 'render', 'image', 'picture',
+    'photo', 'view', 'display', 'show', 'see results', 'create vis'
+]
+
+
+def _add_visualize_if_mentioned(user_input: str, services: List[str]) -> List[str]:
+    """Append 'visualize' to *services* if user_input mentions a visualization keyword."""
+    user_input_lower = user_input.lower()
+    if any(keyword in user_input_lower for keyword in _VISUALIZATION_KEYWORDS):
+        if 'visualize' not in services:
+            logger.info("Adding 'visualize' service based on keyword detection in user input")
+            services.append('visualize')
+    return services
+
+
 def parse_workflow_with_llm(llm_client: BaseLLMClient, user_input: str) -> Dict[str, Any]:
     """Parse natural language workflow request into structured format."""
     user_prompt = f"Parse this workflow request:\n\n{user_input}"
@@ -148,19 +164,106 @@ def parse_workflow_with_llm(llm_client: BaseLLMClient, user_input: str) -> Dict[
     logger.info(f"LLM parsed services: {parsed.get('services', [])}")
     logger.info(f"LLM parsed ligand_ids: {parsed.get('parameters', {}).get('ligand_ids', [])}")
 
-    visualization_keywords = [
-        'visualiz', 'visualis', 'render', 'image', 'picture',
-        'photo', 'view', 'display', 'show', 'see results', 'create vis'
-    ]
-    user_input_lower = user_input.lower()
-    if any(keyword in user_input_lower for keyword in visualization_keywords):
-        services = parsed.get('services', [])
-        if 'visualize' not in services:
-            logger.info("Adding 'visualize' service based on keyword detection in user input")
-            services.append('visualize')
-            parsed['services'] = services
+    parsed['services'] = _add_visualize_if_mentioned(user_input, parsed.get('services', []))
 
     return parsed
+
+
+_FOLLOWUP_SYSTEM_PROMPT = """You are continuing to build a molecular docking workflow across multiple chat turns. \
+The user already gave you some parameters in earlier turns; now they send one more message that adds to, \
+changes, or clarifies the workflow. Extract ONLY what this new message changes.
+
+Return strict JSON with this exact shape:
+{
+  "services_add": [],
+  "parameters": {}
+}
+
+Rules:
+1. "services_add" lists any NEW services this message implies (from: get_input_files, prepare_ligands,
+   prepare_protein, dock, visualize) that were not already active. Return [] if none.
+2. For scalar fields (protein_id, center, box_size, ph, exhaustiveness, cpu, population): include a field
+   in "parameters" ONLY if this message explicitly gives or changes that value. If the message does not
+   mention a field, OMIT it entirely — do not guess, repeat, or invent a value. Omitted fields keep their
+   previous value; you don't need to restate it.
+3. For ligand_ids: you are given the CURRENT ligand list already collected. Interpret this message against
+   that current list and return the COMPLETE resulting array (not just the newly added/removed part):
+   - "add"/"also"/"another"/"one more"/"plus" -> extend the current list with the new ligand(s), preserving
+     the ligands already present.
+   - "change"/"set"/"use"/"switch to"/"instead" (without "add") -> REPLACE the current list entirely with
+     the new one.
+   - "remove"/"drop"/"take out" -> remove the specified number of matching entries from the current list.
+   - Preserve exact multiplicity: "two ATP" means two entries, "three HEM" means three entries.
+   - If ligands are not mentioned at all in this message, OMIT "ligand_ids" from "parameters".
+4. Never invent, guess, or default center/box_size — only include them if explicit numeric [x, y, z] values
+   are stated in this message.
+5. Do not add explanations, only return the JSON.
+
+Examples:
+
+Current ligand_ids: ["ATP"]
+Message: "can you add one atp ligand?"
+Output: {"services_add": [], "parameters": {"ligand_ids": ["ATP", "ATP"]}}
+
+Current ligand_ids: ["ATP"]
+Message: "also add two HEM"
+Output: {"services_add": [], "parameters": {"ligand_ids": ["ATP", "HEM", "HEM"]}}
+
+Current ligand_ids: ["ATP", "ATP"]
+Message: "remove one ATP"
+Output: {"services_add": [], "parameters": {"ligand_ids": ["ATP"]}}
+
+Current ligand_ids: ["ATP"]
+Message: "change ligand to HEM"
+Output: {"services_add": [], "parameters": {"ligand_ids": ["HEM"]}}
+
+Current ligand_ids: ["ATP"]
+Message: "actually set pH to 6.5"
+Output: {"services_add": [], "parameters": {"ph": 6.5}}
+
+Current ligand_ids: ["ATP"]
+Message: "and render an image of the result"
+Output: {"services_add": ["visualize"], "parameters": {}}
+"""
+
+
+def parse_followup_with_llm(
+    llm_client: BaseLLMClient,
+    user_input: str,
+    current_parameters: Dict[str, Any],
+    current_services: List[str],
+) -> Dict[str, Any]:
+    """Extract what one follow-up chat message changes, given the workflow already
+    collected so far. Returns ``{"services_add": [...], "parameters": {...}}``
+    containing ONLY fields this message actually touches — callers merge the
+    result onto the prior state instead of replacing it.
+    """
+    user_prompt = (
+        f"Current ligand_ids: {current_parameters.get('ligand_ids', [])}\n"
+        f"Current parameters: {current_parameters}\n"
+        f"Current services: {current_services}\n\n"
+        f"New message:\n{user_input}"
+    )
+    response = llm_client.generate(user_prompt, system=_FOLLOWUP_SYSTEM_PROMPT, temperature=0.1)
+
+    parsed = _extract_json_object(response)
+    if parsed is None:
+        logger.error(f"No JSON found in follow-up response: {response}")
+        raise ValueError("No JSON found in LLM response")
+
+    parameters = parsed.get("parameters", {})
+    if not isinstance(parameters, dict):
+        parameters = {}
+
+    services_add = parsed.get("services_add", [])
+    if not isinstance(services_add, list):
+        services_add = []
+    services_add = _add_visualize_if_mentioned(user_input, services_add)
+
+    logger.info(f"LLM follow-up services_add: {services_add}")
+    logger.info(f"LLM follow-up parameters: {parameters}")
+
+    return {"services_add": services_add, "parameters": parameters}
 
 
 _FOLLOW_UP_QUESTION_SYSTEM = (

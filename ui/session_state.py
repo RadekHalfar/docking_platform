@@ -162,3 +162,11 @@ def apply_parsed_params(parsed_params: dict) -> None:
 
     if parsed_params.get("cpu") is not None:
         st.session_state["param_cpu"] = str(parsed_params["cpu"])
+
+
+def load_session_params(loaded_params: dict) -> None:
+    """Replace current params with a loaded session's checkpointed parameters,
+    syncing both st.session_state.params and the param_* widget pre-fill keys
+    (same mapping apply_parsed_params uses)."""
+    st.session_state.params = {}
+    apply_parsed_params(loaded_params)

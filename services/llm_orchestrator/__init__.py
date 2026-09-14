@@ -17,6 +17,7 @@ from .llm_adapters import (
 from .llm_factory import create_llm_client
 from .workflow_llm_parser import (
     parse_workflow_with_llm,
+    parse_followup_with_llm,
     generate_llm_follow_up_question,
     extract_updates_with_llm,
     extract_box_source_choice_with_llm,
@@ -50,6 +51,7 @@ __all__ = [
     'MetaCentrumAdapter',
     'create_llm_client',
     'parse_workflow_with_llm',
+    'parse_followup_with_llm',
     'generate_llm_follow_up_question',
     'extract_updates_with_llm',
     'extract_box_source_choice_with_llm',

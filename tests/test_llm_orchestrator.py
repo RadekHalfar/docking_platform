@@ -18,6 +18,7 @@ from services.llm_orchestrator import (
     WorkflowStateManager,
     create_llm_client,
     parse_workflow_with_llm,
+    parse_followup_with_llm,
     extract_box_source_choice_with_llm,
 )
 from services.llm_orchestrator.workflow_definition import (
@@ -101,6 +102,99 @@ class TestLLMArchitecture:
             result = parse_workflow_with_llm(llm_client, "Download 6lu7 and ATP, then render image")
 
         assert "visualize" in result["services"]
+
+    def test_parse_followup_with_llm_adds_ligand_onto_existing_list(self):
+        """A follow-up 'add one X' should return the full merged ligand list."""
+        followup_json = {
+            "services_add": [],
+            "parameters": {"ligand_ids": ["ATP", "ATP"]}
+        }
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(followup_json)):
+            result = parse_followup_with_llm(
+                llm_client,
+                "can you add one atp ligand?",
+                current_parameters={
+                    "protein_id": "6lu7",
+                    "ligand_ids": ["ATP"],
+                    "center": [10.0, 20.0, 30.0],
+                    "box_size": [25.0, 30.0, 35.0],
+                },
+                current_services=["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+            )
+
+        assert result["parameters"]["ligand_ids"] == ["ATP", "ATP"]
+        assert result["services_add"] == []
+
+    def test_parse_followup_with_llm_omits_untouched_fields(self):
+        """Fields the follow-up message doesn't mention must be absent from the delta,
+        so the caller's merge keeps the prior value instead of losing it."""
+        followup_json = {
+            "services_add": [],
+            "parameters": {"ph": 6.5}
+        }
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(followup_json)):
+            result = parse_followup_with_llm(
+                llm_client,
+                "actually set pH to 6.5",
+                current_parameters={
+                    "protein_id": "6lu7",
+                    "ligand_ids": ["ATP"],
+                    "center": [10.0, 20.0, 30.0],
+                    "box_size": [25.0, 30.0, 35.0],
+                },
+                current_services=["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+            )
+
+        assert result["parameters"] == {"ph": 6.5}
+        assert "protein_id" not in result["parameters"]
+        assert "center" not in result["parameters"]
+        assert "ligand_ids" not in result["parameters"]
+
+    def test_parse_followup_with_llm_visualization_fallback(self):
+        """Visualization keyword fallback should apply to follow-up turns too."""
+        followup_json = {"services_add": [], "parameters": {}}
+
+        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
+        with patch.object(llm_client, "generate", return_value=json.dumps(followup_json)):
+            result = parse_followup_with_llm(
+                llm_client,
+                "and render an image of the result",
+                current_parameters={"protein_id": "6lu7", "ligand_ids": ["ATP"]},
+                current_services=["get_input_files", "dock"],
+            )
+
+        assert "visualize" in result["services_add"]
+
+    def test_chat_followup_merge_preserves_prior_params(self):
+        """End-to-end: merging a follow-up delta onto prior state should keep
+        already-known params, matching what ui.app._on_chat_submit does."""
+        parser = WorkflowParser()
+        prior = parser.validate_workflow({
+            "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+            "parameters": {
+                "protein_id": "6lu7",
+                "ligand_ids": ["ATP"],
+                "center": [10.0, 20.0, 30.0],
+                "box_size": [25.0, 30.0, 35.0],
+            },
+        })
+        assert prior["missing_required"] == []
+
+        delta = {"services_add": [], "parameters": {"ligand_ids": ["ATP", "ATP"]}}
+        services = list(dict.fromkeys(prior["services"] + delta["services_add"]))
+        parameters = {**prior["parameters"], **delta["parameters"]}
+
+        merged = parser.validate_workflow({"services": services, "parameters": parameters})
+
+        assert merged["parameters"]["protein_id"] == "6lu7"
+        assert merged["parameters"]["center"] == [10.0, 20.0, 30.0]
+        assert merged["parameters"]["box_size"] == [25.0, 30.0, 35.0]
+        assert merged["parameters"]["ligand_ids"] == ["ATP", "ATP"]
+        assert merged["missing_required"] == []
 
     def test_extract_box_source_choice_with_llm(self):
         """LLM classifier should map responses to manual/pymol choices."""

@@ -258,6 +258,55 @@ def test_next_revision_is_safe_under_concurrent_writers(mgr):
 
 
 # ---------------------------------------------------------------------------
+# Draft parameters -- unconfirmed edits, separate from the revisioned
+# checkpoint/audit system
+# ---------------------------------------------------------------------------
+
+def test_load_draft_parameters_returns_none_when_none_saved(mgr):
+    assert mgr.load_draft_parameters() is None
+
+
+def test_save_and_load_draft_parameters_round_trips(mgr):
+    mgr.save_draft_parameters(PARAMS_A)
+    assert mgr.load_draft_parameters() == PARAMS_A
+
+
+def test_save_draft_parameters_overwrites_in_place(mgr):
+    mgr.save_draft_parameters(PARAMS_A)
+    mgr.save_draft_parameters(PARAMS_B)
+    assert mgr.load_draft_parameters() == PARAMS_B
+
+
+def test_clear_draft_parameters_removes_it(mgr):
+    mgr.save_draft_parameters(PARAMS_A)
+    mgr.clear_draft_parameters()
+    assert mgr.load_draft_parameters() is None
+
+
+def test_clear_draft_parameters_is_a_noop_when_nothing_to_clear(mgr):
+    mgr.clear_draft_parameters()  # must not raise
+    assert mgr.load_draft_parameters() is None
+
+
+def test_draft_parameters_do_not_bump_revision_or_appear_in_history(mgr):
+    """The draft must stay outside the audit/revision system entirely --
+    that's what makes it safe to write on every casual edit without either
+    spamming job.log or corrupting the redock diff baseline
+    (load_latest_parameters(), which only ever reflects real checkpoints)."""
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    before_revision = mgr.get_current_revision()
+    before_history_len = len(mgr.list_revisions())
+
+    mgr.save_draft_parameters(PARAMS_B)
+
+    assert mgr.get_current_revision() == before_revision
+    assert len(mgr.list_revisions()) == before_history_len
+    # The real checkpoint (used for the redock diff) is untouched by the draft.
+    assert mgr.load_latest_parameters() == PARAMS_A
+    assert mgr.load_draft_parameters() == PARAMS_B
+
+
+# ---------------------------------------------------------------------------
 # job.log (Stage 11.1)
 # ---------------------------------------------------------------------------
 

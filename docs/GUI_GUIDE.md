@@ -5,6 +5,11 @@ served at http://localhost:3000 by the `ui` service in `docker-compose.yml`.
 It has three panels — Chat, Input & Parameters, Results — plus a sidebar for
 LLM settings and session history.
 
+Whenever a session is active, the Chat panel shows a small **Session:
+name (`job_id`)** line above the "Chat" title, so it stays clear which
+session you're currently in — this disappears once you click **New
+Session**/**Reset** or before you've started a first session.
+
 ## Prerequisites
 
 - Docker Desktop
@@ -46,6 +51,23 @@ resets Streamlit's in-memory session — and a container restart).
 To reset to the values from `.env` / `docker-compose.yml`, delete
 `cache/.docking_platform_settings.json` and refresh the page.
 
+## Chat: Describing Your Workflow
+
+Type a request into the chat box (e.g. "Download 6lu7 and dock ATP with
+center 10 20 30 box 25 30 35") and the LLM extracts protein/ligand/box
+parameters into the Input & Parameters panel, telling you what's still
+missing if anything is.
+
+Follow-up messages in the same chat build on what's already been
+collected rather than starting over — e.g. after the message above,
+"can you add one atp ligand?" adds a second `ATP` to the existing ligand
+list (`["ATP", "ATP"]`) and keeps the protein/center/box you already
+gave, instead of forgetting them. Phrasing like "change ligand to HEM"
+replaces the list instead of adding to it, and "remove one ATP" removes
+one. This follow-up parsing only kicks in once something has already
+been extracted in the current chat — the very first message in a chat is
+always parsed as a complete, standalone request.
+
 ## Naming a Session
 
 The **Input & Parameters** panel has an optional **Session name** field, just
@@ -83,6 +105,22 @@ brand-new, unrelated session — it redocks the same one.
   every redock — the results panel and downloads always reflect the full
   history, not just the most recent partial run.
 
+## Saving Parameters Without Docking
+
+Editing a parameter (e.g. the docking box size) does **not** persist to
+disk by itself — it only lives in the form until you either click **Run
+Docking** (which checkpoints it as part of starting or redocking) or
+click **Save Session**, next to **Run Docking**. **Save Session** writes
+your current form values to disk as a draft without running or
+redocking anything, so they survive switching to a different session
+(**Load**) and back. It's disabled when there's no active session to
+save into, and reports "No parameter changes to save" if nothing
+actually changed.
+
+If you edit a parameter and switch sessions **without** clicking **Save
+Session** first, that edit is lost, the same as before this button
+existed — it's an explicit, not automatic, save.
+
 ## Starting Fresh: New Session vs. Reset
 
 Once a session is active, the button row next to **Run Docking** offers two
@@ -117,9 +155,13 @@ every page load, so it reflects sessions run from the GUI or the CLI
   parameter, say) instead of only viewing it read-only. This also means a
   browser refresh followed by **Load** picks a session back up exactly where
   you left off, rather than starting a new one on the next "Run Docking".
-  Every **Load** button is disabled while this browser tab has a session
-  actively running — switching sessions mid-run would leave the running one
-  orphaned in the background, same as New Session/Reset above.
+  It also restores that session's parameters into the **Current
+  parameters** panel and the input widgets (preferring anything saved via
+  **Save Session** over the last checkpoint, if the two differ), and the
+  session indicator above the chat updates to it. Every **Load** button
+  is disabled while this browser tab has a session actively running —
+  switching sessions mid-run would leave the running one orphaned in the
+  background, same as New Session/Reset above.
 - A **Rename** button — toggles an inline text field to change the
   session's name after the fact (e.g. once you know which run turned out to
   matter). Click **Save** to write the new name straight into that session's

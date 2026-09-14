@@ -16,7 +16,10 @@ from services.llm_orchestrator.rerun_planner import (
     describe_rerun_plan,
     missing_required_params,
 )
-from services.llm_orchestrator.workflow_llm_parser import parse_workflow_with_llm
+from services.llm_orchestrator.workflow_llm_parser import (
+    parse_followup_with_llm,
+    parse_workflow_with_llm,
+)
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
@@ -29,6 +32,7 @@ from ui.session_state import (
     apply_settings,
     get_params,
     init,
+    load_session_params,
     start_new_session,
 )
 
@@ -125,7 +129,22 @@ def _on_chat_submit(user_message: str) -> None:
     st.session_state.messages.append({"role": "user", "content": user_message})
     with st.spinner("Parsing with LLM..."):
         try:
-            parsed = parse_workflow_with_llm(st.session_state.llm_client, user_message)
+            prior = st.session_state.parser.parsed_workflow
+            if prior and prior.get("parameters"):
+                delta = parse_followup_with_llm(
+                    st.session_state.llm_client,
+                    user_message,
+                    current_parameters=prior["parameters"],
+                    current_services=prior.get("services", []),
+                )
+                services = list(dict.fromkeys(
+                    prior.get("services", []) + delta.get("services_add", [])
+                ))
+                parameters = {**prior["parameters"], **delta.get("parameters", {})}
+                parsed = {"services": services, "parameters": parameters}
+            else:
+                parsed = parse_workflow_with_llm(st.session_state.llm_client, user_message)
+
             validated = st.session_state.parser.validate_workflow(parsed)
             apply_parsed_params(validated["parameters"])
 
@@ -199,6 +218,7 @@ def _handle_run_docking() -> None:
 
     state_manager = WorkflowStateManager(OUTPUT_BASE / job_id)
     state_manager.save_parameters_checkpoint(validated["parameters"], source="initial_parse")
+    state_manager.clear_draft_parameters()
     session.activate(job_id, state_manager)
 
     bridge = OrchestratorBridge()
@@ -210,6 +230,28 @@ def _handle_run_docking() -> None:
     st.session_state.messages.append(
         {"role": "assistant", "content": f"Starting docking session `{job_id}`..."}
     )
+    st.rerun()
+
+
+def _handle_save_session() -> None:
+    """Persist the current form's parameter edits as a draft, without
+    running/redocking anything. Lets edits (e.g. a box-size tweak) survive
+    switching to a different session and back."""
+    session = st.session_state.interactive_session
+    if not session.has_active_job():
+        return
+    form_params = _collect_form_params()
+    st.session_state.params.update(form_params)
+    checkpointed = session.state_manager.load_latest_parameters() or {}
+    if not compute_changed_params(checkpointed, form_params):
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "No parameter changes to save."}
+        )
+    else:
+        session.state_manager.save_draft_parameters(st.session_state.params)
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Parameters saved. Click **Run Docking** to apply them."}
+        )
     st.rerun()
 
 
@@ -231,6 +273,7 @@ def _handle_redock_request(session, params: dict) -> None:
         return
 
     session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
+    session.state_manager.clear_draft_parameters()
 
     original_services = (session.last_results or {}).get("services_executed", [])
     steps = compute_rerun_steps(changed, original_services=original_services)
@@ -427,6 +470,25 @@ def _resume_session(job: dict) -> None:
     """
     st.session_state.viewed_job_id = job["job_id"]
     state_manager = WorkflowStateManager(Path(job["job_dir"]))
+    # Populate the "Current parameters" panel (and its param_* widgets) from
+    # the job's saved parameters -- without this, the panel stays empty
+    # after a Load since nothing else in this function touches
+    # st.session_state.params. A draft (saved via "Save Session" without
+    # docking) takes priority over the last real checkpoint since it's
+    # strictly newer.
+    loaded_params = state_manager.load_draft_parameters() or state_manager.load_latest_parameters()
+    if loaded_params:
+        load_session_params(loaded_params)
+        # Seed parser.parsed_workflow so a chat follow-up sent right after
+        # this Load merges onto these parameters instead of being treated
+        # as a brand-new workflow (see parse_followup_with_llm usage in
+        # _on_chat_submit).
+        st.session_state.parser.validate_workflow(
+            {
+                "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+                "parameters": loaded_params,
+            }
+        )
     last_results = _load_workflow_results(job["job_id"])
     st.session_state.interactive_session.activate(
         job["job_id"], state_manager, last_results=last_results
@@ -608,6 +670,9 @@ def _render_failed_session_history() -> None:
 # ── Chat panel ────────────────────────────────────────────────────────────────
 
 def render_chat() -> None:
+    job_id = st.session_state.get("job_id")
+    if job_id:
+        st.caption(f"Session: {_job_label(job_id, st.session_state.get('job_name'))}")
     st.subheader("Chat")
 
     # Stream progress lines from a running job into the last assistant message.
@@ -788,10 +853,18 @@ def render_parameters_panel() -> None:
         # desync the sidebar's running-job guards for it (see
         # _active_bridge_job_id docstring).
         running_job = _active_bridge_job_id()
-        col_run, col_new, col_reset = st.columns(3)
+        col_run, col_save, col_new, col_reset = st.columns(4)
         with col_run:
             if st.button("Run Docking", type="primary", use_container_width=True):
                 _handle_run_docking()
+        with col_save:
+            if st.button(
+                "Save Session",
+                use_container_width=True,
+                disabled=not st.session_state.interactive_session.has_active_job(),
+                help="Save current parameters without docking.",
+            ):
+                _handle_save_session()
         with col_new:
             if st.button(
                 "New Session",

@@ -33,7 +33,12 @@ calls `session.activate(job_id, state_manager, last_results=...)`, so a
 session picked up after a browser refresh (which resets Streamlit's
 in-memory state entirely) can be redocked immediately rather than only
 viewed read-only — see
-[docs/GUI_GUIDE.md](GUI_GUIDE.md#session-history). Stage 11.3 also added a
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#session-history). An unplanned fix
+(2026-09-14, see `dev_plan.md`'s Phase 11 changelog) made this also
+restore `st.session_state.params` and the parameter widgets from that
+job's saved parameters (draft or checkpoint, see `draft_parameters.json`
+below) — before that fix, Load only resumed the job/results state, not
+the displayed parameters. Stage 11.3 also added a
 **Stop** button (cooperative cancellation, checked between steps —
 see `WorkflowOrchestrator.execute_workflow`'s `cancel_event` parameter) that
 persists a new `"cancelled"` workflow status alongside the existing
@@ -65,6 +70,19 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
 - `workflow_manifest.json`
   - monotonic revision counter and event log
   - includes `current_revision`, `events[]`
+- `draft_parameters.json` (unplanned fix, 2026-09-14 — see `dev_plan.md`'s
+  Phase 11 changelog)
+  - in-progress parameter edits saved via the GUI's **Save Session**
+    button, before any Run Docking/redock. Deliberately outside the
+    revision/manifest system: written via
+    `save_draft_parameters()`/read via `load_draft_parameters()`/removed
+    via `clear_draft_parameters()`, with no `job.log` entry and no
+    revision bump — so it can't spam the audit history, and can't
+    interfere with `_handle_redock_request()`'s diff, which always
+    compares against `load_latest_parameters()` (the real checkpoint)
+    regardless of whether a draft exists. `_resume_session()` prefers
+    this file over `workflow_parameters.json` when both are present; it's
+    deleted the next time a real checkpoint is saved for that job.
 - `checkpoints/rev_XXXXXX_parameters.json`
   - immutable snapshot for each parameter update revision
 - `checkpoints/rev_XXXXXX_state.json`

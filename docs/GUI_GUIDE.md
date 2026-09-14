@@ -175,9 +175,18 @@ Once a session's results are showing, you get:
   window so a long chart doesn't push the 3D viewer down the page.
 - An in-browser **3Dmol.js** viewer (no PyMOL, no noVNC — renders entirely
   client-side): the prepared receptor as cartoon, and each docked ligand as
-  colored sticks (green = best affinity, red = worst). If a ligand has more
-  than one docked pose, a **pose** dropdown next to the viewer switches which
-  mode is shown, labeled with that pose's affinity.
+  colored sticks (green = best affinity, red = worst).
+- A **Session Log** expander directly below the viewer (running, completed,
+  or failed/cancelled) — the last ~500 lines of `job.log`, the same
+  human-readable narration the CLI's interactive session writes (start/step/
+  finish lines, parameter diffs, full tracebacks on failure), plus a button
+  to download the whole file. When a session has no visualization yet (still
+  running, or failed before the `visualize` step), the log still appears in
+  this same spot — it isn't skipped just because there's nothing to render
+  above it.
+- If a ligand has more than one docked pose, a **Pose per ligand** dropdown
+  below the log switches which mode is shown in the viewer above, labeled
+  with that pose's affinity.
 - A **Docked Poses** download section: a single **Download format** picker
   (`pdbqt` / `pdb` / `sdf` / `mol2`, defaulting to `pdbqt` — Moldina's native
   output) applies to every ligand's download button, so you can grab the
@@ -188,11 +197,6 @@ Once a session's results are showing, you get:
   particular ligand.
 - An **Other Files** section below it for anything else in the session's
   directory (e.g. `workflow_results.json`).
-- A **Session Log** expander (running, completed, or failed/cancelled) —
-  the last ~500 lines of `job.log`, the same human-readable narration the
-  CLI's interactive session writes (start/step/finish lines, parameter
-  diffs, full tracebacks on failure), plus a button to download the whole
-  file.
 
 ### Picking the Docking Box Visually
 

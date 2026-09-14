@@ -1223,7 +1223,6 @@ def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, li
         _render_affinity_chart(result)
         _render_visualization(result, job_id)
         _render_file_downloads(result, job_id)
-        _render_job_log(job_id)
         return True
 
     if status in ("failed", "cancelled"):
@@ -1315,10 +1314,12 @@ def _render_visualization(result: dict, job_id: str) -> None:
     viz = result.get("results", {}).get("visualize", {})
     raw_receptor = viz.get("receptor_pdb")
     if not raw_receptor:
+        _render_job_log(job_id)
         return
     receptor_path = _resolve_container_path(raw_receptor)
     if not receptor_path.exists():
         st.caption("Receptor structure not found on disk.")
+        _render_job_log(job_id)
         return
     receptor_pdb = _read_file_bytes(
         str(receptor_path), receptor_path.stat().st_mtime
@@ -1366,6 +1367,8 @@ def _render_visualization(result: dict, job_id: str) -> None:
         ligands[ligand_id] = {"sdf": records[pose_index], "affinity": affinity}
 
     render_mol_viewer(receptor_pdb, ligands, mode="view", height=550, key=f"mol_viewer_{job_id}")
+
+    _render_job_log(job_id)
 
     if multi_pose:
         st.caption("Pose per ligand")

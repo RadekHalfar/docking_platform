@@ -277,9 +277,10 @@ ligands, no docking yet), then the same 3Dmol.js viewer appears with:
 - **Box size X/Y/Z** number inputs — resize the search box live; the +/-
   buttons step by a whole Å at a time.
 - Click any receptor atom to set the box **center** — a red marker and label
-  show what you clicked, and a live, mostly transparent box overlay (plus a
-  wireframe outline) shows the resulting search region without hiding the
-  protein inside it.
+  show what you clicked, and a live blue box outline shows the resulting
+  search region. Residues inside the box are highlighted (orange cartoon
+  plus thin side-chain sticks) so you can see exactly which part of the
+  protein will be searched.
 - Red/green/blue arrows from the box center, labeled **X**/**Y**/**Z**,
   show which box edge each Box size field controls.
 

@@ -85,8 +85,11 @@
     }
 
     var receptorModel = viewer.addModel(receptorPdb, "pdb");
+    // Box picker: keep the cartoon fully opaque. A translucent cartoon joins
+    // 3Dmol's unsorted transparent pass and gets hidden behind (or inside)
+    // any other transparent shape drawn first.
     viewer.setStyle({ model: receptorModel }, {
-      cartoon: { color: "gray", opacity: 0.85 },
+      cartoon: { color: "gray", opacity: mode === "box_picker" ? 1.0 : 0.85 },
     });
 
     // Ligand poses: {ligand_id: {sdf: str, affinity: number|null}}
@@ -123,20 +126,49 @@
       var boxSize = args.boxSize || [20, 20, 20];
 
       if (center) {
-        // Very translucent fill so the protein inside stays visible, plus a
-        // crisp wireframe outline (3Dmol doesn't support both in one addBox
-        // call) so the box boundary is still easy to locate.
-        viewer.addBox({
-          center: { x: center[0], y: center[1], z: center[2] },
-          dimensions: { w: boxSize[0], h: boxSize[1], d: boxSize[2] },
-          color: "blue",
-          opacity: 0.12,
-        });
-        viewer.addBox({
-          center: { x: center[0], y: center[1], z: center[2] },
-          dimensions: { w: boxSize[0], h: boxSize[1], d: boxSize[2] },
-          color: "blue",
-          wireframe: true,
+        var hx = boxSize[0] / 2, hy = boxSize[1] / 2, hz = boxSize[2] / 2;
+
+        // Residues with any atom inside the box: orange cartoon + thin
+        // sticks, so the region that will actually be docked into stands out.
+        var insideBox = function (atom) {
+          return Math.abs(atom.x - center[0]) <= hx &&
+            Math.abs(atom.y - center[1]) <= hy &&
+            Math.abs(atom.z - center[2]) <= hz;
+        };
+        viewer.setStyle(
+          { model: receptorModel, predicate: insideBox, byres: true },
+          {
+            cartoon: { color: "orange" },
+            stick: { radius: 0.12, colorscheme: "grayCarbon" },
+          }
+        );
+
+        // Box outline as 12 opaque cylinder edges instead of a filled
+        // translucent box: a transparent fill hides whatever is drawn after
+        // it (3Dmol doesn't depth-sort transparent objects), and wireframe
+        // lines are 1px in WebGL, too thin to see. Cylinders are always
+        // visible and never cover the protein.
+        var corner = function (sx, sy, sz) {
+          return { x: center[0] + sx * hx, y: center[1] + sy * hy, z: center[2] + sz * hz };
+        };
+        var edges = [
+          // 4 edges along X, then Y, then Z
+          [[-1, -1, -1], [1, -1, -1]], [[-1, 1, -1], [1, 1, -1]],
+          [[-1, -1, 1], [1, -1, 1]], [[-1, 1, 1], [1, 1, 1]],
+          [[-1, -1, -1], [-1, 1, -1]], [[1, -1, -1], [1, 1, -1]],
+          [[-1, -1, 1], [-1, 1, 1]], [[1, -1, 1], [1, 1, 1]],
+          [[-1, -1, -1], [-1, -1, 1]], [[1, -1, -1], [1, -1, 1]],
+          [[-1, 1, -1], [-1, 1, 1]], [[1, 1, -1], [1, 1, 1]],
+        ];
+        edges.forEach(function (e) {
+          viewer.addCylinder({
+            start: corner(e[0][0], e[0][1], e[0][2]),
+            end: corner(e[1][0], e[1][1], e[1][2]),
+            radius: 0.15,
+            color: "#1f4fd8",
+            fromCap: 1,
+            toCap: 1,
+          });
         });
         viewer.addSphere({
           center: { x: center[0], y: center[1], z: center[2] },

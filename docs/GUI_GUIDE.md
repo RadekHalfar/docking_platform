@@ -274,10 +274,19 @@ Docking Box Visually** control: click **Load receptor for box picking** to
 run just enough of the workflow to fetch and prepare the receptor (no
 ligands, no docking yet), then the same 3Dmol.js viewer appears with:
 
-- **Box size X/Y/Z** sliders — resize the search box live.
+- **Box size X/Y/Z** number inputs — resize the search box live; the +/-
+  buttons step by a whole Å at a time.
 - Click any receptor atom to set the box **center** — a red marker and label
-  show what you clicked, and a live translucent box overlay shows the
-  resulting search region.
+  show what you clicked, and a live, mostly transparent box overlay (plus a
+  wireframe outline) shows the resulting search region without hiding the
+  protein inside it.
+- Red/green/blue arrows from the box center, labeled **X**/**Y**/**Z**,
+  show which box edge each Box size field controls.
+
+If the **Docking Box** fields already have a valid center and size (from a
+previous pick, manual entry, or a chat geometry command), the box and axis
+arrows appear immediately when the receptor loads — no click needed just
+to see what's already set.
 
 The picked center and size are written straight into the same
 **Docking Box** center/box-size fields used by manual entry, so **Run

@@ -153,25 +153,21 @@ def _find_receptor_pdb_for_geometry() -> Path | None:
     return resolved if resolved.exists() else None
 
 
-def _handle_protein_geometry_command(target: str) -> None:
-    """Compute center/box_size from the loaded protein's bounding box and
-    apply it, in response to a "set box center as protein center" / "look
-    across all protein" chat command -- see
-    ``detect_protein_geometry_command()``."""
-    receptor_path = _find_receptor_pdb_for_geometry()
-    if receptor_path is None:
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": (
-                    "I don't have a protein loaded yet. Set a protein first "
-                    "(click **Run Docking**, or **Load receptor for box "
-                    "picking**), then ask again."
-                ),
-            }
-        )
-        return
+def _apply_protein_geometry(receptor_path: Path, target: str) -> None:
+    """Compute center/box_size from *receptor_path*'s bounding box, apply it
+    to the manual Docking Box fields and the box picker's own viewer state,
+    and report the result in chat.
 
+    Shared by the immediate path (a receptor is already prepared) and the
+    deferred path (``_render_box_picker()``'s bridge-completion handling,
+    once a just-started fetch/prepare job finishes). Syncing the picker's
+    state here too (not just the manual fields) matters for the immediate
+    path specifically: no bridge transition happens there, so
+    ``_render_box_picker()``'s completion handling -- the only other place
+    that seeds the picker -- never runs; without this the box picker's
+    viewer would keep showing a stale/no box after a geometry command even
+    though the manual fields were updated correctly.
+    """
     try:
         pdb_text = _read_file_bytes(
             str(receptor_path), receptor_path.stat().st_mtime
@@ -192,7 +188,44 @@ def _handle_protein_geometry_command(target: str) -> None:
             f"Box size set to ({box_size[0]}, {box_size[1]}, {box_size[2]}) "
             "to cover the whole protein (+10% margin)."
         )
+    _sync_picker_box_from_manual_inputs()
     st.session_state.messages.append({"role": "assistant", "content": message})
+
+
+def _handle_protein_geometry_command(target: str) -> None:
+    """Compute center/box_size from the loaded protein's bounding box and
+    apply it, in response to a "set box center as protein center" / "look
+    across all protein" chat command -- see
+    ``detect_protein_geometry_command()``.
+
+    If no protein has been fetched/prepared yet but the form already has
+    enough to do that (a protein source is set), this kicks off the same
+    background get_input_files+prepare_protein job "Load receptor for box
+    picking" uses, via ``_start_box_picker_prep()``, and stashes *target* in
+    ``_pending_geometry_target`` -- ``_render_box_picker()``'s
+    bridge-completion handling applies it once that job completes --
+    instead of failing outright. This is what makes the geometry commands
+    usable on a first message, before any button has been clicked.
+    """
+    receptor_path = _find_receptor_pdb_for_geometry()
+    if receptor_path is not None:
+        _apply_protein_geometry(receptor_path, target)
+        return
+
+    started, message, _severity = _start_box_picker_prep()
+    if started:
+        st.session_state["_pending_geometry_target"] = target
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": (
+                    "I don't have the protein ready yet — fetching and "
+                    "preparing it now, then I'll set this."
+                ),
+            }
+        )
+    else:
+        st.session_state.messages.append({"role": "assistant", "content": message})
 
 
 def _on_chat_submit(user_message: str) -> None:
@@ -1124,9 +1157,73 @@ def _mirror_box_to_manual_inputs(center: list, box_size: list) -> None:
     st.session_state["param_box_z"] = f"{box_size[2]:.3f}"
 
 
-def _handle_pick_box() -> None:
-    """Run just enough of the workflow (download + prepare_protein) to get a
-    receptor PDB to show in the box picker -- no ligands/docking needed yet."""
+def _sync_picker_box_from_manual_inputs() -> None:
+    """Unconditionally mirror the manual Docking Box fields into the box
+    picker's own center/size state (``picked_center`` / ``picker_box_x/y/z``
+    / ``_box_picker_last_size``).
+
+    The picker keeps this as separate state (rather than reading the manual
+    fields directly) because it's also written the other way -- clicking an
+    atom in the 3D viewer sets ``picked_center`` first and mirrors it out to
+    the manual fields (``_mirror_box_to_manual_inputs``). Anything that
+    changes the manual fields *without* going through the picker (a chat
+    geometry command, applying LLM-parsed parameters) has to push the
+    update here explicitly too, or the viewer silently keeps showing the
+    old box -- see ``_apply_protein_geometry``, which calls this after
+    updating either field so the viewer reflects a geometry command
+    immediately regardless of whether the receptor it read was already
+    loaded or was just fetched for that command.
+    """
+    try:
+        center = [
+            float(st.session_state.get("param_center_x", "")),
+            float(st.session_state.get("param_center_y", "")),
+            float(st.session_state.get("param_center_z", "")),
+        ]
+        st.session_state["picked_center"] = center
+    except (ValueError, TypeError):
+        pass
+
+    try:
+        box_size = [
+            float(st.session_state.get("param_box_x", "")),
+            float(st.session_state.get("param_box_y", "")),
+            float(st.session_state.get("param_box_z", "")),
+        ]
+        st.session_state["picker_box_x"] = box_size[0]
+        st.session_state["picker_box_y"] = box_size[1]
+        st.session_state["picker_box_z"] = box_size[2]
+        st.session_state["_box_picker_last_size"] = box_size
+    except (ValueError, TypeError):
+        pass
+
+
+def _seed_picker_box_from_manual_inputs() -> None:
+    """If the manual Docking Box fields already hold a valid center/size
+    (from a previous pick, manual entry, or a chat geometry command) and
+    the picker has no center yet, seed the picker's widget/session state
+    from them so the box is visible immediately on load instead of only
+    after a click.
+
+    Guarded (unlike ``_sync_picker_box_from_manual_inputs``) because this
+    runs on every receptor load and must not clobber a center the user
+    already picked by clicking in the 3D viewer.
+    """
+    if st.session_state.get("picked_center") is not None:
+        return
+    _sync_picker_box_from_manual_inputs()
+
+
+def _start_box_picker_prep() -> tuple[bool, str | None, str]:
+    """Validate params and start the background get_input_files +
+    prepare_protein job that fetches/prepares a receptor for box picking.
+
+    Returns ``(started, message, severity)``. On success ``started`` is
+    True and ``message`` is None. On failure ``started`` is False and
+    ``message``/``severity`` ("error" or "warning") describe why, for the
+    caller to surface however fits its UI (an inline st.error/st.warning
+    for the button, a chat reply for the geometry auto-fetch below).
+    """
     form_params = _collect_form_params()
     st.session_state.params.update(form_params)
     params = st.session_state.params.copy()
@@ -1137,13 +1234,11 @@ def _handle_pick_box() -> None:
             {"services": prep_services, "parameters": params}
         )
     except Exception as exc:
-        st.error(f"Validation error: {exc}")
-        return
+        return False, f"Validation error: {exc}", "error"
 
     missing = validated.get("missing_required", [])
     if missing:
-        st.warning(f"Provide a protein source first — missing: {', '.join(missing)}")
-        return
+        return False, f"Provide a protein source first — missing: {', '.join(missing)}", "warning"
 
     job_id = generate_job_id()
     st.session_state["_box_picker_job_id"] = job_id
@@ -1152,7 +1247,18 @@ def _handle_pick_box() -> None:
     bridge = OrchestratorBridge()
     bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), services=prep_services)
     st.session_state.box_picker_bridge = bridge
-    st.rerun()
+    return True, None, ""
+
+
+def _handle_pick_box() -> None:
+    """Button handler for "Load receptor for box picking"."""
+    started, message, severity = _start_box_picker_prep()
+    if started:
+        st.rerun()
+    elif severity == "error":
+        st.error(message)
+    else:
+        st.warning(message)
 
 
 def _render_box_picker() -> None:
@@ -1167,17 +1273,49 @@ def _render_box_picker() -> None:
     if bridge and not bridge.is_running():
         error = bridge.get_error()
         result = bridge.get_result()
+        # A geometry chat command ("use protein center...") may have started
+        # this very job (no receptor was loaded yet) -- pop its target now
+        # so it's resolved (or reported as failed) exactly once, however
+        # this job turns out.
+        pending_target = st.session_state.pop("_pending_geometry_target", None)
         if error:
             st.error(f"Could not prepare receptor: {error}")
+            if pending_target:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Could not fetch the protein: {error}"}
+                )
         elif result and result.get("status") == "completed":
             pdb_path = resolve_prepared_protein_pdb_path(result)
             if pdb_path:
                 st.session_state["_box_picker_receptor_pdb"] = pdb_path
+                if pending_target:
+                    _apply_protein_geometry(_resolve_container_path(pdb_path), pending_target)
+                _seed_picker_box_from_manual_inputs()
             else:
                 st.error("Receptor was prepared but no PDB path was returned.")
+                if pending_target:
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "Receptor was prepared but no PDB path was returned -- could not set this.",
+                        }
+                    )
         elif result and result.get("status") == "failed":
-            st.error("Could not prepare receptor: " + "; ".join(result.get("errors", [])))
+            failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
+            st.error("Could not prepare receptor: " + failure_detail)
+            if pending_target:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Could not fetch the protein: {failure_detail}"}
+                )
         st.session_state.box_picker_bridge = None
+        # The chat column already rendered this run, and with the bridge
+        # cleared the bottom-of-page polling rerun won't fire -- rerun once so
+        # the reply appended above actually shows up (this also lets the
+        # picker_box_* values written by _apply_protein_geometry settle
+        # before their number_inputs render, avoiding Streamlit's
+        # default-value-vs-Session-State warning).
+        if pending_target:
+            st.rerun()
 
     receptor_raw = st.session_state.get("_box_picker_receptor_pdb")
     if not receptor_raw:
@@ -1198,11 +1336,11 @@ def _render_box_picker() -> None:
 
     s1, s2, s3 = st.columns(3)
     with s1:
-        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=1.0)
+        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=1.0, step=1.0)
     with s2:
-        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=1.0)
+        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=1.0, step=1.0)
     with s3:
-        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=1.0)
+        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=1.0, step=1.0)
 
     center = st.session_state.get("picked_center")
 

@@ -148,16 +148,18 @@ def test_load_session_params_replaces_params_entirely():
 # clear_box_picker_state
 # ---------------------------------------------------------------------------
 
-def test_clear_box_picker_state_removes_all_three_keys():
+def test_clear_box_picker_state_removes_all_four_keys():
     st.session_state["_box_picker_receptor_pdb"] = "/x/y.pdb"
     st.session_state["picked_center"] = [1, 2, 3]
     st.session_state["_box_picker_last_size"] = [20, 20, 20]
+    st.session_state["_pending_geometry_target"] = "center"
 
     session_state.clear_box_picker_state()
 
     assert "_box_picker_receptor_pdb" not in st.session_state
     assert "picked_center" not in st.session_state
     assert "_box_picker_last_size" not in st.session_state
+    assert "_pending_geometry_target" not in st.session_state
 
 
 def test_clear_box_picker_state_is_a_noop_when_nothing_to_clear():

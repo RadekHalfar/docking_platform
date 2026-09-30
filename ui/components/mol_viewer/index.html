@@ -123,16 +123,55 @@
       var boxSize = args.boxSize || [20, 20, 20];
 
       if (center) {
+        // Very translucent fill so the protein inside stays visible, plus a
+        // crisp wireframe outline (3Dmol doesn't support both in one addBox
+        // call) so the box boundary is still easy to locate.
         viewer.addBox({
           center: { x: center[0], y: center[1], z: center[2] },
           dimensions: { w: boxSize[0], h: boxSize[1], d: boxSize[2] },
           color: "blue",
-          opacity: 0.35,
+          opacity: 0.12,
+        });
+        viewer.addBox({
+          center: { x: center[0], y: center[1], z: center[2] },
+          dimensions: { w: boxSize[0], h: boxSize[1], d: boxSize[2] },
+          color: "blue",
+          wireframe: true,
         });
         viewer.addSphere({
           center: { x: center[0], y: center[1], z: center[2] },
           radius: 0.5,
           color: "red",
+        });
+
+        // RGB axis arrows (X=red, Y=green, Z=blue -- the standard 3D-tool
+        // convention) from the box center out past each face, so it's clear
+        // which box edge the corresponding Box size X/Y/Z field controls.
+        var axisSpecs = [
+          { dir: [1, 0, 0], color: "red", label: "X", half: boxSize[0] / 2 },
+          { dir: [0, 1, 0], color: "green", label: "Y", half: boxSize[1] / 2 },
+          { dir: [0, 0, 1], color: "blue", label: "Z", half: boxSize[2] / 2 },
+        ];
+        axisSpecs.forEach(function (a) {
+          var len = a.half + 2;
+          var end = {
+            x: center[0] + a.dir[0] * len,
+            y: center[1] + a.dir[1] * len,
+            z: center[2] + a.dir[2] * len,
+          };
+          viewer.addArrow({
+            start: { x: center[0], y: center[1], z: center[2] },
+            end: end,
+            radius: 0.3,
+            color: a.color,
+            mid: 0.8,
+          });
+          viewer.addLabel(a.label, {
+            position: end,
+            backgroundColor: a.color,
+            fontColor: "white",
+            fontSize: 14,
+          });
         });
       }
 

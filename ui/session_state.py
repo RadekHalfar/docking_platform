@@ -111,11 +111,15 @@ def clear_box_picker_state() -> None:
     where a previously-loaded receptor could otherwise be silently reused
     for the wrong protein by a geometry chat command
     ("set up box center as protein center" / "look across all protein",
-    via ``ui/app.py``'s ``_resolve_prepared_protein_pdb_path()``).
+    via ``ui/app.py``'s ``_resolve_prepared_protein_pdb_path()``). Also
+    drops a pending geometry command awaiting a fetch/prepare job started
+    on its behalf (``ui/app.py``'s ``_handle_protein_geometry_command()``),
+    for the same reason -- it shouldn't fire against a different job.
     """
     st.session_state.pop("_box_picker_receptor_pdb", None)
     st.session_state.pop("picked_center", None)
     st.session_state.pop("_box_picker_last_size", None)
+    st.session_state.pop("_pending_geometry_target", None)
 
 
 def start_new_session() -> None:

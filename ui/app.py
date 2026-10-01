@@ -840,6 +840,12 @@ def render_chat() -> None:
                 st.session_state.messages.append(
                     {"role": "assistant", "content": f"Workflow failed: {failure_detail}"}
                 )
+            # The messages above were appended after this run already drew
+            # the chat history, and with the bridge finished the
+            # bottom-of-page poll no longer reruns -- rerun once so the reply
+            # actually shows (can't loop: _job_done is now set).
+            if st.session_state.get("_job_done"):
+                st.rerun()
 
     if prompt := st.chat_input("Describe your workflow..."):
         _on_chat_submit(prompt)
@@ -848,14 +854,20 @@ def render_chat() -> None:
 
 # ── Parameters panel ──────────────────────────────────────────────────────────
 
+# Smallest box edge (Å) the box picker's size inputs accept.
+_PICKER_MIN_BOX_SIZE = 1.0
+
+_BOX_WIDGET_KEYS = (
+    "param_center_x", "param_center_y", "param_center_z",
+    "param_box_x", "param_box_y", "param_box_z",
+)
+
+
 def _render_params_summary() -> None:
     params = st.session_state.params
-    if not params:
+    box_fields_set = any(str(st.session_state.get(k, "")).strip() for k in _BOX_WIDGET_KEYS)
+    if not params and not box_fields_set:
         return
-
-    def _val(key: str, fallback: str = "—") -> str:
-        v = params.get(key)
-        return str(v) if v not in (None, "", []) else fallback
 
     # Protein
     if params.get("protein_id"):
@@ -873,16 +885,18 @@ def _render_params_summary() -> None:
     else:
         ligands = "—"
 
-    # Docking box — params["center"] is a list from LLM; widget keys are fallback
-    def _coord(param_key: str, widget_keys: list) -> str:
-        v = params.get(param_key)
-        if isinstance(v, list) and len(v) == 3:
-            return " / ".join(str(x) for x in v)
-        parts = [st.session_state.get(k, "").strip() for k in widget_keys]
+    # Docking box — read from the Docking Box fields, not params["center"] /
+    # params["box_size"]: the fields are what _collect_form_params() actually
+    # docks with, and every writer updates them (manual entry, box-picker
+    # click/resize, chat-parsed values, geometry commands), whereas the
+    # params lists only change on chat parsing or a run -- preferring them
+    # left the summary stale after a visual pick or resize.
+    def _coord(widget_keys: tuple) -> str:
+        parts = [str(st.session_state.get(k, "")).strip() for k in widget_keys]
         return " / ".join(p if p else "—" for p in parts)
 
-    center = _coord("center", ["param_center_x", "param_center_y", "param_center_z"])
-    box = _coord("box_size", ["param_box_x", "param_box_y", "param_box_z"])
+    center = _coord(_BOX_WIDGET_KEYS[:3])
+    box = _coord(_BOX_WIDGET_KEYS[3:])
 
     with st.expander("Current parameters", expanded=True):
         st.markdown(
@@ -896,7 +910,10 @@ def _render_params_summary() -> None:
 def render_parameters_panel() -> None:
     st.subheader("Input & Parameters")
 
-    _render_params_summary()
+    # Shown at the top but filled in last: the box picker below can still
+    # change the Docking Box fields during this run (e.g. mirroring a box
+    # resize), and the summary must reflect that, not the pre-run values.
+    summary_slot = st.container()
 
     mode = st.radio(
         "Input mode",
@@ -920,6 +937,9 @@ def render_parameters_panel() -> None:
 
     st.divider()
     _render_docking_box()
+
+    with summary_slot:
+        _render_params_summary()
 
     with st.expander("Advanced"):
         col1, col2 = st.columns(2)
@@ -1190,12 +1210,16 @@ def _sync_picker_box_from_manual_inputs() -> None:
             float(st.session_state.get("param_box_y", "")),
             float(st.session_state.get("param_box_z", "")),
         ]
+    except (ValueError, TypeError):
+        return
+    # The picker's number_inputs enforce min_value; pushing a smaller value
+    # (e.g. a half-typed "0.5") into their keys would raise. Leave the picker
+    # as-is until the fields hold a size it can display.
+    if min(box_size) >= _PICKER_MIN_BOX_SIZE:
         st.session_state["picker_box_x"] = box_size[0]
         st.session_state["picker_box_y"] = box_size[1]
         st.session_state["picker_box_z"] = box_size[2]
         st.session_state["_box_picker_last_size"] = box_size
-    except (ValueError, TypeError):
-        pass
 
 
 def _seed_picker_box_from_manual_inputs() -> None:
@@ -1336,11 +1360,11 @@ def _render_box_picker() -> None:
 
     s1, s2, s3 = st.columns(3)
     with s1:
-        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=1.0, step=1.0)
+        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
     with s2:
-        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=1.0, step=1.0)
+        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
     with s3:
-        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=1.0, step=1.0)
+        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
 
     center = st.session_state.get("picked_center")
 
@@ -1376,21 +1400,27 @@ def _render_box_picker() -> None:
 
 
 def _render_docking_box() -> None:
+    # on_change pushes manual edits into the box picker's own state, so the
+    # 3D viewer follows typed values (the picker renders above these fields
+    # and keeps separate state -- see _sync_picker_box_from_manual_inputs).
+    # A callback runs before the next script run, i.e. before the picker's
+    # widgets exist, so writing their keys there is allowed.
+    sync = _sync_picker_box_from_manual_inputs
     st.markdown("**Docking Box**")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.text_input("Center X", key="param_center_x", placeholder="0.0")
+        st.text_input("Center X", key="param_center_x", placeholder="0.0", on_change=sync)
     with c2:
-        st.text_input("Center Y", key="param_center_y", placeholder="0.0")
+        st.text_input("Center Y", key="param_center_y", placeholder="0.0", on_change=sync)
     with c3:
-        st.text_input("Center Z", key="param_center_z", placeholder="0.0")
+        st.text_input("Center Z", key="param_center_z", placeholder="0.0", on_change=sync)
     b1, b2, b3 = st.columns(3)
     with b1:
-        st.text_input("Box X", key="param_box_x", placeholder="20.0")
+        st.text_input("Box X", key="param_box_x", placeholder="20.0", on_change=sync)
     with b2:
-        st.text_input("Box Y", key="param_box_y", placeholder="20.0")
+        st.text_input("Box Y", key="param_box_y", placeholder="20.0", on_change=sync)
     with b3:
-        st.text_input("Box Z", key="param_box_z", placeholder="20.0")
+        st.text_input("Box Z", key="param_box_z", placeholder="20.0", on_change=sync)
 
 
 # ── Results panel ─────────────────────────────────────────────────────────────

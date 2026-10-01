@@ -3,10 +3,9 @@
 Same streamlit dependency/invocation notes as tests/test_ui_session_state.py
 apply here -- see that file's module docstring. Scope: this covers the
 pure-logic helpers (form-value collection, the Phase 12 protein-geometry
-chat handlers), not the widget-rendering functions (`_render_*`), which
-call `st.button`/`st.columns`/etc. and need a real Streamlit script-run
-context (or an AppTest-based harness) to exercise meaningfully -- out of
-scope here, same as every other `_render_*` function in this file.
+chat handlers), called directly. The widget-rendering functions (`_render_*`)
+are covered by tests/test_ui_apptest.py instead, which runs the whole page
+through Streamlit's AppTest harness.
 """
 import os
 from pathlib import Path
@@ -103,6 +102,24 @@ def test_sync_picker_box_from_manual_inputs_overwrites_existing_pick():
     app._sync_picker_box_from_manual_inputs()
 
     assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
+
+
+def test_sync_picker_box_skips_box_size_below_picker_minimum():
+    # The picker's number_inputs have min_value=1.0 -- writing 0.5 into
+    # their keys would raise, so the box half is left untouched.
+    st.session_state.picker_box_x = 20.0
+    st.session_state.param_center_x = "1.0"
+    st.session_state.param_center_y = "2.0"
+    st.session_state.param_center_z = "3.0"
+    st.session_state.param_box_x = "0.5"
+    st.session_state.param_box_y = "20"
+    st.session_state.param_box_z = "20"
+
+    app._sync_picker_box_from_manual_inputs()
+
+    assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
+    assert st.session_state["picker_box_x"] == 20.0
+    assert "_box_picker_last_size" not in st.session_state
 
 
 # ---------------------------------------------------------------------------

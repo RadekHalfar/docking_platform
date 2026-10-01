@@ -412,12 +412,31 @@ docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
 This is a third, explicitly-invoked test tier (alongside the hermetic
 default and the opt-in `integration` marker) — not wired into CI, since
 CI's `requirements.txt`-based environment mirrors `script-runner`'s, not
-`ui`'s. Scope: the non-widget helper/state functions only
-(`_collect_form_params`, `_handle_protein_geometry_command`,
-`apply_parsed_params`, `start_new_session`, etc.) — the `_render_*`
-widget-rendering functions call `st.button`/`st.columns`/etc. directly and
-need a real Streamlit script-run context (or an `AppTest`-based harness) to
-exercise meaningfully, which this tier doesn't attempt.
+`ui`'s. Two kinds of test live in this tier:
+
+- **Helper/state tests** (`tests/test_ui_app_helpers.py`,
+  `tests/test_ui_session_state.py`) call non-widget functions directly
+  (`_collect_form_params`, `_handle_protein_geometry_command`,
+  `apply_parsed_params`, `start_new_session`, etc.).
+- **Render tests** (`tests/test_ui_apptest.py`, Phase 13) run the whole
+  page through Streamlit's `AppTest` harness (`streamlit.testing.v1`) and
+  assert on what was actually rendered — chat replies, sidebar session
+  rows, results panel, box picker. The `app` fixture keeps them hermetic;
+  reuse it for new render tests rather than rebuilding the setup:
+  - Ollama's model list is stubbed (the settings form otherwise makes a
+    real HTTP request on first render), and `ui.settings.SETTINGS_FILE`
+    is patched directly (it's frozen at import time).
+  - `OUTPUT_BASE` points at a `tmp_path` directory; `st.cache_data` is
+    cleared per test (it's process-global).
+  - The 3Dmol.js custom component can't render without a browser, so
+    `render_mol_viewer` is replaced by a recorder and tests assert on the
+    arguments the page passed it. What the viewer *draws* (the JS in
+    `ui/components/mol_viewer/index.html`) is outside this tier — check it
+    in a real browser.
+  - `OrchestratorBridge` is replaced by a fake, and fake bridges are
+    always already finished: a running one would make the page's
+    bottom-of-script poll (`time.sleep(2); st.rerun()`) spin until the
+    AppTest timeout.
 
 ### Manual Health Checks
 

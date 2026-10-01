@@ -69,12 +69,6 @@ REQUIRED_PARAMETER_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
 PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
     "protein_id": frozenset({"get_input_files", "prepare_protein", "dock", "visualize"}),
     "ligand_ids": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
-    # File-based equivalents invalidate exactly what their ID counterparts
-    # do -- without these, swapping ligand files only redocked the *old*
-    # prepared ligands.
-    "protein_file": frozenset({"get_input_files", "prepare_protein", "dock", "visualize"}),
-    "ligand_files": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
-    "ligand_folder": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
     "center": frozenset({"dock", "visualize"}),
     "box_size": frozenset({"dock", "visualize"}),
     "ph": frozenset({"prepare_ligands", "prepare_protein", "dock", "visualize"}),
@@ -86,6 +80,14 @@ PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
     "parallel": frozenset({"dock", "visualize"}),
     "max_workers": frozenset({"dock", "visualize"}),
 }
+
+# File-based inputs invalidate exactly what their ID counterparts do --
+# without these, swapping ligand files only redocked the *old* prepared
+# ligands. Derived, so the alias table stays the one definition.
+for _id_param, _alternatives in REQUIRED_PARAMETER_ALTERNATIVES.items():
+    for _alternative in _alternatives:
+        PARAM_INVALIDATION_MAP[_alternative] = PARAM_INVALIDATION_MAP[_id_param]
+del _id_param, _alternatives, _alternative
 
 
 STEP_UPSTREAM: Dict[str, FrozenSet[str]] = {

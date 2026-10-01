@@ -369,6 +369,8 @@ def test_redock_local_files_session_after_ligand_change(app, output_base):
     )["parameters"]
     state_manager = WorkflowStateManager(output_base / job_id)
     state_manager.save_parameters_checkpoint(validated, source="initial_parse")
+    # The first run's steps ran with those parameters (as a real run records it).
+    state_manager.save_execution_state_checkpoint({"prepared_protein": "/x/receptor.pdbqt"}, step="visualize")
     session = InteractiveSession()
     session.activate(
         job_id, state_manager, last_results={"status": "completed", "services_executed": list(WORKFLOW_STEPS)}
@@ -431,6 +433,7 @@ def _completed_job_data(receptor_path: Path) -> dict:
     return {
         "status": "completed",
         "job_name": "trial_a",
+        "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
         "results": {
             "get_input_files": {"protein_path": "/app/orchestrator_output/x/downloads/6LU7.pdb"},
             "dock": {
@@ -507,7 +510,7 @@ def _validated(params: dict) -> dict:
 
 def _active_session_with_two_revisions(app, output_base):
     """An active, completed RCSB session: rev 1 = initial params, rev 2 =
-    center changed and redocked. The form shows rev 2."""
+    center changed, rev 3 = its redock's state. The form shows rev 2."""
     from services.llm_orchestrator.interactive_session import InteractiveSession
     from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
     from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
@@ -515,6 +518,8 @@ def _active_session_with_two_revisions(app, output_base):
     state_manager = WorkflowStateManager(output_base / _HISTORY_JOB_ID)
     state_manager.save_parameters_checkpoint(_validated(_REV1_PARAMS), source="initial_parse")
     state_manager.save_parameters_checkpoint(_validated(_REV2_PARAMS), source="interactive_update")
+    # ...and redocked: rev 3 records a step running with rev 2's parameters.
+    state_manager.save_execution_state_checkpoint({"protein_file": "/x/6lu7.pdbqt"}, step="visualize")
     session = InteractiveSession()
     session.activate(
         _HISTORY_JOB_ID,
@@ -580,7 +585,7 @@ def test_restore_revision_loads_its_params_and_marks_all_pending(app, output_bas
     # A draft would otherwise win over the restore on the next Load.
     assert state_manager.load_draft_parameters() is None
     assert state_manager.load_latest_parameters()["center"] == [1.0, 2.0, 3.0]
-    assert state_manager.get_parameters_revision() == 3
+    assert state_manager.get_parameters_revision() == 4
     assert session.pending_changed_params == set(CORE_PARAMS)
     assert "Restored revision 1" in (output_base / _HISTORY_JOB_ID / "job.log").read_text()
     assert any(t.startswith("Restored revision 1.") for t in _chat_texts(at))
@@ -599,7 +604,7 @@ def test_redock_after_restore_plans_full_rerun(app, output_base):
     assert not [e.value for e in at.error], [e.value for e in at.error]
     assert set(at.session_state["_pending_rerun"]["steps"]) == set(WORKFLOW_STEPS)
     # Nothing differed from the restored checkpoint -> no extra revision.
-    assert state_manager.get_parameters_revision() == 3
+    assert state_manager.get_parameters_revision() == 4
 
 
 def test_cancelled_redock_plan_is_offered_again(app, output_base):
@@ -915,3 +920,128 @@ def test_save_results_sits_between_viewer_and_session_log(app, viewer, output_ba
     assert viewer.last("view") is not None  # the viewer path, not an early return
     labels = [e.label for e in at.expander]
     assert labels.index("Save results as…") + 1 == labels.index("Session Log")
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R1 (Phase 13) regressions
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def session_state_warnings(monkeypatch):
+    """Streamlit's "default value but also set via the Session State API"
+    policy warning goes to its logger, not the page -- record it there."""
+    import streamlit.elements.lib.policies as policies
+
+    recorded = []
+    monkeypatch.setattr(policies._LOGGER, "warning", lambda msg, *a, **k: recorded.append(msg % a if a else msg))
+    return recorded
+
+
+def test_picker_box_size_survives_early_rerun_in_chat_column(app, output_base, session_state_warnings):
+    # A size typed into the picker's own input came back at the old value
+    # after any chat-column rerun, and the picker's resize mirror then wrote
+    # that value into the Docking Box fields actually docked with.
+    _active_session_with_two_revisions(app, output_base)
+    app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)
+    app.session_state["picked_center"] = [5.0, 6.0, 7.0]
+    at = app.run()
+    at.number_input(key="picker_box_x").set_value(61.0).run()
+    assert at.session_state["param_box_x"] == "61.000"
+
+    at.chat_input[0].set_value("show history").run()
+
+    assert not at.exception
+    assert [at.session_state[k] for k in _BOX_KEYS[3:]] == ["61.000", "20.000", "20.000"]
+    assert at.number_input(key="picker_box_x").value == 61.0
+    assert not [w for w in session_state_warnings if "Session State" in w]
+
+
+def test_receptor_load_with_box_fields_set_logs_no_session_state_warning(app, viewer, session_state_warnings):
+    for key, value in zip(_BOX_KEYS, ("1.0", "2.0", "3.0", "30.0", "31.0", "32.0")):
+        app.session_state[key] = value
+    app.session_state["box_picker_bridge"] = FakeBridge(
+        result={
+            "status": "completed",
+            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
+        }
+    )
+
+    at = app.run()
+
+    assert not at.exception
+    assert viewer.last("box_picker")["box_size"] == [30.0, 31.0, 32.0]
+    assert not [w for w in session_state_warnings if "Session State" in w]
+
+
+def test_redock_after_load_of_never_run_restore_plans_full_rerun(app, output_base):
+    # Restored, never redocked, then Loaded again: Load resets `pending`,
+    # so redock said "nothing to redock" while Save said "click Run Docking
+    # first". Load now seeds `pending` from parameters_ran().
+    from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
+
+    session, state_manager, _ = _completed_session_with_artifacts(app, output_base)
+    at = _restore_rev1(app.run())
+    assert not state_manager.parameters_ran()
+
+    at = next(b for b in at.sidebar.button if b.key == f"job_load_{_HISTORY_JOB_ID}").click().run()
+    assert not at.exception
+    assert at.session_state["param_center_x"] == "1.0"  # the restored revision is what loaded
+    at = _click(at, "Run Docking")
+
+    assert not at.exception
+    assert set(at.session_state["_pending_rerun"]["steps"]) == set(WORKFLOW_STEPS)
+
+
+@pytest.mark.parametrize("change_center", [False, True])
+def test_redock_after_stopped_first_run_docks_again(app, output_base, change_center):
+    # Stopped during the first run's dock step: dock/visualize never ran,
+    # and intersecting the plan with the executed steps dropped them --
+    # both "same params" and "changed center" were dead ends.
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+    state_manager.save_execution_state_checkpoint({"protein_file": "/x/6lu7.pdbqt"}, step="prepare_protein")
+    session.last_results = {
+        "status": "cancelled",
+        "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein"],
+    }
+    at = app.run()
+    if change_center:
+        at.text_input(key="param_center_x").set_value("9.0").run()
+
+    at = _click(at, "Run Docking")
+
+    assert not at.exception
+    assert at.session_state["_pending_rerun"]["steps"] == ["dock", "visualize"]
+
+
+def test_chat_undo_of_state_only_revision_is_refused(app, output_base):
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+    state_rev = state_manager.save_execution_state_checkpoint({"protein_file": "/x/a.pdbqt"}, step="dock")
+    state_manager.save_execution_state_checkpoint({"protein_file": "/x/b.pdbqt"}, step="visualize")
+    at = app.run()
+
+    at.chat_input[0].set_value(f"undo {state_rev}").run()
+
+    assert not at.exception
+    assert "has no parameter checkpoint" in _chat_texts(at)[-1]
+    assert state_manager.load_latest_state()["protein_file"] == "/x/b.pdbqt"
+    assert state_manager.get_parameters_revision() == 2
+
+
+@pytest.mark.parametrize("protein_id, kept", [("6lu7", True), ("1abc", False)])
+def test_restore_drops_box_picker_receptor_only_for_another_protein(app, output_base, protein_id, kept):
+    # Phase 12 R1 cleared a stale picker receptor on New Session / a fresh
+    # job only; a Load or restore of another protein kept it, so geometry
+    # commands computed from the wrong protein.
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+    other_rev = state_manager.save_parameters_checkpoint(
+        _validated({**_REV2_PARAMS, "protein_id": protein_id, "center": [9.0, 9.0, 9.0]}),
+        source="interactive_update",
+    )
+    app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)
+    at = app.run()
+    at.selectbox(key="revision_to_restore").set_value(other_rev).run()
+
+    at = _click(at, "Restore revision")
+
+    assert not at.exception
+    assert ("_box_picker_receptor_pdb" in at.session_state) is kept

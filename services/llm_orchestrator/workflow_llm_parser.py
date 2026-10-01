@@ -565,8 +565,12 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
         return {"intent": "help", "name": None}
 
     if re.match(r"^undo\b", t):
-        match = re.search(r"\d+", text)
-        return {"intent": "undo_revision", "name": match.group(0) if match else None}
+        # Only a number right after "undo" is the revision: taking the first
+        # digit anywhere made "undo the box change and set exhaustiveness to
+        # 16" restore revision 16 (Review Stage R1, Phase 13). Without one,
+        # name is None and the caller asks which revision.
+        match = re.match(r"^undo\s+(?:to\s+)?(?:rev(?:ision)?\s*)?#?(\d+)\s*$", t)
+        return {"intent": "undo_revision", "name": match.group(1) if match else None}
 
     _SAVE_SCOPE_MAP = {
         "save visualization": "visualization",

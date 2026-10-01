@@ -26,6 +26,11 @@ from services.llm_orchestrator.workflow_llm_parser import (
         ("save results", "save_results", None),
         ("state", "show_state", None),
         ("undo 14", "undo_revision", "14"),
+        ("undo rev 3", "undo_revision", "3"),
+        ("Undo to revision #7", "undo_revision", "7"),
+        ("undo", "undo_revision", None),
+        # A number elsewhere in the sentence is not a revision (R1, Phase 13).
+        ("undo the box change and set exhaustiveness to 16", "undo_revision", None),
         ("new Download 6lu7 and dock ATP", "new_workflow", None),
         ("rerun", "rerun_steps", None),
         ("rerun docking", "rerun_steps", None),

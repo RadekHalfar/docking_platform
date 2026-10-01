@@ -262,6 +262,26 @@ def test_save_bundle_os_error_is_a_failed_result_with_no_partial_bundle(job_dir,
     assert "save_results_bundle 'trial_a' failed" in (job_dir / "job.log").read_text()
 
 
+def test_save_bundle_failed_overwrite_keeps_the_old_bundle(job_dir, monkeypatch):
+    # The old bundle used to be deleted before the copy, so a failed
+    # overwrite lost it (Review Stage R1, Phase 13).
+    save_results_bundle(job_dir, "trial_a", "all", 1, PARAMS)
+
+    def _disk_full(src, dst, *args, **kwargs):
+        Path(dst).mkdir()
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("services.llm_orchestrator.interactive_session.shutil.copytree", _disk_full)
+
+    result = save_results_bundle(job_dir, "trial_a", "docking", 2, PARAMS, overwrite=True)
+
+    assert result["success"] is False
+    bundle = job_dir / "saved_results" / "trial_a"
+    assert json.loads((bundle / "metadata.json").read_text())["source_revision"] == 1
+    assert (bundle / "visualization").exists()
+    assert sorted(p.name for p in (job_dir / "saved_results").iterdir()) == ["trial_a"]
+
+
 def test_timestamped_bundle_name_format(tmp_path):
     name = timestamped_bundle_name(tmp_path, "trial_a")
 

@@ -180,9 +180,9 @@
         // convention) from the box center out past each face, so it's clear
         // which box edge the corresponding Box size X/Y/Z field controls.
         var axisSpecs = [
-          { dir: [1, 0, 0], color: "red", label: "X", half: boxSize[0] / 2 },
-          { dir: [0, 1, 0], color: "green", label: "Y", half: boxSize[1] / 2 },
-          { dir: [0, 0, 1], color: "blue", label: "Z", half: boxSize[2] / 2 },
+          { dir: [1, 0, 0], color: "red", label: "X", half: hx },
+          { dir: [0, 1, 0], color: "green", label: "Y", half: hy },
+          { dir: [0, 0, 1], color: "blue", label: "Z", half: hz },
         ];
         axisSpecs.forEach(function (a) {
           var len = a.half + 2;

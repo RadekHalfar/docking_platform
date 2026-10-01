@@ -135,9 +135,13 @@ brand-new, unrelated session — it redocks the same one.
   before you confirm. If you then **Cancel** (or the run is stopped or
   fails), the session remembers that those parameters were never run to
   completion, and the next **Run Docking** offers the same plan again
-  instead of reporting "nothing to redock". This memory only lasts while the
-  tab is open: after a **Load** or a page reload, only real form changes
-  are detected.
+  instead of reporting "nothing to redock". The memory itself only lasts
+  while the tab is open, but **Load** restores it from the session's
+  history on disk: if the session's latest parameters never ran (e.g. a
+  restored revision), the next **Run Docking** plans every step they affect.
+- If the last run was **stopped** or failed part-way, the steps it never
+  reached are planned again on the next **Run Docking** — with the same
+  parameters or changed ones.
 
 ## Revision History and Undo
 
@@ -166,8 +170,11 @@ job re-reads the latest parameters before each step, so a restore would
 change it mid-run.
 
 The same commands work in chat, without an LLM call: `show history` (or
-`history`) posts the table, and `undo 3` restores revision 3. A bare `undo`
-asks which revision.
+`history`) posts the table, and `undo 3` (or `undo rev 3`) restores
+revision 3. The number has to follow `undo` directly: a bare `undo`, or a
+sentence like "undo the box change and set exhaustiveness to 16", asks which
+revision instead of guessing. Like the dropdown, chat only restores
+revisions marked `[params]` in the table.
 
 ## Saving Results Bundles
 
@@ -204,7 +211,8 @@ The button is disabled, with the reason shown under it, while:
 - the session's last run did not complete.
 
 If the name already exists, choose **Overwrite**, which replaces the whole
-bundle, or **Save as `<name>_HHMMSS`** to keep both. **Cancel** dismisses
+bundle (the new copy is written first and swapped in, so a failed overwrite,
+e.g. a full disk, keeps the old bundle), or **Save as `<name>_HHMMSS`** to keep both. **Cancel** dismisses
 the choice.
 
 Bundle names start with a letter or digit and contain only letters, digits,
@@ -399,6 +407,12 @@ Once a receptor is loaded here (or a job has already run
 are a faster alternative to clicking: "set up box center as protein
 center" / "look across all protein" compute the same kind of values
 without needing to click an atom or drag sliders.
+
+A receptor loaded here belongs to one protein. It is discarded when you
+start a **New Session** or a fresh job, and when a **Load** or **Restore
+revision** switches to a different protein — so a geometry command never
+computes from a protein that is no longer in play. Load the receptor again
+for the new protein if you want to pick visually.
 
 ## Comparing Sessions
 

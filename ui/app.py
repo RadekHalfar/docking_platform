@@ -12,6 +12,7 @@ from common.path_utils import from_container_path
 from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import (
+    SAVED_RESULTS_DIRNAME,
     compute_changed_params,
     resolve_prepared_protein_pdb_path,
     save_results_bundle,
@@ -30,7 +31,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
-from services.llm_orchestrator.workflow_definition import CORE_PARAMS, get_default_parameters
+from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS, get_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
@@ -100,21 +101,11 @@ def _collect_form_params() -> dict:
 
     # local_files: protein_file / ligand_files already written to params during upload
 
-    try:
-        cx = float(st.session_state.get("param_center_x", ""))
-        cy = float(st.session_state.get("param_center_y", ""))
-        cz = float(st.session_state.get("param_center_z", ""))
-        params["center"] = [cx, cy, cz]
-    except (ValueError, TypeError):
-        pass
-
-    try:
-        bx = float(st.session_state.get("param_box_x", ""))
-        by = float(st.session_state.get("param_box_y", ""))
-        bz = float(st.session_state.get("param_box_z", ""))
-        params["box_size"] = [bx, by, bz]
-    except (ValueError, TypeError):
-        pass
+    center, box_size = _read_box_fields()
+    if center is not None:
+        params["center"] = center
+    if box_size is not None:
+        params["box_size"] = box_size
 
     for key, default, cast in [
         ("ph", "7.4", float),
@@ -322,7 +313,7 @@ def _handle_run_docking() -> None:
     clear_box_picker_state()
 
     # Always include visualization — it runs after docking and produces the PNG.
-    services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+    services = list(WORKFLOW_STEPS)
     try:
         validated = st.session_state.parser.validate_workflow(
             {"services": services, "parameters": params}
@@ -409,7 +400,15 @@ def _handle_redock_request(session, params: dict) -> None:
     # earlier redock that was cancelled / failed. The form matches the
     # checkpoint in those cases, so the diff alone would miss them.
     rerun_keys = changed | session.pending_changed_params
-    if not rerun_keys:
+
+    # Steps the last run never got to (stopped or failed part-way) must run
+    # even with no parameter change, and must stay plannable: intersecting
+    # with the executed steps alone dropped dock/visualize for good after a
+    # stopped first run (Review Stage R1, Phase 13).
+    last = session.last_results or {}
+    executed = set(last.get("services_executed", []))
+    unfinished = set() if last.get("status") == "completed" else set(WORKFLOW_STEPS) - executed
+    if not rerun_keys and not unfinished:
         st.session_state.messages.append(
             {"role": "assistant", "content": "No parameter changes detected — nothing to redock."}
         )
@@ -420,8 +419,8 @@ def _handle_redock_request(session, params: dict) -> None:
         session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
         session.state_manager.clear_draft_parameters()
 
-    original_services = (session.last_results or {}).get("services_executed", [])
-    steps = compute_rerun_steps(rerun_keys, original_services=original_services)
+    planned = set(compute_rerun_steps(rerun_keys, original_services=executed | unfinished)) | unfinished
+    steps = [s for s in WORKFLOW_STEPS if s in planned]
     if not steps:
         st.session_state.messages.append(
             {"role": "assistant", "content": "Parameters updated, but no steps need to be re-executed."}
@@ -504,16 +503,20 @@ def _undo_to_revision(revision: int) -> str:
         return "A session is running — Stop it before restoring a revision."
 
     try:
-        data = session.state_manager.restore_revision(revision)
+        has_parameters = session.state_manager.load_checkpoint(revision)["parameters"] is not None
     except ValueError as exc:
         return f"Cannot restore revision {revision}: {exc}"
-
-    restored = data["parameters"]
-    if restored is None:
+    if not has_parameters:
+        # Restoring only a runtime-state checkpoint would roll back
+        # workflow_state.json under results it no longer matches, with
+        # nothing marked to rerun -- the Revision history panel only offers
+        # parameter revisions, so chat doesn't either (R1, Phase 13).
         return (
-            f"Revision {revision} has no parameter checkpoint — parameters unchanged "
-            "(runtime state restored)."
+            f"Revision {revision} has no parameter checkpoint — only revisions marked "
+            "[params] in `show history` can be restored."
         )
+
+    restored = session.state_manager.restore_revision(revision)["parameters"]
 
     # A draft would otherwise win over the restored revision on the next Load.
     session.state_manager.clear_draft_parameters()
@@ -529,10 +532,9 @@ def _undo_to_revision(revision: int) -> str:
     )
 
 
-def _format_history_markdown(state_manager: WorkflowStateManager) -> str:
-    """The active job's revision history as a markdown table (the GUI's
-    equivalent of the CLI's ``show history``)."""
-    revisions = state_manager.list_revisions()
+def _format_history_markdown(revisions: list[dict]) -> str:
+    """A job's revision history (``WorkflowStateManager.list_revisions()``)
+    as a markdown table -- the GUI's equivalent of the CLI's ``show history``."""
     if not revisions:
         return "No revisions recorded yet."
 
@@ -557,7 +559,7 @@ def _handle_history_chat_intent(intent: dict) -> None:
         else:
             current = session.state_manager.get_parameters_revision()
             reply = (
-                _format_history_markdown(session.state_manager)
+                _format_history_markdown(session.state_manager.list_revisions())
                 + f"\n\nParameters are currently at revision **{current}**. "
                 "Type `undo <revision>` to restore one."
             )
@@ -788,6 +790,14 @@ def _load_params_into_form(params: dict) -> None:
     run before the parameter widgets render (sidebar/chat code, or an
     on_click callback).
     """
+    # A receptor loaded for box picking belongs to the previous protein; kept
+    # across a Load or restore that changes the protein, a geometry chat
+    # command would compute from the wrong one (Phase 12 R1's stale-receptor
+    # fix only covered New Session and a fresh job -- Review Stage R1,
+    # Phase 13).
+    protein_keys = ("protein_id", "protein_file")
+    if [st.session_state.params.get(k) for k in protein_keys] != [params.get(k) for k in protein_keys]:
+        clear_box_picker_state()
     load_session_params(params)
     _sync_picker_box_from_manual_inputs()
     # Seed parser.parsed_workflow so a chat follow-up sent right after this
@@ -795,7 +805,7 @@ def _load_params_into_form(params: dict) -> None:
     # workflow (see parse_followup_with_llm usage in _on_chat_submit).
     st.session_state.parser.validate_workflow(
         {
-            "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+            "services": list(WORKFLOW_STEPS),
             "parameters": params,
         }
     )
@@ -822,9 +832,15 @@ def _resume_session(job: dict) -> None:
     if loaded_params:
         _load_params_into_form(loaded_params)
     last_results = _load_workflow_results(job["job_id"])
-    st.session_state.interactive_session.activate(
-        job["job_id"], state_manager, last_results=last_results
-    )
+    session = st.session_state.interactive_session
+    session.activate(job["job_id"], state_manager, last_results=last_results)
+    # activate() starts `pending` empty, but the latest parameters may never
+    # have run (a restored revision, a cancelled redock plan) -- the next
+    # redock would then say "nothing to redock" while Save says "Run
+    # Docking first" (Review Stage R1, Phase 13). The per-key detail isn't
+    # on disk, so mark everything those parameters affect, as undo does.
+    if not state_manager.parameters_ran():
+        session.pending_changed_params |= CORE_PARAMS
     st.session_state.job_id = job["job_id"]
     st.session_state.job_name = job.get("job_name", "")
     # Prevents render_chat()'s completion-sync block from immediately
@@ -1065,6 +1081,20 @@ def render_chat() -> None:
             # the chat history, and with the bridge finished the
             # bottom-of-page poll no longer reruns -- rerun once so the reply
             # actually shows (can't loop: _job_done is now set).
+            #
+            # NOTE (Review Stage R1, Phase 13, altitude finding #1, deferred):
+            # this rerun, the box picker's rerun after a pending geometry
+            # command, and the on_click-only rule for reply-posting buttons
+            # all work around one thing -- the chat history is drawn before
+            # the code that appends replies runs. Symptom: every new reply
+            # source needs its own workaround (and early reruns are what
+            # forced _PERSISTED_WIDGET_KEYS). Fix: create the history
+            # container here but fill it at the end of the script (the
+            # params-summary placeholder trick), and handle both bridges'
+            # completion before the layout. Trigger: the next feature that
+            # posts a chat reply from outside the chat column, or another
+            # "reply only shows after the next click" bug. See dev_plan.md
+            # Phase 13 Future Work and docs/reviews/stage_13_r1.md.
             if st.session_state.get("_job_done"):
                 st.rerun()
 
@@ -1146,14 +1176,15 @@ def _render_revision_history() -> None:
         return
     state_manager = session.state_manager
 
+    revisions = state_manager.list_revisions()
     with st.expander("Revision history"):
-        st.markdown(_format_history_markdown(state_manager))
+        st.markdown(_format_history_markdown(revisions))
         current = state_manager.get_parameters_revision()
         if current is not None:
             st.caption(f"Parameters are currently at revision {current}.")
 
         param_revisions = [
-            r["revision"] for r in reversed(state_manager.list_revisions()) if r["has_parameters"]
+            r["revision"] for r in reversed(revisions) if r["has_parameters"]
         ]
         if not param_revisions:
             return
@@ -1166,7 +1197,7 @@ def _render_revision_history() -> None:
             "Restore revision",
             on_click=_on_restore_revision_click,
             disabled=running,
-            use_container_width=True,
+            width="stretch",
             help=(
                 "A session is running — Stop it before restoring a revision."
                 if running
@@ -1246,10 +1277,10 @@ def render_parameters_panel() -> None:
         st.info(describe_rerun_plan(pending_rerun["steps"]))
         col_confirm, col_cancel = st.columns(2)
         with col_confirm:
-            if st.button("Confirm redock", type="primary", use_container_width=True):
+            if st.button("Confirm redock", type="primary", width="stretch"):
                 _execute_confirmed_redock()
         with col_cancel:
-            if st.button("Cancel", use_container_width=True):
+            if st.button("Cancel", width="stretch"):
                 st.session_state.pop("_pending_rerun", None)
                 st.rerun()
     else:
@@ -1262,12 +1293,12 @@ def render_parameters_panel() -> None:
         running_job = _active_bridge_job_id()
         col_run, col_save, col_new, col_reset = st.columns(4)
         with col_run:
-            if st.button("Run Docking", type="primary", use_container_width=True):
+            if st.button("Run Docking", type="primary", width="stretch"):
                 _handle_run_docking()
         with col_save:
             if st.button(
                 "Save Session",
-                use_container_width=True,
+                width="stretch",
                 disabled=not st.session_state.interactive_session.has_active_job(),
                 help="Save current parameters without docking.",
             ):
@@ -1275,7 +1306,7 @@ def render_parameters_panel() -> None:
         with col_new:
             if st.button(
                 "New Session",
-                use_container_width=True,
+                width="stretch",
                 disabled=not st.session_state.interactive_session.has_active_job() or running_job is not None,
                 help=(
                     "A session is running — Stop it (in the results panel) before starting a new one."
@@ -1288,7 +1319,7 @@ def render_parameters_panel() -> None:
         with col_reset:
             if st.button(
                 "Reset",
-                use_container_width=True,
+                width="stretch",
                 disabled=running_job is not None,
                 help=(
                     "A session is running — Stop it (in the results panel) before resetting."
@@ -1433,6 +1464,18 @@ def _render_folder_inputs() -> None:
         st.caption(f"{len(st.session_state.params['ligand_files'])} ligand file(s) ready")
 
 
+def _read_box_fields() -> tuple[list[float] | None, list[float] | None]:
+    """``(center, box_size)`` from the Docking Box fields; each is None
+    unless all three of its fields parse as numbers."""
+    def triple(keys: tuple) -> list[float] | None:
+        try:
+            return [float(st.session_state.get(k, "")) for k in keys]
+        except (ValueError, TypeError):
+            return None
+
+    return triple(_BOX_WIDGET_KEYS[:3]), triple(_BOX_WIDGET_KEYS[3:])
+
+
 def _mirror_box_to_manual_inputs(center: list, box_size: list) -> None:
     """Write picked/adjusted values into the manual text-input keys, which
     _collect_form_params() reads -- the picker augments the manual form
@@ -1463,29 +1506,25 @@ def _sync_picker_box_from_manual_inputs() -> None:
     updating either field so the viewer reflects a geometry command
     immediately regardless of whether the receptor it read was already
     loaded or was just fetched for that command.
-    """
-    try:
-        center = [
-            float(st.session_state.get("param_center_x", "")),
-            float(st.session_state.get("param_center_y", "")),
-            float(st.session_state.get("param_center_z", "")),
-        ]
-        st.session_state["picked_center"] = center
-    except (ValueError, TypeError):
-        pass
 
-    try:
-        box_size = [
-            float(st.session_state.get("param_box_x", "")),
-            float(st.session_state.get("param_box_y", "")),
-            float(st.session_state.get("param_box_z", "")),
-        ]
-    except (ValueError, TypeError):
-        return
+    NOTE (Review Stage R1, Phase 13, altitude finding #2, deferred): this
+    two-way mirror is the root of a whole bug class -- three Phase 13 fixes
+    plus R1 finding #1 were the two copies of the box drifting apart.
+    Fix: make the Docking Box fields the only state (the viewer reads
+    them, a click writes ``param_center_*``, the picker's duplicate size
+    inputs go), which removes this function, the seed/mirror helpers,
+    ``_box_picker_last_size`` and the ``on_change`` wiring. A UI change, so
+    its own stage. Trigger: the next picker/Docking Box out-of-sync bug, or
+    any new writer of the box. See dev_plan.md Phase 13 Future Work and
+    docs/reviews/stage_13_r1.md.
+    """
+    center, box_size = _read_box_fields()
+    if center is not None:
+        st.session_state["picked_center"] = center
     # The picker's number_inputs enforce min_value; pushing a smaller value
     # (e.g. a half-typed "0.5") into their keys would raise. Leave the picker
     # as-is until the fields hold a size it can display.
-    if min(box_size) >= _PICKER_MIN_BOX_SIZE:
+    if box_size is not None and min(box_size) >= _PICKER_MIN_BOX_SIZE:
         st.session_state["picker_box_x"] = box_size[0]
         st.session_state["picker_box_y"] = box_size[1]
         st.session_state["picker_box_z"] = box_size[2]
@@ -1572,12 +1611,10 @@ def _render_box_picker() -> None:
         # so it's resolved (or reported as failed) exactly once, however
         # this job turns out.
         pending_target = st.session_state.pop("_pending_geometry_target", None)
+        failure = None  # chat reply for a pending geometry command
         if error:
             st.error(f"Could not prepare receptor: {error}")
-            if pending_target:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Could not fetch the protein: {error}"}
-                )
+            failure = f"Could not fetch the protein: {error}"
         elif result and result.get("status") == "completed":
             pdb_path = resolve_prepared_protein_pdb_path(result)
             if pdb_path:
@@ -1587,20 +1624,13 @@ def _render_box_picker() -> None:
                 _seed_picker_box_from_manual_inputs()
             else:
                 st.error("Receptor was prepared but no PDB path was returned.")
-                if pending_target:
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": "Receptor was prepared but no PDB path was returned -- could not set this.",
-                        }
-                    )
+                failure = "Receptor was prepared but no PDB path was returned -- could not set this."
         elif result and result.get("status") == "failed":
             failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
             st.error("Could not prepare receptor: " + failure_detail)
-            if pending_target:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Could not fetch the protein: {failure_detail}"}
-                )
+            failure = f"Could not fetch the protein: {failure_detail}"
+        if pending_target and failure:
+            st.session_state.messages.append({"role": "assistant", "content": failure})
         st.session_state.box_picker_bridge = None
         # The chat column already rendered this run, and with the bridge
         # cleared the bottom-of-page polling rerun won't fire -- rerun once so
@@ -1630,11 +1660,11 @@ def _render_box_picker() -> None:
 
     s1, s2, s3 = st.columns(3)
     with s1:
-        bx = st.number_input("Box size X", key="picker_box_x", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
+        bx = st.number_input("Box size X", key="picker_box_x", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
     with s2:
-        by = st.number_input("Box size Y", key="picker_box_y", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
+        by = st.number_input("Box size Y", key="picker_box_y", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
     with s3:
-        bz = st.number_input("Box size Z", key="picker_box_z", value=20.0, min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
+        bz = st.number_input("Box size Z", key="picker_box_z", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
 
     center = st.session_state.get("picked_center")
 
@@ -1868,7 +1898,7 @@ def _render_save_results(job_id: str) -> None:
             "Save results bundle",
             on_click=_on_save_results_click,
             disabled=reason is not None,
-            use_container_width=True,
+            width="stretch",
         )
         if reason:
             st.caption(reason)
@@ -1944,7 +1974,7 @@ def _render_affinity_chart(result: dict) -> None:
     fig = make_affinity_chart_figure(dock_results)
     if fig:
         with st.container(height=400):
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def _resolve_container_path(path: str) -> Path:
@@ -2121,10 +2151,16 @@ def _render_file_downloads(result: dict, job_id: str) -> None:
     _render_pose_downloads(result, job_id)
 
     st.subheader("Other Files")
-    # Saved bundles are copies of the files already listed here.
-    saved_dir = job_dir / "saved_results"
-    for f in sorted(job_dir.rglob("*")):
-        if f.is_file() and f.suffix in {".pml", ".json", ".png"} and not f.is_relative_to(saved_dir):
+    # Saved bundles are copies of the files already listed here -- pruned
+    # from the walk rather than filtered after it, since each bundle can
+    # hold a full copy of a large batch's docking_results/.
+    files = []
+    for root, dirnames, filenames in os.walk(job_dir):
+        if Path(root) == job_dir and SAVED_RESULTS_DIRNAME in dirnames:
+            dirnames.remove(SAVED_RESULTS_DIRNAME)
+        files.extend(Path(root) / name for name in filenames)
+    for f in sorted(files):
+        if f.suffix in {".pml", ".json", ".png"}:
             data = _read_file_bytes(str(f), f.stat().st_mtime)
             st.download_button(
                 f"Download {f.name}",

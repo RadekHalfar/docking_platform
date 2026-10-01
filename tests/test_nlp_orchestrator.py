@@ -923,6 +923,7 @@ def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys, l
                 {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
                 source="initial_parse",
             )
+            sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")  # the run happened
             sess.activate("job_loop", sm, last_results={
                 "status": "completed",
                 "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
@@ -1185,6 +1186,7 @@ def test_multi_intent_two_actions_run_in_order(monkeypatch, tmp_path, capsys, ll
                 {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
                 source="initial_parse",
             )
+            sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")  # the run happened
             (job_dir / "docking_results").mkdir(parents=True, exist_ok=True)
             (job_dir / "docking_results" / "ATP_out.pdbqt").write_text("dummy")
             sess.activate(
@@ -1231,6 +1233,7 @@ def test_multi_intent_control_then_mutation_persists_update(monkeypatch, tmp_pat
                 {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
                 source="initial_parse",
             )
+            sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")  # the run happened
             sess.activate(
                 "job_chain2", sm,
                 last_results={
@@ -1485,6 +1488,7 @@ def test_multi_intent_end_session_mid_chain_stops_session(monkeypatch, tmp_path,
                 {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35]},
                 source="initial_parse",
             )
+            sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")  # the run happened
             (job_dir / "docking_results").mkdir(parents=True, exist_ok=True)
             (job_dir / "docking_results" / "ATP_out.pdbqt").write_text("dummy")
             sess.activate(
@@ -1522,6 +1526,7 @@ def test_save_results_declined_overwrite_prints_final_suffixed_name(monkeypatch,
     job_dir = tmp_path / "job_save1"
     sm = WorkflowStateManager(job_dir)
     sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+    sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")
     (job_dir / "saved_results" / "trial_a").mkdir(parents=True)
     session = InteractiveSession()
     session.activate("job_save1", sm, last_results={"status": "completed", "results": {}})
@@ -1537,3 +1542,23 @@ def test_save_results_declined_overwrite_prints_final_suffixed_name(monkeypatch,
     assert f"Saving as '{new_name}' instead." in output
     assert f"Saved bundle '{new_name}'" in output
     assert "Saved bundle 'trial_a'" not in output
+
+
+def test_save_results_refused_when_latest_parameters_never_ran(tmp_path, capsys):
+    """A restored revision that never ran (e.g. in another process, so this
+    one's `pending` is empty) must not be saved over results it didn't
+    produce -- the CLI side of Stage 13.3's GUI guard (Review Stage R1,
+    Phase 13)."""
+    job_dir = tmp_path / "job_save2"
+    sm = WorkflowStateManager(job_dir)
+    sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+    sm.save_execution_state_checkpoint({"docking_results": {}}, step="dock")
+    sm.save_parameters_checkpoint({"protein_id": "1abc", "ligand_ids": ["ATP"]}, source="interactive_update")
+    sm.restore_revision(1)
+    session = InteractiveSession()
+    session.activate("job_save2", sm, last_results={"status": "completed", "results": {}})
+
+    assert cli._handle_save_results({"name": "trial_a", "scope": "all"}, session) is False
+
+    assert "have not been run yet" in capsys.readouterr().out
+    assert not (job_dir / "saved_results").exists()

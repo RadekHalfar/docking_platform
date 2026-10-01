@@ -880,6 +880,40 @@ class TestDockingStopFlag:
         job_log = (tmp_path / "stop_dock_test" / "job.log").read_text()
         assert "stopped on request" in job_log
 
+    def test_stopped_redock_does_not_merge_dock_as_executed(self, tmp_path):
+        # A redock merges onto the earlier run's results on disk; the merge
+        # rebuilt services_executed from the result keys, so a stopped dock
+        # counted as executed next to the earlier run's (now stale)
+        # visualize (Review Stage R1, Phase 13).
+        state_manager, params = self._dock_ready_session(tmp_path, "stop_redock_test")
+        (tmp_path / "stop_redock_test" / "workflow_results.json").write_text(json.dumps({
+            "status": "completed",
+            "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+            "results": {s: {"old": True} for s in
+                        ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]},
+        }))
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={
+                "status": "stopped", "stopped": True, "skipped": 2,
+                "successful": 1, "failed": 0, "errors": [], "results": [{"ligand_id": "A"}],
+            }
+        )
+
+        orchestrator.execute_workflow(
+            {"services": ["dock", "visualize"], "parameters": params},
+            job_id="stop_redock_test",
+            state_manager=state_manager,
+            cancel_event=threading.Event(),
+        )
+
+        saved = json.loads((tmp_path / "stop_redock_test" / "workflow_results.json").read_text())
+        assert saved["status"] == "cancelled"
+        assert saved["services_executed"] == ["get_input_files", "prepare_ligands", "prepare_protein"]
+        assert saved["results"]["dock"]["stopped"] is True  # this run's partial result kept
+        assert "visualize" not in saved["results"]  # the earlier run's, now stale
+        assert saved["results"]["prepare_protein"] == {"old": True}
+
     def test_stale_stop_flag_is_cleared_before_docking(self, tmp_path):
         state_manager, params = self._dock_ready_session(tmp_path, "stale_flag_test")
         docking_dir = tmp_path / "stale_flag_test" / "docking_results"

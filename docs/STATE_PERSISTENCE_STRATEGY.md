@@ -284,7 +284,15 @@ The GUI's **Restore revision** button and `undo N` chat command share
 - sets `pending_changed_params |= CORE_PARAMS`, as the CLI does.
 
 It refuses while the tab's own bridge is running, because
-`execute_workflow()` re-reads the latest parameters before every step.
+`execute_workflow()` re-reads the latest parameters before every step. It
+also refuses a revision with no parameters checkpoint (a runtime-state-only
+revision), *before* restoring anything: restoring only `workflow_state.json`
+would roll the runtime state back under results it no longer matches with
+nothing marked to rerun, and the panel's dropdown never offers those
+revisions either (Review Stage R1, Phase 13). The CLI's `undo` still
+restores them, reporting the runtime state restored. In both, the revision
+number must follow `undo` directly (`undo 3`, `undo rev 3`); otherwise the
+CLI prompts and the GUI asks.
 
 The GUI's redock (`_handle_redock_request`) plans from
 `changed | pending_changed_params`. After a checkpoint it adds the changed
@@ -293,13 +301,23 @@ keys to `pending`. It clears `pending` only when a run of the active job
 CLI's `rerun`, where `pending` is cleared either way. `InteractiveSession.activate()` resets
 `pending` (the GUI reuses one session object across Loads).
 
-**Limitation:** `pending_changed_params` lives in memory only. After a Load
-or a page reload, a checkpoint that was never run to completion (a cancelled
-redock plan, a stopped run, a restore not yet redocked) is no longer flagged.
-The next redock then only sees real form changes. Run **Run Docking** before
-switching away, or edit a parameter to force a plan. Saving results is not
-affected. Stage 13.3's save guard also checks the manifest on disk (see "Save
-blocked when parameters are pending" below).
+`pending_changed_params` lives in memory only, so a sidebar Load re-seeds it
+from disk: when `WorkflowStateManager.parameters_ran()` is False (a restore
+not yet redocked, a cancelled redock plan), `_resume_session()` sets
+`pending |= CORE_PARAMS`. The per-key detail is not on disk, so this is an
+over-approximation (a full rerun), the same one undo makes. Before Review
+Stage R1 (Phase 13) a Load lost that state: redock said "nothing to redock"
+while save said "click Run Docking first".
+
+The redock also plans the steps the last run never reached when it did not
+complete (`status != "completed"`: stopped or failed part-way), and allows
+them past `compute_rerun_steps()`'s `original_services` intersection, which
+otherwise only allows executed steps. Without that, a session stopped during
+its first dock step could never dock again. On the orchestrator side,
+`execute_workflow()`'s results merge no longer counts a requested-but-
+unfinished step as executed, and drops that step's older (now stale) result
+unless this run recorded its own — so a stopped redock no longer reports
+`dock` as executed next to the previous run's `visualize`.
 
 ### Safety Properties
 
@@ -369,15 +387,19 @@ showed exactly that. Its results came from revision 10's parameters, five
 restores followed and none was docked, and a save after Load would have
 labelled the bundle revision 20.
 
-The CLI's save and the GUI's redock still rely on in-memory `pending` alone.
-`parameters_ran()` could close the redock half of the limitation above too.
-That is left to Review Stage R1 (see `dev_plan.md`).
+The CLI's `save results as` checks `parameters_ran()` too (Review Stage R1,
+Phase 13): its `pending` is per-process, so a revision restored in the GUI
+or in an earlier CLI process would otherwise be saved over results it never
+produced.
 
 **Overwrite and fallback name (Stage 13.3, CLI + GUI).**
-`save_results_bundle(..., overwrite=True)` removes the old bundle before
-writing. It used to only replace the subdirectories it copied again, so a
-narrower-scope overwrite kept stale artifacts. A filesystem error while
-writing (`OSError`) gives `success: False` with the partial bundle removed.
+`save_results_bundle(..., overwrite=True)` replaces the whole old bundle. It
+used to only replace the subdirectories it copied again, so a
+narrower-scope overwrite kept stale artifacts. The new bundle is written to
+a `.<name>.partial` directory next to it and swapped in only once complete
+(Review Stage R1, Phase 13 — it used to delete the old bundle first, so a
+failed overwrite lost it). A filesystem error while writing (`OSError`)
+gives `success: False`, removes the partial copy and keeps the old bundle.
 `timestamped_bundle_name()` gives the `<name>_HHMMSS` fallback. If that name
 is taken, it adds `_2`, `_3`, ..., and it shortens long names to stay within
 64 characters. The CLI now prints the final name.

@@ -30,12 +30,21 @@ _WIDGET_DEFAULTS = {
     "param_max_workers": DETECTED_CPU_COUNT,
 }
 
+# The box picker's size number_inputs. Seeded here rather than via the
+# widgets' value= argument: these keys are also written through
+# st.session_state (sync from the Docking Box fields, re-assignment in
+# init()), and Streamlit warns when a widget has both.
+_PICKER_BOX_DEFAULTS = {"picker_box_x": 20.0, "picker_box_y": 20.0, "picker_box_z": 20.0}
+
 # Keyed widgets whose values must survive a run that stops (st.rerun())
 # before rendering them -- see init(). Not the file uploaders (Streamlit
-# forbids setting them via session state) nor the box picker's size inputs
-# (they pass value=, and are re-synced from the Docking Box fields anyway).
+# forbids setting them via session state). The picker sizes must be in
+# here (Review Stage R1, Phase 13): when one was dropped, its input came
+# back at the default and the picker's resize mirror then wrote that
+# default into the real Docking Box fields.
 _PERSISTED_WIDGET_KEYS = (
-    *_WIDGET_DEFAULTS, "input_mode", "revision_to_restore", "save_bundle_name", "save_scope",
+    *_WIDGET_DEFAULTS, *_PICKER_BOX_DEFAULTS,
+    "input_mode", "revision_to_restore", "save_bundle_name", "save_scope",
 )
 
 # Shared by init() (first load) and start_new_session() (detaching from a
@@ -84,7 +93,7 @@ def init() -> None:
     if "interactive_session" not in st.session_state:
         st.session_state.interactive_session = InteractiveSession()
 
-    for key, default in _WIDGET_DEFAULTS.items():
+    for key, default in {**_WIDGET_DEFAULTS, **_PICKER_BOX_DEFAULTS}.items():
         if key not in st.session_state:
             st.session_state[key] = default
 

@@ -609,6 +609,17 @@ def _handle_save_results(
         print("   Run 'rerun' first, or 'undo' to revert parameters.")
         return False
 
+    # The on-disk form of the check above (`pending` is per-process): the
+    # latest parameters, e.g. a revision restored in the GUI or an earlier
+    # CLI process, never ran, so the results on disk aren't theirs.
+    if not session.state_manager.parameters_ran():
+        print(
+            f"❌ Cannot save: the parameters (revision {session.state_manager.get_parameters_revision()}) "
+            "have not been run yet."
+        )
+        print("   Run 'rerun' first, or 'undo' to the revision the results came from.")
+        return False
+
     job_dir = session.state_manager.job_dir
     scope: str = (intent_result or {}).get("scope") or "all"
     name: Optional[str] = (intent_result or {}).get("name")

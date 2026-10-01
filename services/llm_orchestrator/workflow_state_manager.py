@@ -194,6 +194,20 @@ class WorkflowStateManager:
         a restart. It only says that a step ran, not that the run completed,
         so callers check the run's status as well. Also True when no
         parameters were ever checkpointed (nothing to be ahead of).
+
+        NOTE (Review Stage R1, Phase 13, altitude finding #5, deferred): this
+        and ``InteractiveSession.pending_changed_params`` are two sources of
+        truth for "have these parameters run" -- the set is exact but lost
+        on Load/restart, this survives but is a boolean, so the GUI seeds
+        the set from it on Load with ``CORE_PARAMS`` (an over-approximation:
+        a full rerun). Fix: record the parameters revision each *completed*
+        run used; pending keys are then the diff of that revision against
+        the latest -- exact, persistent, replacing both. Touches the
+        orchestrator, this class and both front ends, so its own stage.
+        Trigger: a third caller needing "did these params run", the two
+        disagreeing in a real session, or users objecting to the full
+        rerun after a Load. See dev_plan.md Phase 13 Future Work and
+        docs/reviews/stage_13_r1.md.
         """
         params_revision = self.get_parameters_revision()
         if params_revision is None:

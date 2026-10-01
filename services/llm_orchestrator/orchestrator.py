@@ -709,7 +709,9 @@ class WorkflowOrchestrator:
         # merged in as if current). Deferred: today every caller reaches
         # execute_workflow() via rerun_planner.compute_rerun_steps(), which
         # always includes every downstream step when an upstream one
-        # reruns, so the stale-merge case cannot occur in practice yet.
+        # reruns, so the stale-merge case cannot occur in practice yet. (A
+        # run that stops or fails part-way did hit it; that case is handled
+        # below -- Review Stage R1, Phase 13.)
         # Revisit if a caller ever invokes execute_workflow() with a
         # services list computed by something other than
         # compute_rerun_steps() (see dev_plan.md Future Work).
@@ -721,8 +723,22 @@ class WorkflowOrchestrator:
                 if existing_results:
                     merged_step_results = dict(existing_results.get("results", {}))
                     merged_step_results.update(results.get("results", {}))
+                    # A step this call was asked to run but didn't finish
+                    # (stopped, cancelled or failed part-way) is no longer
+                    # executed, and an older result for it is stale: drop it
+                    # unless this call recorded one of its own (a stopped
+                    # dock's partial result). Without this a stopped redock
+                    # counted dock as executed and kept the previous run's
+                    # visualize next to it (Review Stage R1, Phase 13).
+                    this_run = set(results["services_executed"])
+                    for step in set(services) - this_run:
+                        if step not in results.get("results", {}):
+                            merged_step_results.pop(step, None)
+                    previously_executed = set(existing_results.get("services_executed", [])) - set(services)
                     results["results"] = merged_step_results
-                    results["services_executed"] = [s for s in WORKFLOW_STEPS if s in merged_step_results]
+                    results["services_executed"] = [
+                        s for s in WORKFLOW_STEPS if s in this_run or s in previously_executed
+                    ]
                     if not results.get("job_name") and existing_results.get("job_name"):
                         results["job_name"] = existing_results["job_name"]
 

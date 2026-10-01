@@ -60,7 +60,9 @@ def resolve_prepared_protein_pdb_path(last_results: Optional[Dict[str, Any]]) ->
 # Bundle name validation
 # ---------------------------------------------------------------------------
 
-_VALID_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SAVED_RESULTS_DIRNAME = "saved_results"
+_MAX_BUNDLE_NAME_LEN = 64
+_VALID_BUNDLE_NAME_RE = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9._-]{{0,{_MAX_BUNDLE_NAME_LEN - 1}}}$")
 _RESERVED_NAMES: frozenset = frozenset(
     {"checkpoints", "latest", "downloads", "prepared", "docking_results", "visualization"}
 )
@@ -75,14 +77,11 @@ def validate_bundle_name(name: str) -> Optional[str]:
     if not _VALID_BUNDLE_NAME_RE.match(name):
         return (
             "Bundle name must start with a letter or digit and contain only "
-            "letters, digits, '.', '-', '_' (max 64 characters)."
+            f"letters, digits, '.', '-', '_' (max {_MAX_BUNDLE_NAME_LEN} characters)."
         )
     if name.lower() in _RESERVED_NAMES:
         return f"'{name}' is a reserved directory name. Please choose another name."
     return None
-
-
-_MAX_BUNDLE_NAME_LEN = 64
 
 
 def timestamped_bundle_name(job_dir: Path, name: str) -> str:
@@ -94,7 +93,7 @@ def timestamped_bundle_name(job_dir: Path, name: str) -> str:
     saves within the same second would otherwise collide).
     """
     suffix = datetime.now(timezone.utc).strftime("%H%M%S")
-    saved = Path(job_dir) / "saved_results"
+    saved = Path(job_dir) / SAVED_RESULTS_DIRNAME
     counter = 1
     while True:
         tail = f"_{suffix}" if counter == 1 else f"_{suffix}_{counter}"
@@ -147,7 +146,7 @@ def save_results_bundle(
         append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' rejected: {err}")
         return {"success": False, "bundle_path": None, "artifacts": [], "error": err}
 
-    bundle_dir = job_dir / "saved_results" / name
+    bundle_dir = job_dir / SAVED_RESULTS_DIRNAME / name
 
     if bundle_dir.exists() and not overwrite:
         append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' failed: bundle already exists")
@@ -158,21 +157,33 @@ def save_results_bundle(
             "error": "exists",
         }
 
+    # The bundle is written next to its final place and only then swapped in,
+    # so a failed overwrite (disk full) keeps the old bundle instead of
+    # destroying it (Review Stage R1, Phase 13). Valid bundle names can't
+    # start with '.', so these never collide with a real bundle.
+    staging_dir = bundle_dir.with_name(f".{name}.partial")
+    replaced_dir = bundle_dir.with_name(f".{name}.replaced")
     try:
+        for leftover in (staging_dir, replaced_dir):
+            shutil.rmtree(leftover, ignore_errors=True)
+        staging_dir.mkdir(parents=True)
+        included = _write_bundle_contents(job_dir, staging_dir, name, scope, revision, parameters)
+        # Overwrite replaces the whole bundle: merging would keep e.g. an
+        # older "all" save's visualization/ under metadata that now says
+        # scope=docking.
         if bundle_dir.exists():
-            # Overwrite replaces the whole bundle: copying only this scope's
-            # subdirs would keep e.g. an older "all" save's visualization/
-            # under metadata that now says scope=docking.
-            shutil.rmtree(bundle_dir)
-        bundle_dir.mkdir(parents=True)
-        included = _write_bundle_contents(job_dir, bundle_dir, name, scope, revision, parameters)
+            bundle_dir.rename(replaced_dir)
+        staging_dir.rename(bundle_dir)
     except OSError as exc:
         # Filesystem boundary (disk full, permissions): report a failed save
-        # instead of crashing the caller, and leave no half-written bundle
-        # behind for the next attempt to collide with.
-        shutil.rmtree(bundle_dir, ignore_errors=True)
+        # instead of crashing the caller, leave no half-written bundle
+        # behind, and put a replaced bundle back.
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        if replaced_dir.exists() and not bundle_dir.exists():
+            replaced_dir.rename(bundle_dir)
         append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' failed: {exc}")
         return {"success": False, "bundle_path": None, "artifacts": [], "error": f"Could not write bundle: {exc}"}
+    shutil.rmtree(replaced_dir, ignore_errors=True)
 
     append_job_log(
         job_dir, "INFO",

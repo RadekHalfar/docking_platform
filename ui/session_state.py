@@ -98,12 +98,14 @@ def init() -> None:
             st.session_state[key] = default
 
     # Streamlit drops a keyed widget's value at the end of any run that
-    # didn't render it -- including a run cut short by st.rerun(), so e.g.
-    # the chat column's rerun after a finished docking run (or after a chat
-    # message) wiped every parameter field typed into the panel to its
-    # right, and the defaults above then came back empty. A value
-    # (re)assigned through st.session_state during a run is exempt from
-    # that run's cleanup, so re-assign them first thing every run.
+    # didn't render it -- a widget in a branch not taken this run (another
+    # input mode, the picker sizes with no receptor loaded), or one after a
+    # st.rerun() that cut the run short (a sidebar Load/Delete runs before
+    # every panel; Run Docking before the results panel's save fields).
+    # Originally found when the chat column's reply reruns (gone since Stage
+    # 13.4) wiped every parameter field. A value (re)assigned through
+    # st.session_state during a run is exempt from that run's cleanup, so
+    # re-assign them first thing every run.
     for key in _PERSISTED_WIDGET_KEYS:
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
@@ -148,6 +150,7 @@ def clear_box_picker_state() -> None:
     st.session_state.pop("picked_center", None)
     st.session_state.pop("_box_picker_last_size", None)
     st.session_state.pop("_pending_geometry_target", None)
+    st.session_state.pop("_box_picker_error", None)
 
 
 def start_new_session() -> None:

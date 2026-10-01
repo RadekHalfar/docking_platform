@@ -192,9 +192,8 @@ def test_box_picker_without_receptor_offers_load_button(app, viewer):
 def test_deferred_geometry_command_applies_and_shows_reply(app, viewer):
     # A chat geometry command started a fetch/prepare job (no receptor was
     # loaded yet); that job has now finished. The page must apply the
-    # pending target, reset the bridge, and -- the 2026-09-30 fix -- rerun
-    # so the chat reply actually appears (the chat column renders before
-    # the box picker does).
+    # pending target, reset the bridge, and show the chat reply (the
+    # 2026-09-30 fix; since Stage 13.4 in the same run, see below).
     expected_center, _ = compute_protein_center_and_box(FIXTURE_PDB.read_text())
     app.session_state["box_picker_bridge"] = FakeBridge(
         result={
@@ -1045,3 +1044,123 @@ def test_restore_drops_box_picker_receptor_only_for_another_protein(app, output_
 
     assert not at.exception
     assert ("_box_picker_receptor_pdb" in at.session_state) is kept
+
+
+# ---------------------------------------------------------------------------
+# Stage 13.4: the chat history is drawn last -- a reply shows in the same run
+# that posts it, with no st.rerun() just to make it visible
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def page_reruns(monkeypatch):
+    """Records every st.rerun() ui/app.py calls (then reruns as usual)."""
+    import sys
+
+    real_rerun = st.rerun
+    calls = []
+
+    def _rerun(*args, **kwargs):
+        caller = sys._getframe(1).f_code
+        if caller.co_filename.endswith("app.py"):
+            calls.append(caller.co_name)
+        return real_rerun(*args, **kwargs)
+
+    monkeypatch.setattr(st, "rerun", _rerun)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "result, error, expected",
+    [
+        ({"status": "completed", "results": {}}, None, "Workflow completed successfully!"),
+        ({"status": "cancelled"}, None, "Session stopped."),
+        (None, "boom", "Workflow failed: boom"),
+    ],
+)
+def test_finished_run_reply_shows_without_rerun(app, page_reruns, result, error, expected):
+    app.session_state["bridge"] = FakeBridge(result=result, error=error)
+    app.session_state["job_id"] = "job_20260930_000000_abcdef"
+
+    at = app.run()
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == expected
+    assert page_reruns == []
+
+
+def test_deferred_geometry_reply_shows_without_rerun(app, viewer, page_reruns):
+    app.session_state["box_picker_bridge"] = FakeBridge(
+        result={
+            "status": "completed",
+            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
+        }
+    )
+    app.session_state["_pending_geometry_target"] = "center"
+
+    at = app.run()
+
+    assert not at.exception
+    assert _chat_texts(at)[-1].startswith("Protein center set to")
+    assert viewer.last("box_picker") is not None  # the picker shows the receptor this run
+    assert page_reruns == []
+
+
+def test_failed_receptor_prep_shows_error_in_picker_and_chat_without_rerun(app, page_reruns):
+    app.session_state["box_picker_bridge"] = FakeBridge(
+        result={"status": "failed", "errors": ["RCSB download failed"]}
+    )
+    app.session_state["_pending_geometry_target"] = "box_size"
+
+    at = app.run()
+
+    assert not at.exception
+    assert "Could not prepare receptor: RCSB download failed" in [e.value for e in at.error]
+    assert _chat_texts(at)[-1] == "Could not fetch the protein: RCSB download failed"
+    assert page_reruns == []
+    # Shown once, like the inline st.error it replaces.
+    at.run()
+    assert not [e for e in at.error if "Could not prepare receptor" in e.value]
+
+
+def test_chat_command_reply_shows_without_rerun(app, page_reruns):
+    at = app.run()
+
+    at.chat_input[0].set_value("show history").run()
+
+    assert not at.exception
+    assert _chat_texts(at)[-2:] == ["show history", "No active session — no history yet."]
+    assert page_reruns == []
+
+
+def test_run_docking_with_missing_params_replies_without_rerun(app, page_reruns):
+    at = _click(app.run(), "Run Docking")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1].startswith("Cannot start — required parameters missing")
+    assert page_reruns == []
+
+
+def test_redock_with_nothing_changed_replies_without_rerun(app, output_base, page_reruns):
+    _active_session_with_two_revisions(app, output_base)
+    # The fixture's checkpoint holds the validator's max_workers default; a
+    # real GUI run checkpoints the form's own value, so match it here.
+    app.session_state["param_max_workers"] = _validated(_REV2_PARAMS)["max_workers"]
+
+    at = _click(app.run(), "Run Docking")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "No parameter changes detected — nothing to redock."
+    assert page_reruns == []
+
+
+def test_save_session_replies_without_rerun(app, output_base, page_reruns):
+    _active_session_with_two_revisions(app, output_base)
+
+    at = _click(app.run(), "Save Session")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] in (
+        "No parameter changes to save.",
+        "Parameters saved. Click **Run Docking** to apply them.",
+    )
+    assert page_reruns == []

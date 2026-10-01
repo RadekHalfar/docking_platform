@@ -155,11 +155,11 @@ def _apply_protein_geometry(receptor_path: Path, target: str) -> None:
     and report the result in chat.
 
     Shared by the immediate path (a receptor is already prepared) and the
-    deferred path (``_render_box_picker()``'s bridge-completion handling,
+    deferred path (``_process_box_picker_bridge()``,
     once a just-started fetch/prepare job finishes). Syncing the picker's
     state here too (not just the manual fields) matters for the immediate
     path specifically: no bridge transition happens there, so
-    ``_render_box_picker()``'s completion handling -- the only other place
+    ``_process_box_picker_bridge()`` -- the only other place
     that seeds the picker -- never runs; without this the box picker's
     viewer would keep showing a stale/no box after a geometry command even
     though the manual fields were updated correctly.
@@ -198,8 +198,8 @@ def _handle_protein_geometry_command(target: str) -> None:
     enough to do that (a protein source is set), this kicks off the same
     background get_input_files+prepare_protein job "Load receptor for box
     picking" uses, via ``_start_box_picker_prep()``, and stashes *target* in
-    ``_pending_geometry_target`` -- ``_render_box_picker()``'s
-    bridge-completion handling applies it once that job completes --
+    ``_pending_geometry_target`` -- ``_process_box_picker_bridge()``
+    applies it once that job completes --
     instead of failing outright. This is what makes the geometry commands
     usable on a first message, before any button has been clicked.
     """
@@ -330,7 +330,6 @@ def _handle_run_docking() -> None:
                 "content": f"Cannot start — required parameters missing: **{', '.join(missing)}**.",
             }
         )
-        st.rerun()
         return
 
     job_id = generate_job_id()
@@ -376,7 +375,6 @@ def _handle_save_session() -> None:
         st.session_state.messages.append(
             {"role": "assistant", "content": "Parameters saved. Click **Run Docking** to apply them."}
         )
-    st.rerun()
 
 
 def _handle_redock_request(session, params: dict) -> None:
@@ -412,7 +410,6 @@ def _handle_redock_request(session, params: dict) -> None:
         st.session_state.messages.append(
             {"role": "assistant", "content": "No parameter changes detected — nothing to redock."}
         )
-        st.rerun()
         return
 
     if changed:
@@ -425,6 +422,9 @@ def _handle_redock_request(session, params: dict) -> None:
         st.session_state.messages.append(
             {"role": "assistant", "content": "Parameters updated, but no steps need to be re-executed."}
         )
+        # Not for the reply (the chat history is drawn last): the checkpoint
+        # above is a new revision, and the Revision history panel already
+        # rendered this run.
         st.rerun()
         return
 
@@ -1017,90 +1017,143 @@ def _render_failed_session_history() -> None:
 
 # ── Chat panel ────────────────────────────────────────────────────────────────
 
-def render_chat() -> None:
+def _process_docking_bridge() -> None:
+    """Stream a running job's log lines into the chat and, once it has
+    finished, record the outcome and post the reply -- exactly once
+    (``_job_done``). Runs before the layout (see ``_process_bridges``)."""
+    bridge: OrchestratorBridge = st.session_state.bridge
+    if not bridge:
+        return
+
+    # Stream progress lines from a running job into the last assistant message.
+    if bridge.is_running():
+        new_lines = bridge.get_log_lines()
+        if new_lines and st.session_state.messages:
+            st.session_state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
+        return
+
+    if st.session_state.get("_job_done"):
+        return
+    result = bridge.get_result()
+    error = bridge.get_error()
+    # Sync the session's view of "what's been run" from the already-merged
+    # result execute_workflow() returns, so a subsequent redock's
+    # original_services/last_results reflect this run instead of going
+    # stale -- reusing the on-disk merge execute_workflow() already does
+    # rather than re-deriving it here (see docs/reviews/stage_11_1_r1.md
+    # finding #5).
+    session = st.session_state.interactive_session
+    if result is not None and session.has_active_job() and session.job_id == st.session_state.job_id:
+        session.last_results = result
+
+    if result and result.get("status") == "completed":
+        st.session_state["_job_done"] = True
+        # The checkpointed parameters have now actually been run. Only a
+        # *completed* run clears them (stricter than the CLI): after a
+        # stop/failure the results on disk still predate them, so the next
+        # redock must still include them.
+        if session.job_id == st.session_state.job_id:
+            session.pending_changed_params = set()
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Workflow completed successfully!"}
+        )
+    elif error:
+        st.session_state["_job_done"] = True
+        st.session_state.messages.append(
+            {"role": "assistant", "content": f"Workflow failed: {error}"}
+        )
+    elif result and result.get("status") == "cancelled":
+        st.session_state["_job_done"] = True
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "Session stopped."}
+        )
+    elif result and result.get("status") == "failed":
+        st.session_state["_job_done"] = True
+        failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
+        st.session_state.messages.append(
+            {"role": "assistant", "content": f"Workflow failed: {failure_detail}"}
+        )
+
+
+def _process_box_picker_bridge() -> None:
+    """Handle a finished "Load receptor for box picking" job: record the
+    receptor, apply a geometry chat command that was waiting for it, and
+    clear the bridge. Runs before the layout (see ``_process_bridges``), so
+    the picker_box_*/param_* keys it writes are set before their widgets
+    exist, and its chat reply is drawn this same run."""
+    bridge: OrchestratorBridge | None = st.session_state.get("box_picker_bridge")
+    if not bridge or bridge.is_running():
+        return
+
+    error = bridge.get_error()
+    result = bridge.get_result()
+    # A geometry chat command ("use protein center...") may have started
+    # this very job (no receptor was loaded yet) -- pop its target now so
+    # it's resolved (or reported as failed) exactly once, however this job
+    # turns out.
+    pending_target = st.session_state.pop("_pending_geometry_target", None)
+    panel_error = None  # shown in the picker section (_render_box_picker)
+    failure = None  # chat reply for a pending geometry command
+    if error:
+        panel_error = f"Could not prepare receptor: {error}"
+        failure = f"Could not fetch the protein: {error}"
+    elif result and result.get("status") == "completed":
+        pdb_path = resolve_prepared_protein_pdb_path(result)
+        if pdb_path:
+            st.session_state["_box_picker_receptor_pdb"] = pdb_path
+            if pending_target:
+                _apply_protein_geometry(_resolve_container_path(pdb_path), pending_target)
+            _seed_picker_box_from_manual_inputs()
+        else:
+            panel_error = "Receptor was prepared but no PDB path was returned."
+            failure = "Receptor was prepared but no PDB path was returned -- could not set this."
+    elif result and result.get("status") == "failed":
+        failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
+        panel_error = "Could not prepare receptor: " + failure_detail
+        failure = f"Could not fetch the protein: {failure_detail}"
+    if panel_error:
+        st.session_state["_box_picker_error"] = panel_error
+    if pending_target and failure:
+        st.session_state.messages.append({"role": "assistant", "content": failure})
+    st.session_state.box_picker_bridge = None
+
+
+def _process_bridges() -> None:
+    """Fold both background bridges' progress/outcome into session state
+    before anything is drawn. Called ahead of the layout -- even ahead of
+    the sidebar, whose buttons can cut a run short with st.rerun() -- so a
+    finished job is handled in the same run that first sees it, and the
+    replies it posts are in ``messages`` before the chat history is drawn
+    (at the end of the script, see ``_render_chat_history``)."""
+    _process_docking_bridge()
+    _process_box_picker_bridge()
+
+
+def render_chat():
+    """Chat column: header, an (empty) history container and the input.
+
+    Returns the history container; the module bottom fills it via
+    ``_render_chat_history`` once every panel has run, so a reply appended
+    anywhere during this run -- a chat command, a button in another column,
+    a finished bridge -- shows now, not after the next interaction.
+    """
     job_id = st.session_state.get("job_id")
     if job_id:
         st.caption(f"Session: {_job_label(job_id, st.session_state.get('job_name'))}")
     st.subheader("Chat")
 
-    # Stream progress lines from a running job into the last assistant message.
-    bridge: OrchestratorBridge = st.session_state.bridge
-    if bridge and bridge.is_running():
-        new_lines = bridge.get_log_lines()
-        if new_lines and st.session_state.messages:
-            st.session_state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
-
-    with st.container(height=1000):
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-    # Handle job completion between polls.
-    if bridge and not bridge.is_running():
-        result = bridge.get_result()
-        error = bridge.get_error()
-        if not st.session_state.get("_job_done"):
-            # Sync the session's view of "what's been run" from the
-            # already-merged result execute_workflow() returns, so a
-            # subsequent redock's original_services/last_results reflect
-            # this run instead of going stale -- reusing the on-disk merge
-            # execute_workflow() already does rather than re-deriving it here
-            # (see docs/reviews/stage_11_1_r1.md finding #5).
-            session = st.session_state.interactive_session
-            if result is not None and session.has_active_job() and session.job_id == st.session_state.job_id:
-                session.last_results = result
-
-            if result and result.get("status") == "completed":
-                st.session_state["_job_done"] = True
-                # The checkpointed parameters have now actually been run.
-                # Only a *completed* run clears them (stricter than the
-                # CLI): after a stop/failure the results on disk still
-                # predate them, so the next redock must still include them.
-                if session.job_id == st.session_state.job_id:
-                    session.pending_changed_params = set()
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": "Workflow completed successfully!"}
-                )
-            elif error:
-                st.session_state["_job_done"] = True
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Workflow failed: {error}"}
-                )
-            elif result and result.get("status") == "cancelled":
-                st.session_state["_job_done"] = True
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": "Session stopped."}
-                )
-            elif result and result.get("status") == "failed":
-                st.session_state["_job_done"] = True
-                failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Workflow failed: {failure_detail}"}
-                )
-            # The messages above were appended after this run already drew
-            # the chat history, and with the bridge finished the
-            # bottom-of-page poll no longer reruns -- rerun once so the reply
-            # actually shows (can't loop: _job_done is now set).
-            #
-            # NOTE (Review Stage R1, Phase 13, altitude finding #1, deferred):
-            # this rerun, the box picker's rerun after a pending geometry
-            # command, and the on_click-only rule for reply-posting buttons
-            # all work around one thing -- the chat history is drawn before
-            # the code that appends replies runs. Symptom: every new reply
-            # source needs its own workaround (and early reruns are what
-            # forced _PERSISTED_WIDGET_KEYS). Fix: create the history
-            # container here but fill it at the end of the script (the
-            # params-summary placeholder trick), and handle both bridges'
-            # completion before the layout. Trigger: the next feature that
-            # posts a chat reply from outside the chat column, or another
-            # "reply only shows after the next click" bug. See dev_plan.md
-            # Phase 13 Future Work and docs/reviews/stage_13_r1.md.
-            if st.session_state.get("_job_done"):
-                st.rerun()
+    history = st.container(height=1000)
 
     if prompt := st.chat_input("Describe your workflow..."):
         _on_chat_submit(prompt)
-        st.rerun()
+    return history
+
+
+def _render_chat_history(container) -> None:
+    with container:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
 
 # ── Parameters panel ──────────────────────────────────────────────────────────
@@ -1603,43 +1656,10 @@ def _render_box_picker() -> None:
         st.info("Preparing receptor for box picking...")
         return
 
-    if bridge and not bridge.is_running():
-        error = bridge.get_error()
-        result = bridge.get_result()
-        # A geometry chat command ("use protein center...") may have started
-        # this very job (no receptor was loaded yet) -- pop its target now
-        # so it's resolved (or reported as failed) exactly once, however
-        # this job turns out.
-        pending_target = st.session_state.pop("_pending_geometry_target", None)
-        failure = None  # chat reply for a pending geometry command
-        if error:
-            st.error(f"Could not prepare receptor: {error}")
-            failure = f"Could not fetch the protein: {error}"
-        elif result and result.get("status") == "completed":
-            pdb_path = resolve_prepared_protein_pdb_path(result)
-            if pdb_path:
-                st.session_state["_box_picker_receptor_pdb"] = pdb_path
-                if pending_target:
-                    _apply_protein_geometry(_resolve_container_path(pdb_path), pending_target)
-                _seed_picker_box_from_manual_inputs()
-            else:
-                st.error("Receptor was prepared but no PDB path was returned.")
-                failure = "Receptor was prepared but no PDB path was returned -- could not set this."
-        elif result and result.get("status") == "failed":
-            failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
-            st.error("Could not prepare receptor: " + failure_detail)
-            failure = f"Could not fetch the protein: {failure_detail}"
-        if pending_target and failure:
-            st.session_state.messages.append({"role": "assistant", "content": failure})
-        st.session_state.box_picker_bridge = None
-        # The chat column already rendered this run, and with the bridge
-        # cleared the bottom-of-page polling rerun won't fire -- rerun once so
-        # the reply appended above actually shows up (this also lets the
-        # picker_box_* values written by _apply_protein_geometry settle
-        # before their number_inputs render, avoiding Streamlit's
-        # default-value-vs-Session-State warning).
-        if pending_target:
-            st.rerun()
+    # Set by _process_box_picker_bridge() when the prep job failed; shown
+    # once, like an inline st.error would be.
+    if panel_error := st.session_state.pop("_box_picker_error", None):
+        st.error(panel_error)
 
     receptor_raw = st.session_state.get("_box_picker_receptor_pdb")
     if not receptor_raw:
@@ -1850,9 +1870,11 @@ def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, li
     return False
 
 
-# The Save results buttons are on_click callbacks: the chat column renders
-# before the results panel, so a reply appended by an inline button would
-# only show on the next interaction.
+# The Save results buttons are on_click callbacks so that the save (and any
+# _save_conflict it records) happens before this panel renders: the
+# Overwrite / Save as buttons and the block-reason caption then reflect it in
+# the same run. (Their chat replies would show either way -- the history is
+# drawn last.)
 
 def _on_save_results_click() -> None:
     name = (st.session_state.get("save_bundle_name") or "").strip()
@@ -2177,18 +2199,27 @@ def _render_comparison_table(comparison: dict) -> None:
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
+_process_bridges()
+
 render_sidebar()
 
 chat_col, params_col, results_col = st.columns([35, 25, 40])
 
 with chat_col:
-    render_chat()
+    chat_history = render_chat()
 
 with params_col:
     render_parameters_panel()
 
 with results_col:
     render_results_panel()
+
+# Drawn last, into the container render_chat() placed at the top of the chat
+# column: any code in this run may append to st.session_state.messages (a chat
+# command, a button in another column, a finished bridge) and the reply shows
+# now -- no st.rerun() just to make a reply visible. Must stay above the
+# polling rerun below.
+_render_chat_history(chat_history)
 
 # Keep polling while a docking job or the box-picker's receptor prep is in
 # progress — 2 s delay avoids spinning the CPU.

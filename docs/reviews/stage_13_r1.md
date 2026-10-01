@@ -241,6 +241,10 @@ still holds, unchanged.
    small stage** — it reorders the whole page's render flow, which a review
    pass shouldn't. Trigger comment: `ui/app.py`, `render_chat()` above the
    completion rerun. Future Work: `dev_plan.md` Phase 13.
+   **Done in Stage 13.4** (`dev_plan.md`): history drawn last, bridges
+   handled in `_process_bridges()` before the layout, the reply-only reruns
+   removed. `_PERSISTED_WIDGET_KEYS` is still needed for the other early
+   reruns and for widgets that are only drawn in some runs.
 2. **Box geometry stored twice and mirrored both ways** (altitude #2). Three
    Phase 13 fixes and correctness #1 were this mirror drifting. Fix: Docking
    Box fields as the only state. **Recommendation: worth doing, own stage**

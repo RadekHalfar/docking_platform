@@ -265,6 +265,8 @@ python nlp_orchestrator.py --interactive
 #
 # Note: save is blocked when parameters have been changed but not yet re-executed.
 # Run 'rerun' first to sync results with the current parameters.
+# The GUI has the same history / undo / save-as commands (panel controls and
+# chat) -- see docs/GUI_GUIDE.md.
 
 # Example outputs:
 # 🤖 Parsing workflow...
@@ -356,7 +358,7 @@ docking_platform/
 │       ├── job_comparator.py   # Cross-job binding-affinity comparison
 │       └── job_cleanup.py      # Opt-in job-directory retention/cleanup
 │
-├── ui/                          # Streamlit web UI (one-shot workflows only, see docs/STATE_PERSISTENCE_STRATEGY.md)
+├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
 │   ├── session_state.py        # Session state init/parameter sync
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU-cap detection
@@ -491,7 +493,7 @@ python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
 
 ## Documentation
 
-- **[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)** - Streamlit UI guide: 3Dmol.js viewer, visual docking-box picker, download formats
+- **[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)** - Streamlit UI guide: sessions/redock, revision history + undo, saved result bundles, 3Dmol.js viewer, visual docking-box picker, download formats
 - **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - Guide to verbosity levels (`low`, `normal`, `mcp_demo`)
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages

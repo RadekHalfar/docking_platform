@@ -184,6 +184,25 @@ class WorkflowStateManager:
             return None
         return int(payload["revision"])
 
+    def parameters_ran(self) -> bool:
+        """Whether any workflow step ran after the latest parameters were
+        checkpointed (or restored), i.e. the outputs on disk can come from them.
+
+        False after a checkpoint no run followed, such as a restore that was
+        never redocked or a redock plan that was cancelled. Unlike
+        ``InteractiveSession.pending_changed_params``, this survives a Load or
+        a restart. It only says that a step ran, not that the run completed,
+        so callers check the run's status as well. Also True when no
+        parameters were ever checkpointed (nothing to be ahead of).
+        """
+        params_revision = self.get_parameters_revision()
+        if params_revision is None:
+            return True
+        return any(
+            event.get("event_type") == "state_update" and int(event.get("revision", 0)) > params_revision
+            for event in self._read_manifest().get("events", [])
+        )
+
     def save_draft_parameters(self, parameters: Dict[str, Any]) -> None:
         """Persist in-progress parameter edits that haven't been run/checkpointed
         yet. Unlike save_parameters_checkpoint, this is overwritten in place --

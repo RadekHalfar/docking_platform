@@ -195,10 +195,11 @@ For docking one protein against every ligand file in a folder, see
 This section describes `nlp_orchestrator.py`'s interactive terminal
 session. The Streamlit web UI (`ui/`) runs on the same
 `InteractiveSession`/`WorkflowStateManager` and covers part of it with its
-own controls: redocking after a parameter change, Load/resume, and revision
-history/undo. GUI chat also accepts `show history` and `undo N`, resolved
-deterministically without an LLM call. Named result bundles (`save results
-as`) are CLI-only for now. See [docs/GUI_GUIDE.md](GUI_GUIDE.md). See
+own controls: redocking after a parameter change, Load/resume, revision
+history/undo, and named result bundles. GUI chat also accepts `show
+history`, `undo N` and `save results/docking/visualization as <name>`,
+resolved deterministically without an LLM call. See
+[docs/GUI_GUIDE.md](GUI_GUIDE.md). See
 [docs/STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md) for the
 persistence layer these features are built on.
 
@@ -409,9 +410,9 @@ Save scope keywords:
 | `save docking as <name>` | docking results only |
 | `save visualization as <name>` | visualization only |
 
-If the bundle name already exists, the system asks for overwrite confirmation or offers an auto-suffixed name.
+If the bundle name already exists, the CLI asks `Overwrite? [y/N]`. Overwriting replaces the whole old bundle. Declining saves under `<name>_HHMMSS` instead (`_2`, `_3`, ... appended if that is taken too), and the success line prints that final name. The GUI offers the same two choices as buttons (see [docs/GUI_GUIDE.md](GUI_GUIDE.md#saving-results-bundles)).
 
-Valid bundle names: `[A-Za-z0-9][A-Za-z0-9._-]{0,64}` — no path separators, no `..`, no reserved names.
+Valid bundle names: `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (max 64 characters) — no path separators, no `..`, no reserved names.
 
 ### Options
 

@@ -169,6 +169,55 @@ The same commands work in chat, without an LLM call: `show history` (or
 `history`) posts the table, and `undo 3` restores revision 3. A bare `undo`
 asks which revision.
 
+## Saving Results Bundles
+
+To keep a copy of a run's results under a name of your own, before a redock
+replaces them, open **Save results as…** in the results panel. It sits right
+below the 3D viewer, above **Session Log**.
+It appears only when you view the **active** session's completed results.
+Enter a **Bundle name**, choose what to **Include** (docking + visualization,
+docking results only, or visualization only) and click **Save results
+bundle**. The bundle is written to
+
+```
+orchestrator_output/job_<id>/saved_results/<name>/
+  metadata.json        ← name, scope, revision, timestamp, parameters
+  docking_results/     ← docking or all
+  visualization/       ← visualization or all
+  docking_box.json     ← the box from the session's parameters
+```
+
+This is the same layout the CLI's `save results as <name>` writes. The chat
+replies with the bundle's path and contents. The results panel's **Other
+Files** downloads don't list bundle files, since they are copies of files
+already listed there.
+
+The button is disabled, with the reason shown under it, while:
+
+- the session is running;
+- parameters changed since the last completed run (after a redock plan you
+  cancelled, a stopped or failed run, or **Restore revision**). The saved
+  results would not match the session's parameters. Click **Run Docking**
+  first, or restore the revision the results came from. This is read from
+  the session's revision history on disk, so it still applies after you
+  **Load** the session again or reload the page;
+- the session's last run did not complete.
+
+If the name already exists, choose **Overwrite**, which replaces the whole
+bundle, or **Save as `<name>_HHMMSS`** to keep both. **Cancel** dismisses
+the choice.
+
+Bundle names start with a letter or digit and contain only letters, digits,
+`.`, `-` and `_`, up to 64 characters. A few names are reserved, such as
+`checkpoints` and `visualization`.
+
+In chat, without an LLM call: `save results as trial_a`, `save docking as
+trial_a` or `save visualization as trial_a`. If the name exists, the chat
+points you to the same Overwrite / Save as buttons.
+
+Not to be confused with **Save Session** (next section), which saves the
+form's *parameters* as a draft, not results.
+
 ## Saving Parameters Without Docking
 
 Editing a parameter (e.g. the docking box size) does **not** persist to

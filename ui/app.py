@@ -14,6 +14,9 @@ from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import (
     compute_changed_params,
     resolve_prepared_protein_pdb_path,
+    save_results_bundle,
+    timestamped_bundle_name,
+    validate_bundle_name,
 )
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.rerun_planner import (
@@ -238,11 +241,15 @@ def _on_chat_submit(user_message: str) -> None:
         _handle_protein_geometry_command(geometry_target)
         return
 
-    # Only the revision commands are taken from the CLI's deterministic
-    # intents; everything else keeps the parameter-parsing path below.
+    # Only the revision and save commands are taken from the CLI's
+    # deterministic intents; everything else keeps the parameter-parsing
+    # path below.
     intent = _deterministic_intent(user_message)
     if intent is not None and intent["intent"] in ("show_history", "undo_revision"):
         _handle_history_chat_intent(intent)
+        return
+    if intent is not None and intent["intent"] == "save_results":
+        _handle_save_chat_intent(intent)
         return
 
     with st.spinner("Parsing with LLM..."):
@@ -558,6 +565,97 @@ def _handle_history_chat_intent(intent: dict) -> None:
         reply = "Which revision? e.g. `undo 3` — type `show history` to list them."
     else:
         reply = _undo_to_revision(int(intent["name"]))
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+
+_SAVE_SCOPES = ("all", "docking", "visualization")
+
+
+def _save_block_reason() -> str | None:
+    """Why the active session's results can't be saved right now, or None.
+
+    Shared by the Save results panel (shown as a caption) and the chat
+    ``save results as`` command (sent as the reply).
+    """
+    session = st.session_state.interactive_session
+    if not session.has_active_job():
+        return "No active session — run or load one first."
+    if _active_bridge_job_id() is not None:
+        return "A session is running — wait for it to finish before saving results."
+    if session.pending_changed_params:
+        changed = ", ".join(sorted(session.pending_changed_params))
+        return (
+            f"Parameters changed since the last completed run ({changed}) — "
+            "click **Run Docking** first, or restore a revision."
+        )
+    if not session.state_manager.parameters_ran():
+        # The on-disk form of the check above: still true after a Load or a
+        # restart, which reset `pending` (e.g. a restore never redocked).
+        return (
+            f"The parameters (revision {session.state_manager.get_parameters_revision()}) "
+            "have not been run yet — the results shown come from earlier parameters. "
+            "Click **Run Docking** first, or restore the revision the results came from."
+        )
+    result = _load_workflow_results(session.job_id)
+    if not result or result.get("status") != "completed":
+        return "The session's last run did not complete — there are no results to save."
+    return None
+
+
+def _save_results(name: str, scope: str, *, overwrite: bool = False) -> str:
+    """Save the active session's results as bundle *name* (the GUI's
+    ``save results as``) and return the reply to show.
+
+    Shared by the Save results panel's buttons (on_click callbacks) and the
+    chat command; never calls st.rerun(). A name that already exists is
+    not an error: it records ``_save_conflict``, which the panel renders as
+    Overwrite / Save as <name>_HHMMSS buttons.
+    """
+    reason = _save_block_reason()
+    if reason:
+        return f"Cannot save: {reason}"
+    err = validate_bundle_name(name)
+    if err:
+        return f"Invalid bundle name: {err}"
+
+    session = st.session_state.interactive_session
+    state_manager = session.state_manager
+    result = save_results_bundle(
+        state_manager.job_dir,
+        name,
+        scope,
+        state_manager.get_current_revision(),
+        state_manager.load_latest_parameters() or {},
+        overwrite=overwrite,
+    )
+    if result["error"] == "exists":
+        suggested = timestamped_bundle_name(state_manager.job_dir, name)
+        st.session_state["_save_conflict"] = {
+            "job_id": session.job_id, "name": name, "scope": scope, "suggested": suggested,
+        }
+        return (
+            f"A bundle named `{name}` already exists — choose **Overwrite** or "
+            f"**Save as {suggested}** under *Save results as…* in the results panel."
+        )
+    if not result["success"]:
+        return f"Save failed: {result['error']}"
+
+    st.session_state.pop("_save_conflict", None)
+    final_name = Path(result["bundle_path"]).name
+    lines = [f"Saved bundle `{final_name}` (scope: {scope}) to `{result['bundle_path']}`."]
+    if result["artifacts"]:
+        lines.append(f"Artifacts: {', '.join(result['artifacts'])}.")
+    else:
+        lines.append("Warning: no artifacts were available to copy into the bundle.")
+    return "\n\n".join(lines)
+
+
+def _handle_save_chat_intent(intent: dict) -> None:
+    """Answer a deterministic ``save results/docking/visualization as <name>``."""
+    if not intent.get("name"):
+        reply = "Give the bundle a name, e.g. `save results as run1`."
+    else:
+        reply = _save_results(intent["name"], intent.get("scope") or "all")
     st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
@@ -1722,6 +1820,74 @@ def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, li
     return False
 
 
+# The Save results buttons are on_click callbacks: the chat column renders
+# before the results panel, so a reply appended by an inline button would
+# only show on the next interaction.
+
+def _on_save_results_click() -> None:
+    name = (st.session_state.get("save_bundle_name") or "").strip()
+    reply = _save_results(name, st.session_state.get("save_scope", "all"))
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+
+def _on_save_conflict_click(*, overwrite: bool) -> None:
+    conflict = st.session_state.get("_save_conflict")
+    if not conflict:
+        return
+    name = conflict["name"] if overwrite else conflict["suggested"]
+    reply = _save_results(name, conflict["scope"], overwrite=overwrite)
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+
+def _on_save_conflict_cancel() -> None:
+    st.session_state.pop("_save_conflict", None)
+
+
+def _render_save_results(job_id: str) -> None:
+    """Save results as… controls, for the active session only (a session
+    viewed but not active has no state manager to read revision/params from)."""
+    session = st.session_state.interactive_session
+    if not session.has_active_job() or session.job_id != job_id:
+        return
+
+    with st.expander("Save results as…"):
+        st.caption(
+            "Copies this session's results into "
+            "`saved_results/<name>/` inside the session folder."
+        )
+        st.text_input("Bundle name", key="save_bundle_name", placeholder="e.g. trial_a")
+        st.selectbox(
+            "Include", _SAVE_SCOPES, key="save_scope",
+            format_func=lambda s: {
+                "all": "Docking + visualization", "docking": "Docking results only",
+                "visualization": "Visualization only",
+            }[s],
+        )
+        reason = _save_block_reason()
+        st.button(
+            "Save results bundle",
+            on_click=_on_save_results_click,
+            disabled=reason is not None,
+            use_container_width=True,
+        )
+        if reason:
+            st.caption(reason)
+
+        conflict = st.session_state.get("_save_conflict")
+        if conflict and conflict["job_id"] == job_id:
+            st.warning(f"A bundle named `{conflict['name']}` already exists.")
+            col_over, col_new, col_cancel = st.columns(3)
+            col_over.button(
+                "Overwrite", on_click=_on_save_conflict_click, kwargs={"overwrite": True},
+                key="save_conflict_overwrite",
+            )
+            col_new.button(
+                f"Save as {conflict['suggested']}", on_click=_on_save_conflict_click,
+                kwargs={"overwrite": False}, key="save_conflict_new_name",
+            )
+            col_cancel.button("Cancel", on_click=_on_save_conflict_cancel, key="save_conflict_cancel")
+
+
 def _render_job_results() -> None:
     bridge: OrchestratorBridge = st.session_state.bridge
     active_job_id = st.session_state.job_id
@@ -1799,16 +1965,22 @@ def _split_sdf_records(sdf_text: str) -> list[str]:
     return [block + "\n$$$$\n" for block in blocks if block.strip()]
 
 
+def _render_save_and_log(job_id: str) -> None:
+    # Directly below the viewer, above the (long) per-ligand pose pickers.
+    _render_save_results(job_id)
+    _render_job_log(job_id)
+
+
 def _render_visualization(result: dict, job_id: str) -> None:
     viz = result.get("results", {}).get("visualize", {})
     raw_receptor = viz.get("receptor_pdb")
     if not raw_receptor:
-        _render_job_log(job_id)
+        _render_save_and_log(job_id)
         return
     receptor_path = _resolve_container_path(raw_receptor)
     if not receptor_path.exists():
         st.caption("Receptor structure not found on disk.")
-        _render_job_log(job_id)
+        _render_save_and_log(job_id)
         return
     receptor_pdb = _read_file_bytes(
         str(receptor_path), receptor_path.stat().st_mtime
@@ -1857,7 +2029,7 @@ def _render_visualization(result: dict, job_id: str) -> None:
 
     render_mol_viewer(receptor_pdb, ligands, mode="view", height=550, key=f"mol_viewer_{job_id}")
 
-    _render_job_log(job_id)
+    _render_save_and_log(job_id)
 
     if multi_pose:
         st.caption("Pose per ligand")
@@ -1949,8 +2121,10 @@ def _render_file_downloads(result: dict, job_id: str) -> None:
     _render_pose_downloads(result, job_id)
 
     st.subheader("Other Files")
+    # Saved bundles are copies of the files already listed here.
+    saved_dir = job_dir / "saved_results"
     for f in sorted(job_dir.rglob("*")):
-        if f.is_file() and f.suffix in {".pml", ".json", ".png"}:
+        if f.is_file() and f.suffix in {".pml", ".json", ".png"} and not f.is_relative_to(saved_dir):
             data = _read_file_bytes(str(f), f.stat().st_mtime)
             st.download_button(
                 f"Download {f.name}",

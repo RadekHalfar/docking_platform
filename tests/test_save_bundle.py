@@ -9,6 +9,7 @@ import pytest
 
 from services.llm_orchestrator.interactive_session import (
     save_results_bundle,
+    timestamped_bundle_name,
     validate_bundle_name,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
@@ -228,3 +229,64 @@ def test_deterministic_save_no_name():
     result = _deterministic_intent("save results")
     assert result["intent"] == "save_results"
     assert result["name"] is None
+
+
+# ---------------------------------------------------------------------------
+# Stage 13.3: overwrite replaces, I/O failures, suffixed fallback name
+# ---------------------------------------------------------------------------
+
+def test_save_bundle_overwrite_with_narrower_scope_drops_stale_artifacts(job_dir):
+    save_results_bundle(job_dir, "replaceable", "all", 1, PARAMS)
+
+    r = save_results_bundle(job_dir, "replaceable", "docking", 2, PARAMS, overwrite=True)
+
+    bundle = Path(r["bundle_path"])
+    assert r["artifacts"] == ["docking_results", "docking_box.json"]
+    assert (bundle / "docking_results").exists()
+    # Previously left over from the "all" save, contradicting scope=docking.
+    assert not (bundle / "visualization").exists()
+
+
+def test_save_bundle_os_error_is_a_failed_result_with_no_partial_bundle(job_dir, monkeypatch):
+    def _disk_full(src, dst, *args, **kwargs):
+        Path(dst).mkdir()
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("services.llm_orchestrator.interactive_session.shutil.copytree", _disk_full)
+
+    result = save_results_bundle(job_dir, "trial_a", "all", 1, PARAMS)
+
+    assert result["success"] is False
+    assert "No space left on device" in result["error"]
+    assert not (job_dir / "saved_results" / "trial_a").exists()
+    assert "save_results_bundle 'trial_a' failed" in (job_dir / "job.log").read_text()
+
+
+def test_timestamped_bundle_name_format(tmp_path):
+    name = timestamped_bundle_name(tmp_path, "trial_a")
+
+    assert len(name) == len("trial_a_") + 6
+    assert name.startswith("trial_a_") and name[-6:].isdigit()
+    assert validate_bundle_name(name) is None
+
+
+def test_timestamped_bundle_name_skips_taken_names(tmp_path, monkeypatch):
+    from datetime import datetime as real_datetime
+
+    class _FrozenDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 10, 1, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr("services.llm_orchestrator.interactive_session.datetime", _FrozenDatetime)
+    (tmp_path / "saved_results" / "trial_a_123456").mkdir(parents=True)
+    (tmp_path / "saved_results" / "trial_a_123456_2").mkdir()
+
+    assert timestamped_bundle_name(tmp_path, "trial_a") == "trial_a_123456_3"
+
+
+def test_timestamped_bundle_name_truncates_long_names_to_stay_valid(tmp_path):
+    name = timestamped_bundle_name(tmp_path, "A" * 64)
+
+    assert len(name) == 64
+    assert validate_bundle_name(name) is None

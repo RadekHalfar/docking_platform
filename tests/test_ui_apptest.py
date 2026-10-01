@@ -751,3 +751,167 @@ def test_chat_history_without_active_session(app):
 
     assert not at.exception
     assert _chat_texts(at)[-1] == "No active session — no history yet."
+
+
+# ---------------------------------------------------------------------------
+# Save results as (Stage 13.3)
+# ---------------------------------------------------------------------------
+
+def _completed_session_with_artifacts(app, output_base):
+    """_active_session_with_two_revisions plus a completed run on disk with
+    docking and visualization outputs to bundle."""
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+    # Revision 2's parameters actually ran (as a real run records it).
+    state_manager.save_execution_state_checkpoint({"protein_file": "/x/6lu7.pdbqt"}, step="dock")
+    job_dir = output_base / _HISTORY_JOB_ID
+    (job_dir / "workflow_results.json").write_text(
+        json.dumps(_completed_job_data(Path("/nonexistent.pdb")))
+    )
+    (job_dir / "docking_results").mkdir()
+    (job_dir / "docking_results" / "ATP_out.pdbqt").write_text("MODEL 1\n")
+    (job_dir / "visualization").mkdir()
+    (job_dir / "visualization" / "session.pml").write_text("load x\n")
+    return session, state_manager, job_dir
+
+
+def _save_via_panel(at, name, scope="all"):
+    at.text_input(key="save_bundle_name").set_value(name)
+    at.selectbox(key="save_scope").set_value(scope)
+    return _click(at.run(), "Save results bundle")
+
+
+def _bundle_meta(job_dir, name):
+    return json.loads((job_dir / "saved_results" / name / "metadata.json").read_text())
+
+
+def test_save_results_panel_writes_bundle(app, output_base):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+
+    at = _save_via_panel(app.run(), "trial_a")
+
+    assert not at.exception
+    bundle = job_dir / "saved_results" / "trial_a"
+    assert (bundle / "docking_results" / "ATP_out.pdbqt").exists()
+    assert (bundle / "visualization" / "session.pml").exists()
+    meta = _bundle_meta(job_dir, "trial_a")
+    assert meta["scope"] == "all"
+    assert meta["parameters"]["center"] == [5.0, 6.0, 7.0]
+    assert _chat_texts(at)[-1].startswith("Saved bundle `trial_a` (scope: all)")
+
+
+def test_save_results_blocked_while_parameters_pending(app, output_base):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+
+    at = _restore_rev1(app.run())  # pending = CORE_PARAMS, results predate it
+
+    assert not at.exception
+    save = next(b for b in at.button if b.label == "Save results bundle")
+    assert save.disabled
+    assert any("Parameters changed since the last completed run" in c.value for c in at.caption)
+    at.chat_input[0].set_value("save results as trial_a").run()
+    assert _chat_texts(at)[-1].startswith("Cannot save: Parameters changed")
+    assert not (job_dir / "saved_results").exists()
+
+
+def test_save_results_blocked_when_parameters_never_ran_after_load(app, output_base):
+    # Real case found during Stage 13.3: a revision restored but never
+    # redocked, then the session Loaded again -- `pending` is reset by the
+    # Load, so only the on-disk manifest still shows the results predate it.
+    session, state_manager, job_dir = _completed_session_with_artifacts(app, output_base)
+    state_manager.restore_revision(1)
+    assert not session.pending_changed_params
+
+    at = app.run()
+
+    assert not at.exception
+    assert next(b for b in at.button if b.label == "Save results bundle").disabled
+    assert any("have not been run yet" in c.value for c in at.caption)
+    at.chat_input[0].set_value("save results as trial_a").run()
+    assert "have not been run yet" in _chat_texts(at)[-1]
+    assert not (job_dir / "saved_results").exists()
+
+
+def test_chat_save_refused_while_job_runs(app, output_base, running_bridge):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+
+    at = app.run()
+    at.chat_input[0].set_value("save results as trial_a").run()
+
+    _only_stop_polling_exception(at)
+    assert _chat_texts(at)[-1].startswith("Cannot save: A session is running")
+    assert not (job_dir / "saved_results").exists()
+
+
+def test_save_results_conflict_overwrite_and_new_name(app, output_base):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+    at = _save_via_panel(app.run(), "trial_a", scope="all")
+
+    # Same name again, narrower scope -> conflict buttons instead of a save.
+    at = _save_via_panel(at, "trial_a", scope="docking")
+    assert "already exists" in _chat_texts(at)[-1]
+    suggested = at.session_state["_save_conflict"]["suggested"]
+    assert suggested.startswith("trial_a_")
+
+    at = _click(at, f"Save as {suggested}")
+    assert not at.exception
+    assert _bundle_meta(job_dir, suggested)["scope"] == "docking"
+    assert _chat_texts(at)[-1].startswith(f"Saved bundle `{suggested}`")
+    assert "_save_conflict" not in at.session_state
+
+    at = _save_via_panel(at, "trial_a", scope="docking")
+    at = _click(at, "Overwrite")
+    assert not at.exception
+    assert _bundle_meta(job_dir, "trial_a")["scope"] == "docking"
+    # Overwrite replaces the bundle -- the old "all" save's visualization is gone.
+    assert not (job_dir / "saved_results" / "trial_a" / "visualization").exists()
+
+
+def test_chat_save_docking_as_name(app, output_base):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+
+    at = app.run()
+    at.chat_input[0].set_value("save docking as dock_only").run()
+
+    assert not at.exception
+    assert _bundle_meta(job_dir, "dock_only")["scope"] == "docking"
+    assert not (job_dir / "saved_results" / "dock_only" / "visualization").exists()
+
+    at.chat_input[0].set_value("save results").run()
+    assert _chat_texts(at)[-1] == "Give the bundle a name, e.g. `save results as run1`."
+
+
+def test_file_downloads_exclude_saved_bundles(app, output_base):
+    _completed_session_with_artifacts(app, output_base)
+    at = _save_via_panel(app.run(), "trial_a")
+
+    download_keys = [b.proto.id for b in at.get("download_button")]
+    assert download_keys  # the session's own files are still listed
+    assert not [k for k in download_keys if "saved_results" in k]
+
+
+def test_save_bundle_name_survives_early_rerun_in_chat_column(app, output_base):
+    _completed_session_with_artifacts(app, output_base)
+    at = app.run()
+    at.text_input(key="save_bundle_name").set_value("typed_name")
+    at.selectbox(key="save_scope").set_value("visualization")
+    at.run()
+
+    at.chat_input[0].set_value("show history").run()
+
+    assert not at.exception
+    assert at.text_input(key="save_bundle_name").value == "typed_name"
+    assert at.selectbox(key="save_scope").value == "visualization"
+
+
+def test_save_results_sits_between_viewer_and_session_log(app, viewer, output_base):
+    _, _, job_dir = _completed_session_with_artifacts(app, output_base)
+    receptor = job_dir / "receptor.pdb"
+    receptor.write_text(FIXTURE_PDB.read_text())
+    (job_dir / "workflow_results.json").write_text(json.dumps(_completed_job_data(receptor)))
+
+    at = app.run()
+
+    assert not at.exception
+    assert viewer.last("view") is not None  # the viewer path, not an early return
+    labels = [e.label for e in at.expander]
+    assert labels.index("Save results as…") + 1 == labels.index("Session Log")

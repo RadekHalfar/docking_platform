@@ -390,3 +390,28 @@ def test_get_parameters_revision_follows_a_restore(mgr):
     mgr.save_parameters_checkpoint(PARAMS_B, source="test")
     mgr.restore_revision(rev_a)
     assert mgr.get_parameters_revision() == mgr.get_current_revision()
+
+
+def test_parameters_ran_true_without_any_parameter_checkpoint(mgr):
+    assert mgr.parameters_ran() is True
+
+
+def test_parameters_ran_false_until_a_step_runs(mgr):
+    mgr.save_parameters_checkpoint(PARAMS_A, source="test")
+    assert mgr.parameters_ran() is False
+    mgr.save_execution_state_checkpoint(STATE_A, step="dock")
+    assert mgr.parameters_ran() is True
+
+
+def test_parameters_ran_false_after_a_restore_and_survives_a_new_manager(mgr):
+    # The real case that motivated it (Stage 13.3): results from an earlier
+    # run, then a restore never redocked -- still detected after a Load,
+    # which builds a fresh manager over the same job_dir.
+    rev_a = mgr.save_parameters_checkpoint(PARAMS_A, source="test")
+    mgr.save_execution_state_checkpoint(STATE_A, step="dock")
+    mgr.save_parameters_checkpoint(PARAMS_B, source="test")
+    mgr.save_execution_state_checkpoint(STATE_A, step="dock")
+    mgr.restore_revision(rev_a)
+
+    assert mgr.parameters_ran() is False
+    assert WorkflowStateManager(mgr.job_dir).parameters_ran() is False

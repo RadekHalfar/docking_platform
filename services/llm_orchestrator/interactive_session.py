@@ -82,6 +82,28 @@ def validate_bundle_name(name: str) -> Optional[str]:
     return None
 
 
+_MAX_BUNDLE_NAME_LEN = 64
+
+
+def timestamped_bundle_name(job_dir: Path, name: str) -> str:
+    """Return a free ``<name>_HHMMSS`` bundle name for *job_dir*.
+
+    The fallback when *name* already exists (CLI and GUI). *name* is cut
+    short so the result still passes :func:`validate_bundle_name`'s length
+    limit, and ``_2``, ``_3``, ... is appended while the name is taken (two
+    saves within the same second would otherwise collide).
+    """
+    suffix = datetime.now(timezone.utc).strftime("%H%M%S")
+    saved = Path(job_dir) / "saved_results"
+    counter = 1
+    while True:
+        tail = f"_{suffix}" if counter == 1 else f"_{suffix}_{counter}"
+        candidate = name[: _MAX_BUNDLE_NAME_LEN - len(tail)] + tail
+        if not (saved / candidate).exists():
+            return candidate
+        counter += 1
+
+
 # ---------------------------------------------------------------------------
 # Bundle materialisation
 # ---------------------------------------------------------------------------
@@ -103,7 +125,8 @@ def save_results_bundle(
         scope:      One of ``"docking"``, ``"visualization"``, or ``"all"``.
         revision:   Current parameter revision number (captured in metadata).
         parameters: Active workflow parameters snapshot.
-        overwrite:  When *True*, silently replace an existing bundle with the same name.
+        overwrite:  When *True*, replace an existing bundle with the same name
+                    (the old bundle is removed first, not merged into).
 
     Returns:
         A dict with keys:
@@ -111,7 +134,11 @@ def save_results_bundle(
         * ``success`` (bool)
         * ``bundle_path`` (str | None)
         * ``artifacts`` (list[str]) — names of sub-directories/files copied
-        * ``error`` (str | None) — human-readable reason when ``success`` is False
+        * ``error`` (str | None) — human-readable reason when ``success`` is
+          False; exactly ``"exists"`` when the name is taken and *overwrite*
+          is False (:func:`timestamped_bundle_name` gives the fallback name).
+          A filesystem error while writing is reported here too, with the
+          partial bundle removed.
     """
     job_dir = Path(job_dir)
 
@@ -131,8 +158,45 @@ def save_results_bundle(
             "error": "exists",
         }
 
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if bundle_dir.exists():
+            # Overwrite replaces the whole bundle: copying only this scope's
+            # subdirs would keep e.g. an older "all" save's visualization/
+            # under metadata that now says scope=docking.
+            shutil.rmtree(bundle_dir)
+        bundle_dir.mkdir(parents=True)
+        included = _write_bundle_contents(job_dir, bundle_dir, name, scope, revision, parameters)
+    except OSError as exc:
+        # Filesystem boundary (disk full, permissions): report a failed save
+        # instead of crashing the caller, and leave no half-written bundle
+        # behind for the next attempt to collide with.
+        shutil.rmtree(bundle_dir, ignore_errors=True)
+        append_job_log(job_dir, "ERROR", f"save_results_bundle '{name}' failed: {exc}")
+        return {"success": False, "bundle_path": None, "artifacts": [], "error": f"Could not write bundle: {exc}"}
 
+    append_job_log(
+        job_dir, "INFO",
+        f"save_results_bundle '{name}' saved (scope={scope}, revision={revision}): {', '.join(included) or 'nothing to copy'}",
+    )
+
+    return {
+        "success": True,
+        "bundle_path": str(bundle_dir),
+        "artifacts": included,
+        "error": None,
+    }
+
+
+def _write_bundle_contents(
+    job_dir: Path,
+    bundle_dir: Path,
+    name: str,
+    scope: str,
+    revision: int,
+    parameters: Dict[str, Any],
+) -> List[str]:
+    """Copy the scoped artifacts plus docking_box.json/metadata.json into the
+    (freshly created) *bundle_dir*; return the names of what was included."""
     included: List[str] = []
     include_docking = scope in ("docking", "all")
     include_viz = scope in ("visualization", "all")
@@ -140,10 +204,7 @@ def save_results_bundle(
     if include_docking:
         src = job_dir / "docking_results"
         if src.exists() and any(src.iterdir()):
-            dst = bundle_dir / "docking_results"
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
+            shutil.copytree(src, bundle_dir / "docking_results")
             included.append("docking_results")
         else:
             logger.debug("save_results_bundle: no docking results found in %s", src)
@@ -151,10 +212,7 @@ def save_results_bundle(
     if include_viz:
         src = job_dir / "visualization"
         if src.exists() and any(src.iterdir()):
-            dst = bundle_dir / "visualization"
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
+            shutil.copytree(src, bundle_dir / "visualization")
             included.append("visualization")
         else:
             logger.debug("save_results_bundle: no visualization artifacts found in %s", src)
@@ -202,18 +260,7 @@ def save_results_bundle(
         "parameters": parameters,
     }
     atomic_write_json(bundle_dir / "metadata.json", metadata)
-
-    append_job_log(
-        job_dir, "INFO",
-        f"save_results_bundle '{name}' saved (scope={scope}, revision={revision}): {', '.join(included) or 'nothing to copy'}",
-    )
-
-    return {
-        "success": True,
-        "bundle_path": str(bundle_dir),
-        "artifacts": included,
-        "error": None,
-    }
+    return included
 
 
 @dataclass

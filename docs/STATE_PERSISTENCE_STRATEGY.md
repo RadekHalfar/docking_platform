@@ -20,12 +20,15 @@ parameters, computes a minimal rerun plan with the same
 `rerun_planner.compute_rerun_steps()` the CLI uses, and executes it behind a
 **Confirm redock** button (see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#redocking-after-a-parameter-change)). What
-the GUI does *not* yet have is a named `save_results` affordance (Phase 13,
-Stage 13.3). `history`/`undo` reached the GUI in Phase 13, Stage 13.2: a
+`history`/`undo` reached the GUI in Phase 13, Stage 13.2: a
 **Revision history** panel and the `show history`/`undo N` chat commands, over
 the same `list_revisions()`/`restore_revision()` the CLI uses (see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#revision-history-and-undo) and "GUI notes"
-under Phase 4 below). Everything below
+under Phase 4 below). Named result bundles (`save results as <name>`) followed
+in Stage 13.3: a **Save results as…** panel and the same chat commands, over
+the same `save_results_bundle()` (see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#saving-results-bundles) and "Save blocked when
+parameters are pending" below). Everything below
 describes the interactive CLI session (`nlp_orchestrator.py --interactive`)
 except where a Stage 11.2/11.3 note calls out GUI behavior explicitly.
 
@@ -294,7 +297,9 @@ CLI's `rerun`, where `pending` is cleared either way. `InteractiveSession.activa
 or a page reload, a checkpoint that was never run to completion (a cancelled
 redock plan, a stopped run, a restore not yet redocked) is no longer flagged.
 The next redock then only sees real form changes. Run **Run Docking** before
-switching away, or edit a parameter to force a plan.
+switching away, or edit a parameter to force a plan. Saving results is not
+affected. Stage 13.3's save guard also checks the manifest on disk (see "Save
+blocked when parameters are pending" below).
 
 ### Safety Properties
 
@@ -340,6 +345,42 @@ This means `show state` always reflects whether the current parameters match the
 ```
 
 This prevents saving a bundle where the metadata parameters do not match the docking results on disk.
+
+**GUI (Stage 13.3).** The **Save results as…** panel and the chat `save
+results as <name>` share `ui/app.py::_save_results()`. Like the CLI, it reads
+the bundle's revision from `get_current_revision()` and its parameters from
+`load_latest_parameters()`. Its guard, `_save_block_reason()`, refuses:
+
+- with no active session;
+- while the tab's own bridge is running;
+- when `pending_changed_params` is non-empty;
+- when `WorkflowStateManager.parameters_ran()` is False, i.e. no
+  `state_update` event follows the latest parameters revision in the
+  manifest;
+- when the session's `workflow_results.json` status is not `completed`.
+
+The last two checks are the on-disk form of the `pending` check, so they
+still hold after a Load or a restart, when `pending` (in memory only, see
+"GUI notes" above) has been reset. Examples: a restore that was never
+redocked, a redock plan that was cancelled, or a stopped or failed redock.
+Without them, a bundle saved then would record parameters that never
+produced its results. `parameters_ran()` was added after a real session
+showed exactly that. Its results came from revision 10's parameters, five
+restores followed and none was docked, and a save after Load would have
+labelled the bundle revision 20.
+
+The CLI's save and the GUI's redock still rely on in-memory `pending` alone.
+`parameters_ran()` could close the redock half of the limitation above too.
+That is left to Review Stage R1 (see `dev_plan.md`).
+
+**Overwrite and fallback name (Stage 13.3, CLI + GUI).**
+`save_results_bundle(..., overwrite=True)` removes the old bundle before
+writing. It used to only replace the subdirectories it copied again, so a
+narrower-scope overwrite kept stale artifacts. A filesystem error while
+writing (`OSError`) gives `success: False` with the partial bundle removed.
+`timestamped_bundle_name()` gives the `<name>_HHMMSS` fallback. If that name
+is taken, it adds `_2`, `_3`, ..., and it shortens long names to stay within
+64 characters. The CLI now prints the final name.
 
 ### Pre-flight parameter validation before rerun
 

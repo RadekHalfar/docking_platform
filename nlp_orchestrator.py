@@ -11,7 +11,7 @@ import subprocess
 import time
 import re
 import requests
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, List, Callable, Dict, Any, Set
 
 from services.llm_orchestrator import (
@@ -33,6 +33,7 @@ from services.llm_orchestrator import (
     split_command_sequence,
     _llm_split_command_sequence,
     save_results_bundle,
+    timestamped_bundle_name,
     validate_bundle_name,
     compare_jobs,
     find_prunable_jobs,
@@ -644,8 +645,7 @@ def _handle_save_results(
             return False
         if choice not in ("y", "yes"):
             # Offer auto-suffix fallback.
-            suffix = datetime.now(timezone.utc).strftime("%H%M%S")
-            new_name = f"{name}_{suffix}"
+            new_name = timestamped_bundle_name(job_dir, name)
             print(f"Saving as '{new_name}' instead.")
             result = save_results_bundle(
                 job_dir, new_name, scope, revision, parameters, overwrite=False
@@ -657,7 +657,8 @@ def _handle_save_results(
 
     if result["success"]:
         arts = result["artifacts"]
-        print(f"\n✅ Saved bundle '{name}' (scope: {scope})")
+        # The final name, which differs from *name* after the suffix fallback.
+        print(f"\n✅ Saved bundle '{Path(result['bundle_path']).name}' (scope: {scope})")
         print(f"   Path: {result['bundle_path']}")
         if arts:
             print(f"   Artifacts: {', '.join(arts)}")

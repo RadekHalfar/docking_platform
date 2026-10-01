@@ -34,7 +34,9 @@ _WIDGET_DEFAULTS = {
 # before rendering them -- see init(). Not the file uploaders (Streamlit
 # forbids setting them via session state) nor the box picker's size inputs
 # (they pass value=, and are re-synced from the Docking Box fields anyway).
-_PERSISTED_WIDGET_KEYS = (*_WIDGET_DEFAULTS, "input_mode", "revision_to_restore")
+_PERSISTED_WIDGET_KEYS = (
+    *_WIDGET_DEFAULTS, "input_mode", "revision_to_restore", "save_bundle_name", "save_scope",
+)
 
 # Shared by init() (first load) and start_new_session() (detaching from a
 # job without a full page reload) so the greeting text lives in one place.

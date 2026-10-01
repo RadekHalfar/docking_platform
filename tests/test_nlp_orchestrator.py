@@ -1514,3 +1514,26 @@ def test_multi_intent_end_session_mid_chain_stops_session(monkeypatch, tmp_path,
     assert "Goodbye!" in output
     assert (job_dir / "saved_results" / "trial_end" / "metadata.json").exists()
 
+
+
+def test_save_results_declined_overwrite_prints_final_suffixed_name(monkeypatch, tmp_path, capsys):
+    """Declining the overwrite saves under name_HHMMSS -- and the success line
+    must name that bundle, not the original (Stage 13.3, Critical Finding 9)."""
+    job_dir = tmp_path / "job_save1"
+    sm = WorkflowStateManager(job_dir)
+    sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
+    (job_dir / "saved_results" / "trial_a").mkdir(parents=True)
+    session = InteractiveSession()
+    session.activate("job_save1", sm, last_results={"status": "completed", "results": {}})
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+
+    assert cli._handle_save_results({"name": "trial_a", "scope": "all"}, session) is True
+
+    output = capsys.readouterr().out
+    saved = sorted(p.name for p in (job_dir / "saved_results").iterdir())
+    assert saved[0] == "trial_a" and len(saved) == 2
+    new_name = saved[1]
+    assert new_name.startswith("trial_a_")
+    assert f"Saving as '{new_name}' instead." in output
+    assert f"Saved bundle '{new_name}'" in output
+    assert "Saved bundle 'trial_a'" not in output

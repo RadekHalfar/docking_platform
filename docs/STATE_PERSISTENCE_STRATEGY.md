@@ -40,7 +40,9 @@ job's saved parameters (draft or checkpoint, see `draft_parameters.json`
 below) — before that fix, Load only resumed the job/results state, not
 the displayed parameters. Stage 11.3 also added a
 **Stop** button (cooperative cancellation, checked between steps —
-see `WorkflowOrchestrator.execute_workflow`'s `cancel_event` parameter) that
+see `WorkflowOrchestrator.execute_workflow`'s `cancel_event` parameter; since
+Phase 13 it also halts a running dock step within about a second via a
+`STOP_REQUESTED` flag file, see [docs/MOLDINA_DOCKING.md](MOLDINA_DOCKING.md#stopping-a-run)) that
 persists a new `"cancelled"` workflow status alongside the existing
 `"completed"`/`"failed"` ones; a cancelled job is not "completed" so it
 appears in the Failed Sessions list, not Session History (see

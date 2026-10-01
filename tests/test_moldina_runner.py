@@ -37,10 +37,36 @@ def temp_dir():
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+class _FinishedProc:
+    """Popen stand-in for an already-finished process, built from a
+    subprocess.run-style result (returncode/stdout/stderr)."""
+
+    def __init__(self, run_result):
+        self.returncode = run_result.returncode
+        self._stdout = run_result.stdout
+        self._stderr = run_result.stderr
+
+    def communicate(self, timeout=None):
+        return self._stdout, self._stderr
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
 @pytest.fixture
 def mock_subprocess():
-    """Mock subprocess for WSL commands"""
+    """Mock subprocess for WSL commands.
+
+    Docking runs Moldina through subprocess.Popen (so a stop request can
+    kill it, see _run_cancellable); Popen calls are routed through
+    ``mock_sub.run`` so tests keep configuring and asserting on ``.run``
+    exactly as for the WSL/availability checks that still use it.
+    """
     with patch('services.moldina_runner.subprocess') as mock_sub:
+        mock_sub.Popen.side_effect = lambda cmd, **kwargs: _FinishedProc(mock_sub.run(cmd))
         yield mock_sub
 
 
@@ -906,3 +932,202 @@ class TestMoldinaRunnerParallel:
         assert payload["total"] == 1
         assert payload["completed"] == 1
         assert payload["in_progress"] == []
+
+
+# ---------------------------------------------------------------------------
+# Stop on request (Phase 13, Stage 13.1b) -- a STOP_REQUESTED flag file in
+# output_dir halts the batch: no further ligands start, running Moldina
+# processes are killed. These use real subprocess.TimeoutExpired (only Popen
+# is replaced), so _run_cancellable's poll/terminate path really runs.
+# ---------------------------------------------------------------------------
+
+import subprocess as real_subprocess
+
+from common.docking_stop import STOP_FLAG_NAME, request_docking_stop
+from services.moldina_runner import _run_cancellable
+
+
+class _DoneProc:
+    """Moldina process that has already finished successfully."""
+
+    returncode = 0
+
+    def communicate(self, timeout=None):
+        return "", ""
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+class _HangingProc:
+    """Moldina process that never finishes on its own; optionally requests
+    a stop (writes the flag) the first time it's polled, i.e. mid-docking."""
+
+    def __init__(self, stop_dir=None):
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+        self._stop_dir = stop_dir
+
+    def communicate(self, timeout=None):
+        if self.terminated or self.killed:
+            self.returncode = -15
+            return "", ""
+        if self._stop_dir is not None:
+            request_docking_stop(self._stop_dir)
+        raise real_subprocess.TimeoutExpired("moldina", timeout)
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+class TestDockingStop:
+
+    @pytest.fixture
+    def runner(self, temp_dir, mock_platform_linux):
+        with patch.object(MoldinaRunner, '_find_moldina_executable', return_value='/usr/bin/Moldina'):
+            return MoldinaRunner(cache_dir=temp_dir)
+
+    @staticmethod
+    def _inputs(temp_dir, n):
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        Path(receptor).touch()
+        ligands = []
+        for i in range(1, n + 1):
+            path = os.path.join(temp_dir, f"ligand{i}.pdbqt")
+            Path(path).touch()
+            ligands.append(path)
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        return receptor, ligands, output_dir
+
+    @staticmethod
+    def _dock(runner, receptor, ligands, output_dir, **kwargs):
+        return runner.run_moldina_docking(
+            receptor_path=receptor,
+            ligand_paths=ligands,
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20),
+            **kwargs,
+        )
+
+    @staticmethod
+    def _progress(output_dir):
+        with open(os.path.join(output_dir, "docking_progress.json")) as f:
+            return json.load(f)
+
+    def test_stop_before_start_docks_nothing_and_does_not_raise(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 3)
+        request_docking_stop(output_dir)
+
+        with patch('services.moldina_runner.subprocess.Popen') as popen:
+            result = self._dock(runner, receptor, ligands, output_dir)
+
+        popen.assert_not_called()
+        assert result["status"] == "stopped"
+        assert result["stopped"] is True
+        assert result["successful"] == 0
+        assert result["failed"] == 0
+        assert result["skipped"] == 3
+        assert result["errors"] == []
+        assert self._progress(output_dir)["status"] == "stopped"
+
+    def test_stop_between_ligands_skips_the_rest(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 3)
+
+        def first_ligand_then_stop(cmd, **kwargs):
+            # The user clicks Stop while ligand 1 is finishing.
+            request_docking_stop(output_dir)
+            return _DoneProc()
+
+        with patch('services.moldina_runner.subprocess.Popen', side_effect=first_ligand_then_stop) as popen:
+            result = self._dock(runner, receptor, ligands, output_dir)
+
+        assert popen.call_count == 1
+        assert result["stopped"] is True
+        assert result["successful"] == 1
+        assert result["skipped"] == 2
+        assert [r["ligand_id"] for r in result["results"]] == ["ligand1"]
+
+    def test_stop_mid_ligand_kills_the_running_process(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 2)
+        proc = _HangingProc(stop_dir=output_dir)
+
+        with patch('services.moldina_runner.subprocess.Popen', return_value=proc) as popen:
+            result = self._dock(runner, receptor, ligands, output_dir)
+
+        assert proc.terminated is True
+        assert popen.call_count == 1  # ligand 2 never started
+        assert result["stopped"] is True
+        assert result["successful"] == 0
+        assert result["failed"] == 0  # a killed ligand is not an error
+        assert result["skipped"] == 2
+        progress = self._progress(output_dir)
+        assert progress["status"] == "stopped"
+        assert progress["completed"] == 0
+        assert progress["in_progress"] == []
+
+    def test_stop_mid_run_in_parallel_mode(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 6)
+        procs = []
+
+        def hanging(cmd, **kwargs):
+            proc = _HangingProc(stop_dir=output_dir)
+            procs.append(proc)
+            return proc
+
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=4), \
+                patch('services.moldina_runner.subprocess.Popen', side_effect=hanging):
+            result = self._dock(runner, receptor, ligands, output_dir, parallel=True, max_workers=2)
+
+        assert 1 <= len(procs) <= 2  # only ligands already in flight were started
+        assert all(p.terminated for p in procs)
+        assert result["stopped"] is True
+        assert result["successful"] == 0
+        assert result["skipped"] == 6
+
+    def test_no_stop_flag_keeps_normal_status(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 2)
+
+        with patch('services.moldina_runner.subprocess.Popen', return_value=_DoneProc()):
+            result = self._dock(runner, receptor, ligands, output_dir)
+
+        assert result["status"] == "ok"
+        assert result["stopped"] is False
+        assert result["skipped"] == 0
+        assert result["successful"] == 2
+        assert not os.path.exists(os.path.join(output_dir, STOP_FLAG_NAME))
+
+
+class TestRunCancellable:
+
+    def test_timeout_kills_and_raises(self):
+        proc = _HangingProc()
+        with patch('services.moldina_runner.subprocess.Popen', return_value=proc):
+            with pytest.raises(real_subprocess.TimeoutExpired):
+                _run_cancellable(["moldina"], stop_check=lambda: False, timeout=0)
+        assert proc.killed is True
+
+    def test_stop_escalates_to_kill_when_terminate_is_ignored(self):
+        class _StubbornProc(_HangingProc):
+            def terminate(self):
+                self.terminated_requested = True  # ignored -- keeps running
+
+            def communicate(self, timeout=None):
+                if self.killed:
+                    return "", ""
+                raise real_subprocess.TimeoutExpired("moldina", timeout)
+
+        proc = _StubbornProc()
+        with patch('services.moldina_runner.subprocess.Popen', return_value=proc), \
+                patch('services.moldina_runner._STOP_KILL_GRACE', 0):
+            assert _run_cancellable(["moldina"], stop_check=lambda: True) is None
+        assert proc.terminated_requested is True
+        assert proc.killed is True

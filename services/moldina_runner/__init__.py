@@ -23,12 +23,15 @@ import logging
 import shutil
 import tempfile
 import threading
+import time
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Callable, Dict, List, Optional, Any, Tuple
 
+from common.docking_stop import docking_stop_requested
 from common.utils import ensure_directory, compute_file_checksum
 
 logger = logging.getLogger(__name__)
@@ -142,6 +145,55 @@ def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
         logger.warning(f"Failed to write docking progress file: {e}")
 
 
+@dataclass
+class _ProcessResult:
+    """Outcome of one finished Moldina process (what subprocess.run used to return)."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+# How often a running Moldina process checks for a stop request (seconds).
+_STOP_POLL_INTERVAL = 0.5
+# Grace period between SIGTERM and SIGKILL when stopping a process (seconds).
+_STOP_KILL_GRACE = 5
+
+
+def _run_cancellable(
+    cmd: List[str],
+    stop_check: Callable[[], bool],
+    timeout: float = 3600,
+) -> Optional[_ProcessResult]:
+    """Run *cmd* to completion, unless *stop_check()* turns true first.
+
+    Polls every ``_STOP_POLL_INTERVAL`` seconds. On a stop request the
+    process is terminated (then killed after ``_STOP_KILL_GRACE`` seconds)
+    and ``None`` is returned. Raises ``subprocess.TimeoutExpired`` after
+    *timeout* seconds, like ``subprocess.run(timeout=...)`` did.
+    """
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=_STOP_POLL_INTERVAL)
+            return _ProcessResult(proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            pass
+        if stop_check():
+            proc.terminate()
+            try:
+                proc.communicate(timeout=_STOP_KILL_GRACE)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+            return None
+        if time.monotonic() >= deadline:
+            proc.kill()
+            proc.communicate()
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+
 class _DockingProgress:
     """Thread-safe tracker for docking_progress.json.
 
@@ -186,10 +238,21 @@ class _DockingProgress:
             self._completed += 1
             self._write_snapshot("running")
 
+    def abandon(self, ligand_id: str) -> None:
+        """Drop a ligand that was stopped mid-docking (not counted as completed)."""
+        with self._lock:
+            self._in_progress.pop(ligand_id, None)
+            self._write_snapshot("running")
+
     def done(self) -> None:
         with self._lock:
             self._in_progress.clear()
             self._write_snapshot("done")
+
+    def stopped(self) -> None:
+        with self._lock:
+            self._in_progress.clear()
+            self._write_snapshot("stopped")
 
 
 class MoldinaRunner:
@@ -327,28 +390,31 @@ class MoldinaRunner:
         
         return wsl_path
     
-    def _run_wsl_command(self, command: List[str], timeout: int = 3600) -> subprocess.CompletedProcess:
+    def _run_wsl_command(
+        self,
+        command: List[str],
+        timeout: int = 3600,
+        stop_check: Callable[[], bool] = lambda: False,
+    ) -> Optional[_ProcessResult]:
         """
         Run command in WSL.
-        
+
         Args:
             command: Command and arguments to run
             timeout: Timeout in seconds
-            
+            stop_check: Polled while running; when it returns True the
+                process is stopped (see ``_run_cancellable``)
+
         Returns:
-            CompletedProcess result
+            The process result, or None if it was stopped. Note that
+            terminating ``wsl.exe`` is not guaranteed to stop the Linux-side
+            process (Windows/WSL dev mode only; the Docker deployment runs
+            Moldina directly).
         """
         wsl_cmd = ['wsl', '-d', self.wsl_distro, '--'] + command
         logger.info(f"Running WSL command: {' '.join(wsl_cmd)}")
-        
-        result = subprocess.run(
-            wsl_cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        
-        return result
+
+        return _run_cancellable(wsl_cmd, stop_check, timeout=timeout)
     
     def _dock_one_ligand(
         self,
@@ -363,7 +429,8 @@ class MoldinaRunner:
         num_modes: int,
         energy_range: float,
         progress: "_DockingProgress",
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        stop_check: Callable[[], bool] = lambda: False,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
         """
         Dock a single ligand against the already-prepared receptor/config.
 
@@ -373,9 +440,15 @@ class MoldinaRunner:
         with other concurrent calls besides `progress`, which is internally
         locked.
 
-        Returns (result, None) on success, or (None, error_message) on failure.
+        Returns ``(result, error, stopped)``: ``(result, None, False)`` on
+        success, ``(None, error_message, False)`` on failure, and
+        ``(None, None, True)`` when a stop was requested -- before this
+        ligand started (it is skipped) or while it ran (its Moldina process
+        is killed). A stopped ligand is neither a result nor an error.
         """
         ligand_id = Path(ligand_path).stem
+        if stop_check():
+            return None, None, True
         progress.start(ligand_id, index)
 
         if self.is_windows:
@@ -406,18 +479,20 @@ class MoldinaRunner:
         try:
             if self.is_windows:
                 moldina_cmd_str = ' '.join([shlex.quote(arg) for arg in moldina_cmd])
-                result = self._run_wsl_command(['bash', '-lc', moldina_cmd_str])
-            else:
-                result = subprocess.run(
-                    moldina_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=3600
+                result = self._run_wsl_command(
+                    ['bash', '-lc', moldina_cmd_str], stop_check=stop_check
                 )
+            else:
+                result = _run_cancellable(moldina_cmd, stop_check, timeout=3600)
         except subprocess.TimeoutExpired:
             logger.error(f"Moldina timed out for {ligand_id} (>1 hour)")
             progress.finish(ligand_id)
-            return None, f"{ligand_id}: docking timed out (>1 hour)"
+            return None, f"{ligand_id}: docking timed out (>1 hour)", False
+
+        if result is None:
+            logger.info(f"Moldina stopped for {ligand_id} (stop requested)")
+            progress.abandon(ligand_id)
+            return None, None, True
 
         # Save stdout/stderr as a per-ligand log file unconditionally, so a
         # failure is still debuggable from disk (the error text is often on
@@ -438,11 +513,11 @@ class MoldinaRunner:
             return None, (
                 f"{ligand_id}: exit {result.returncode}: "
                 f"{result.stderr or result.stdout or '(no output captured)'}"
-            )
+            ), False
 
         ligand_result = self._build_ligand_result(ligand_path, output_dir, result.stdout)
         progress.finish(ligand_id)
-        return ligand_result, None
+        return ligand_result, None, False
 
     def run_moldina_docking(
         self,
@@ -480,7 +555,12 @@ class MoldinaRunner:
                 and to the number of ligands, whichever is smaller
 
         Returns:
-            Dictionary with docking results
+            Dictionary with docking results. ``stopped`` is True when a stop
+            was requested mid-run (a ``STOP_REQUESTED`` flag file appeared in
+            *output_dir*, see ``common/docking_stop.py``): no further ligands
+            were started and running Moldina processes were killed.
+            ``status`` is then ``"stopped"`` and ``skipped`` counts the
+            ligands that were never docked (not started, or killed).
 
         Note: ligands are docked one Moldina invocation at a time per worker
         (never batched into a single invocation). This keeps per-invocation
@@ -539,11 +619,18 @@ size_z = {box_size[2]}
 
         results: List[Dict[str, Any]] = []
         errors: List[str] = []
+        stopped_count = 0
         results_lock = threading.Lock()
 
-        def _record(ligand_result: Optional[Dict[str, Any]], error: Optional[str]) -> None:
+        def _stop_check() -> bool:
+            return docking_stop_requested(output_dir)
+
+        def _record(ligand_result: Optional[Dict[str, Any]], error: Optional[str], stopped: bool) -> None:
+            nonlocal stopped_count
             with results_lock:
-                if error is not None:
+                if stopped:
+                    stopped_count += 1
+                elif error is not None:
                     errors.append(error)
                 else:
                     results.append(ligand_result)
@@ -568,33 +655,44 @@ size_z = {box_size[2]}
 
         if workers <= 1:
             for idx, ligand_path in enumerate(ligand_paths, start=1):
-                ligand_result, error = self._dock_one_ligand(
+                ligand_result, error, stopped = self._dock_one_ligand(
                     ligand_path, idx, receptor_wsl, config_wsl, output_dir,
                     cpu, population, exhaustiveness, num_modes, energy_range,
-                    progress,
+                    progress, _stop_check,
                 )
-                _record(ligand_result, error)
+                _record(ligand_result, error, stopped)
+                if stopped:
+                    break
         else:
+            # Ligands still queued when a stop arrives each see the flag on
+            # entry to _dock_one_ligand and return at once without starting.
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [
                     executor.submit(
                         self._dock_one_ligand,
                         ligand_path, idx, receptor_wsl, config_wsl, output_dir,
                         cpu, population, exhaustiveness, num_modes, energy_range,
-                        progress,
+                        progress, _stop_check,
                     )
                     for idx, ligand_path in enumerate(ligand_paths, start=1)
                 ]
                 for future in as_completed(futures):
-                    ligand_result, error = future.result()
-                    _record(ligand_result, error)
+                    _record(*future.result())
 
-        progress.done()
-
-        if not results:
-            raise RuntimeError(
-                "Moldina execution failed for all ligands: " + "; ".join(errors)
+        was_stopped = stopped_count > 0
+        skipped = len(ligand_paths) - len(results) - len(errors)
+        if was_stopped:
+            progress.stopped()
+            logger.info(
+                f"Moldina docking stopped on request: {len(results)} docked, "
+                f"{len(errors)} failed, {skipped} not docked"
             )
+        else:
+            progress.done()
+            if not results:
+                raise RuntimeError(
+                    "Moldina execution failed for all ligands: " + "; ".join(errors)
+                )
 
         if errors:
             logger.warning(f"Moldina docking had {len(errors)} failure(s): {'; '.join(errors)}")
@@ -603,11 +701,13 @@ size_z = {box_size[2]}
         results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
 
         return {
-            "status": "ok",
+            "status": "stopped" if was_stopped else "ok",
+            "stopped": was_stopped,
+            "skipped": skipped,
             "receptor": receptor_path,
             "total": len(ligand_paths),
             "successful": len(results),
-            "failed": len(ligand_paths) - len(results),
+            "failed": len(errors),
             "errors": errors,
             "results": results,
             "config_file": config_path,

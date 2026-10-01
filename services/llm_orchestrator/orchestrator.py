@@ -16,6 +16,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from common.docking_stop import clear_docking_stop
 from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.file_utils import scan_ligand_folder
 from common.http_retry import build_mcp_retry_session
@@ -226,8 +227,12 @@ class WorkflowOrchestrator:
                 not mid-request, so a step's own in-flight MCP call (capped at
                 its own timeout, see common/mcp_client.py) still runs to
                 completion; cancellation only prevents the *next* step from
-                starting. `None` (the default, used by every CLI caller) means
-                cancellation is never checked -- zero behavior change.
+                starting. The one exception is the dock step: a stop writes a
+                flag file that moldina-runner polls mid-run
+                (common/docking_stop.py), and a ``"stopped"`` dock result
+                cancels the workflow. `None` (the default, used by every CLI
+                caller) means cancellation is never checked -- zero behavior
+                change.
 
         Returns:
             Workflow execution results
@@ -502,6 +507,15 @@ class WorkflowOrchestrator:
                 _save_step_checkpoint("prepare_protein")
             
             # Step 4: Run docking
+            docking_dir = job_dir / "docking_results"
+            if "dock" in services and not cancelled:
+                # Stop protocol (common/docking_stop.py): create the shared
+                # dir and drop a stale flag left by an earlier stopped run
+                # *before* the step's own cancel check below. A stop arriving
+                # after this point is either seen by that check or writes a
+                # fresh flag that moldina-runner picks up mid-run.
+                ensure_shared_directory(docking_dir)
+                clear_docking_stop(docking_dir)
             if "dock" in services and not _maybe_cancel():
                 _reload_latest_from_disk()
                 step_t0 = time.time()
@@ -516,9 +530,6 @@ class WorkflowOrchestrator:
                     raise RuntimeError("No prepared protein available for docking")
                 if not self.workflow_state.get("prepared_ligands"):
                     raise RuntimeError("No prepared ligands available for docking")
-                
-                docking_dir = job_dir / "docking_results"
-                ensure_shared_directory(docking_dir)
                 
                 if self.verbosity != VERBOSITY_LOW:
                     logger.info(f"Docking parameters:")
@@ -560,20 +571,37 @@ class WorkflowOrchestrator:
                 )
                 
                 results["results"]["dock"] = docking_result
-                results["services_executed"].append("dock")
-                
-                # Store docking results
-                self.workflow_state["docking_results"] = docking_result
-                self._step_print(f"   \u2705 Docking completed: {docking_result.get('successful', 0)} successful")
-                if self.verbosity == VERBOSITY_NORMAL:
-                    logger.info(f"\u2705 Docking completed: {docking_result.get('successful', 0)} successful")
-                _log_step_done(
-                    "dock", step_t0,
-                    f"{docking_result.get('successful', 0)} successful. "
-                    f"Per-ligand docking logs: {docking_dir}/<ligand_id>_moldina_output.log",
-                )
 
-                _save_step_checkpoint("dock")
+                if docking_result.get("stopped"):
+                    # Stopped mid-docking via the flag file: keep the partial
+                    # result on record, but don't count dock as executed or
+                    # checkpoint it -- a later redock must dock everything
+                    # again. Marking the run cancelled also skips visualize.
+                    cancelled = True
+                    self._step_print(
+                        f"   ⏹ Docking stopped: {docking_result.get('successful', 0)} docked, "
+                        f"{docking_result.get('skipped', 0)} not docked"
+                    )
+                    _log_step_done(
+                        "dock", step_t0,
+                        f"stopped on request -- {docking_result.get('successful', 0)} docked, "
+                        f"{docking_result.get('skipped', 0)} not docked",
+                    )
+                else:
+                    results["services_executed"].append("dock")
+
+                    # Store docking results
+                    self.workflow_state["docking_results"] = docking_result
+                    self._step_print(f"   \u2705 Docking completed: {docking_result.get('successful', 0)} successful")
+                    if self.verbosity == VERBOSITY_NORMAL:
+                        logger.info(f"\u2705 Docking completed: {docking_result.get('successful', 0)} successful")
+                    _log_step_done(
+                        "dock", step_t0,
+                        f"{docking_result.get('successful', 0)} successful. "
+                        f"Per-ligand docking logs: {docking_dir}/<ligand_id>_moldina_output.log",
+                    )
+
+                    _save_step_checkpoint("dock")
             
             # Step 5: Visualize
             if "visualize" in services and not _maybe_cancel():

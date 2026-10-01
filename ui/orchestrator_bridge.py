@@ -2,7 +2,10 @@
 import contextlib
 import queue
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from common.docking_stop import request_docking_stop
 
 
 class _QueueWriter:
@@ -38,6 +41,7 @@ class OrchestratorBridge:
         self._result: Optional[Dict[str, Any]] = None
         self._error: Optional[str] = None
         self._cancel_event: threading.Event = threading.Event()
+        self._job_dir: Optional[Path] = None
 
     def start_workflow(
         self,
@@ -67,6 +71,7 @@ class OrchestratorBridge:
         self._result = None
         self._error = None
         self._cancel_event = threading.Event()  # fresh event per run
+        self._job_dir = Path(output_base) / job_id
         run_workflow = dict(workflow)
         if services is not None:
             run_workflow["services"] = services
@@ -111,14 +116,20 @@ class OrchestratorBridge:
         return self._thread is not None and self._thread.is_alive()
 
     def request_stop(self) -> None:
-        """Request cooperative cancellation of the in-progress run.
+        """Request cancellation of the in-progress run.
 
-        Takes effect once the current step's in-flight MCP call (bounded by
-        its own timeout) returns and before the next step starts -- not
-        immediate. See ``WorkflowOrchestrator.execute_workflow``'s
-        ``cancel_event`` docstring for the exact semantics.
+        Sets the cancel event, which stops the workflow before its next step
+        (see ``WorkflowOrchestrator.execute_workflow``'s ``cancel_event``
+        docstring), and writes the docking stop flag
+        (``common/docking_stop.py``) so a dock step already in progress
+        halts within about a second -- no further ligands start and running
+        Moldina processes are killed -- instead of finishing every ligand.
+        The flag is only written once the job's ``docking_results/`` exists;
+        before that, the cancel event alone stops the run.
         """
         self._cancel_event.set()
+        if self._job_dir is not None:
+            request_docking_stop(self._job_dir / "docking_results")
 
     def stop_requested(self) -> bool:
         return self._cancel_event.is_set()

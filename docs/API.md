@@ -497,6 +497,8 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
   "id": "job_001_step_3",
   "result": {
     "status": "ok",
+    "stopped": false,
+    "skipped": 0,
     "receptor": "/data/jobs/job_001/prepared/6lu7.pdbqt",
     "total": 2,
     "successful": 2,
@@ -551,6 +553,10 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
 - Moldina is Linux-only; Windows users require WSL (Windows Subsystem for Linux)
 - Uses Particle Swarm Optimization (PSO) for improved binding pose prediction
 - Results are sorted by best_affinity (most negative = best binding)
+- A run can be stopped mid-batch by creating `STOP_REQUESTED` in `output_dir`:
+  no further ligands start, running Moldina processes are killed, and the
+  response has `"status": "stopped"`, `"stopped": true` and `skipped` =
+  ligands never docked (see `docs/MOLDINA_DOCKING.md` → "Stopping a run")
 - Population size should be ≥ 5; recommended: 100 × rotatable_bonds
 - Higher exhaustiveness and population = more thorough but slower
 - See `docs/MOLDINA_DOCKING.md` for the engine guide, and

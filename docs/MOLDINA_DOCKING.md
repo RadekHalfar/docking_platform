@@ -90,11 +90,13 @@ results = runner.run_moldina_docking(
 
 # Results structure
 {
-    "status": "ok",
+    "status": "ok",          # "stopped" when a stop was requested mid-run
+    "stopped": False,        # True when the run was stopped (see below)
+    "skipped": 0,            # ligands never docked because of the stop
     "receptor": "protein.pdbqt",
     "total": 2,
     "successful": 2,
-    "failed": 0,
+    "failed": 0,             # ligands whose Moldina run failed (not stopped ones)
     "results": [
         {
             "ligand_id": "ligand1",
@@ -116,6 +118,25 @@ results = runner.run_moldina_docking(
     ]
 }
 ```
+
+### Stopping a run
+
+A batch can be stopped while it runs by creating a `STOP_REQUESTED` file in
+its `output_dir` (`common/docking_stop.py` — the GUI's **Stop** button does
+this through `OrchestratorBridge.request_stop()`). The runner checks for it
+before each ligand and every 0.5 s while a ligand is docking:
+
+- no further ligands start;
+- a running Moldina process is terminated (SIGTERM, then SIGKILL after 5 s)
+  and its ligand counts as `skipped`, not `failed`;
+- the response has `"status": "stopped"`, `"stopped": true`, and
+  `docking_progress.json` ends with `"status": "stopped"`. A stopped run
+  never raises "failed for all ligands", even if nothing was docked.
+
+The runner only reads the flag; the orchestrator removes a stale one right
+before each dock step, so a later run isn't stopped by an old request. On
+Windows/WSL (dev mode) terminating `wsl.exe` may not stop the Linux-side
+process; the Docker deployment runs Moldina directly and isn't affected.
 
 ### MCP Server
 

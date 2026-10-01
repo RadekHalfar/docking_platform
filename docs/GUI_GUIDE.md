@@ -213,14 +213,22 @@ stopped run from silently disappearing while still keeping it out of the
 ## Stopping a Running Session
 
 While a session is running, the results panel shows a **Stop** button next
-to the progress bar. Clicking it requests cooperative cancellation: the
-in-flight step (a single MCP call, e.g. docking or preparation) is **not**
-interrupted mid-request — it finishes first (each such call has its own
-timeout, so this is bounded, typically well under a minute for a single
-ligand and up to a few minutes worst case) — and no further step starts
-after that. The session then settles as `"cancelled"` in `job.log` and
-`workflow_results.json`, and shows up under **Failed Sessions** so it can be
-inspected, redocked, or deleted like any other non-completed session.
+to the progress bar. What happens depends on the step that's running:
+
+- **During docking**, the stop takes effect within about a second: no
+  further ligands start, and any ligand being docked at that moment has
+  its Moldina process killed (its result is lost). With hundreds of
+  ligands queued, you don't wait for the rest of the batch.
+- **During any other step** (download, ligand/protein preparation,
+  visualization), that step's single service call finishes first — these
+  are short — and no further step starts after it.
+
+The session then settles as `"cancelled"` in `job.log` and
+`workflow_results.json` (the chat shows "Session stopped."), and shows up
+under **Failed Sessions** so it can be inspected, redocked, or deleted like
+any other non-completed session. Ligands docked before the stop keep their
+output files in `docking_results/`, but the session isn't treated as
+docked: a later redock docks every ligand again.
 
 ## Viewing a Session (Live or Historical)
 

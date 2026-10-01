@@ -1579,7 +1579,7 @@ def _render_job_results() -> None:
             st.info(f"Session {job_label} is running...")
             _render_docking_progress(viewed_job_id)
             if bridge.stop_requested():
-                st.caption("Stop requested — waiting for the current step to finish...")
+                st.caption("Stop requested — stopping (docking halts within a few seconds)...")
             elif st.button("Stop", key=f"stop_{viewed_job_id}"):
                 bridge.request_stop()
                 st.rerun()

@@ -829,6 +829,99 @@ class TestWorkflowCancellation:
         assert "status=cancelled" in job_log
 
 
+class TestDockingStopFlag:
+    """Stage 13.1b: a stop mid-docking (moldina-runner returns "stopped")
+    cancels the workflow, and a stale flag never leaks into a new dock step."""
+
+    @staticmethod
+    def _dock_ready_session(tmp_path, job_id):
+        from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+
+        params = {
+            "protein_id": "6lu7",
+            "ligand_ids": ["A", "B", "C"],
+            "center": [0.0, 0.0, 0.0],
+            "box_size": [20.0, 20.0, 20.0],
+        }
+        state_manager = WorkflowStateManager(tmp_path / job_id)
+        state_manager.save_parameters_checkpoint(params, source="test")
+        state_manager.save_execution_state_checkpoint(
+            {
+                "prepared_protein": "/app/orchestrator_output/x/prepared/receptor.pdbqt",
+                "prepared_ligands": [f"/app/orchestrator_output/x/prepared/{l}.pdbqt" for l in "ABC"],
+            },
+            step="prepare_protein",
+        )
+        return state_manager, params
+
+    def test_stopped_dock_result_cancels_and_skips_visualize(self, tmp_path):
+        state_manager, params = self._dock_ready_session(tmp_path, "stop_dock_test")
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={
+                "status": "stopped", "stopped": True, "skipped": 2,
+                "successful": 1, "failed": 0, "errors": [], "results": [{"ligand_id": "A"}],
+            }
+        )
+
+        results = orchestrator.execute_workflow(
+            {"services": ["dock", "visualize"], "parameters": params},
+            job_id="stop_dock_test",
+            state_manager=state_manager,
+            cancel_event=threading.Event(),
+        )
+
+        assert results["status"] == "cancelled"
+        assert orchestrator.call_mcp_tool.call_count == 1  # visualize never called
+        assert "dock" not in results["services_executed"]
+        assert results["results"]["dock"]["stopped"] is True
+        # No dock checkpoint: a later redock must dock everything again.
+        assert all((e.get("details") or {}).get("step") != "dock" for e in state_manager.list_revisions())
+        job_log = (tmp_path / "stop_dock_test" / "job.log").read_text()
+        assert "stopped on request" in job_log
+
+    def test_stale_stop_flag_is_cleared_before_docking(self, tmp_path):
+        state_manager, params = self._dock_ready_session(tmp_path, "stale_flag_test")
+        docking_dir = tmp_path / "stale_flag_test" / "docking_results"
+        docking_dir.mkdir(parents=True)
+        (docking_dir / "STOP_REQUESTED").touch()  # left over from an earlier stopped run
+        flag_present_at_call = []
+
+        def fake_call(service_url, tool_name, arguments, timeout=300):
+            flag_present_at_call.append((docking_dir / "STOP_REQUESTED").exists())
+            return {"status": "ok", "stopped": False, "successful": 3, "errors": [], "results": []}
+
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(side_effect=fake_call)
+
+        results = orchestrator.execute_workflow(
+            {"services": ["dock"], "parameters": params},
+            job_id="stale_flag_test",
+            state_manager=state_manager,
+        )
+
+        assert flag_present_at_call == [False]
+        assert results["status"] == "completed"
+        assert results["services_executed"] == ["dock"]
+
+    def test_cancel_before_dock_step_makes_no_docking_call(self, tmp_path):
+        state_manager, params = self._dock_ready_session(tmp_path, "cancel_pre_dock_test")
+        cancel_event = threading.Event()
+        cancel_event.set()
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock()
+
+        results = orchestrator.execute_workflow(
+            {"services": ["dock"], "parameters": params},
+            job_id="cancel_pre_dock_test",
+            state_manager=state_manager,
+            cancel_event=cancel_event,
+        )
+
+        assert results["status"] == "cancelled"
+        orchestrator.call_mcp_tool.assert_not_called()
+
+
 class TestWorkflowOrchestratorErrors:
     """Tests for WorkflowOrchestrator error handling (A2)."""
 

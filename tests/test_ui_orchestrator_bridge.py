@@ -297,6 +297,40 @@ class TestOrchestratorBridge:
         assert bridge.stop_requested() is False
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_request_stop_writes_docking_stop_flag(self, MockOrchestrator, tmp_path):
+        # Stage 13.1b: the flag is what makes moldina-runner halt mid-dock.
+        MockOrchestrator.return_value.execute_workflow.return_value = {"status": "completed"}
+        docking_dir = tmp_path / "job_x" / "docking_results"
+        docking_dir.mkdir(parents=True)
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "job_x", str(tmp_path))
+        bridge._thread.join(timeout=5)
+        bridge.request_stop()
+
+        assert (docking_dir / "STOP_REQUESTED").exists()
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
+    def test_request_stop_before_docking_dir_exists_writes_nothing(self, MockOrchestrator, tmp_path):
+        # Creating docking_results/ here (as the ui's user) could leave a
+        # dir moldina-runner can't write into -- the cancel event alone
+        # covers a stop before the dock step.
+        MockOrchestrator.return_value.execute_workflow.return_value = {"status": "completed"}
+
+        bridge = OrchestratorBridge()
+        bridge.start_workflow({}, "job_y", str(tmp_path))
+        bridge._thread.join(timeout=5)
+        bridge.request_stop()
+
+        assert bridge.stop_requested() is True
+        assert not (tmp_path / "job_y" / "docking_results").exists()
+
+    def test_request_stop_with_no_run_started_is_safe(self):
+        bridge = OrchestratorBridge()
+        bridge.request_stop()
+        assert bridge.stop_requested() is True
+
+    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
     def test_second_start_resets_previous_result(self, MockOrchestrator):
         started = threading.Event()
         released = threading.Event()

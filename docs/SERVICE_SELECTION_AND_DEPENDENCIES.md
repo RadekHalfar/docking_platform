@@ -418,7 +418,10 @@ steps are re-executed. The rerun planner lives in
 | Changed Parameter | get_input_files | prepare_ligands | prepare_protein | dock | visualize |
 |---|---|---|---|---|---|
 | `protein_id` | ✅ | | ✅ | ✅ | ✅ |
+| `protein_file` (local input) | ✅ | | ✅ | ✅ | ✅ |
 | `ligand_ids` | ✅ | ✅ | | ✅ | ✅ |
+| `ligand_files` (local input) | ✅ | ✅ | | ✅ | ✅ |
+| `ligand_folder` (batch input) | ✅ | ✅ | | ✅ | ✅ |
 | `center` | | | | ✅ | ✅ |
 | `box_size` | | | | ✅ | ✅ |
 | `ph` | | ✅ | ✅ | ✅ | ✅ |
@@ -427,6 +430,15 @@ steps are re-executed. The rerun planner lives in
 | `population` | | | | ✅ | ✅ |
 | `num_modes` | | | | ✅ | ✅ |
 | `energy_range` | | | | ✅ | ✅ |
+| `parallel` | | | | ✅ | ✅ |
+| `max_workers` | | | | ✅ | ✅ |
+
+Before a rerun starts, the planner checks that each planned step's required
+parameters are present (`missing_required_params()`). A local-file input
+satisfies its ID counterpart there, exactly as in first-run validation:
+`protein_file` stands in for `protein_id`, and `ligand_files` or
+`ligand_folder` for `ligand_ids` (`REQUIRED_PARAMETER_ALTERNATIVES` in
+`workflow_definition.py`).
 
 ### Examples
 

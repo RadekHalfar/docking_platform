@@ -26,6 +26,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
+from services.llm_orchestrator.workflow_definition import get_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
@@ -380,6 +381,12 @@ def _handle_redock_request(session, params: dict) -> None:
     ``[Y/n]`` prompt) via a two-step "Run Docking" → "Confirm redock" button
     pair, since Streamlit has no blocking ``input()``.
     """
+    # The first run checkpoints WorkflowParser.validate_workflow()'s output,
+    # which fills in defaults (energy_range, num_modes, population, ...);
+    # the form doesn't carry those. Apply the same defaults here, or every
+    # redock "changes" them to None -- a bogus dock/visualize plan and a
+    # checkpoint that silently drops them.
+    params = {**get_default_parameters(), **params}
     old_params = session.state_manager.load_latest_parameters() or {}
     changed = compute_changed_params(old_params, params)
     if not changed:

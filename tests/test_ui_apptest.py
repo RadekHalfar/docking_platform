@@ -343,6 +343,62 @@ def test_docking_box_size_below_picker_minimum_does_not_crash(app, viewer):
 
 
 # ---------------------------------------------------------------------------
+# Redock of a Local Files session (2026-10-01 fix)
+# ---------------------------------------------------------------------------
+
+def test_redock_local_files_session_after_ligand_change(app, output_base):
+    # Reported: swapping the ligand file in a Local Files session and
+    # clicking Run Docking gave "Cannot redock -- required parameters are
+    # missing: ligand_ids ..., protein_id ...", and the plan only covered
+    # dock/visualize (form-vs-validated default params diffed as changes).
+    from services.llm_orchestrator.interactive_session import InteractiveSession
+    from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
+    from services.llm_orchestrator.workflow_parser import WorkflowParser
+    from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+
+    job_id = "job_20261001_000000_abcdef"
+    first_run = {
+        "protein_file": "/workspace/orchestrator_output/uploads/receptor.pdb",
+        "ligand_files": ["/workspace/orchestrator_output/uploads/crystal_ligand.mol2"],
+        "center": [1.0, 2.0, 3.0],
+        "box_size": [20.0, 20.0, 20.0],
+    }
+    # What _handle_run_docking checkpoints: the validator's output, defaults filled in.
+    validated = WorkflowParser().validate_workflow(
+        {"services": list(WORKFLOW_STEPS), "parameters": dict(first_run)}
+    )["parameters"]
+    state_manager = WorkflowStateManager(output_base / job_id)
+    state_manager.save_parameters_checkpoint(validated, source="initial_parse")
+    session = InteractiveSession()
+    session.activate(
+        job_id, state_manager, last_results={"status": "completed", "services_executed": list(WORKFLOW_STEPS)}
+    )
+
+    app.session_state["interactive_session"] = session
+    app.session_state["job_id"] = job_id
+    app.session_state["input_mode"] = "local_files"
+    app.session_state["params"] = {
+        **first_run,
+        "ligand_files": ["/workspace/orchestrator_output/uploads/actives_final.sdf"],
+    }
+    for key, value in zip(_BOX_KEYS, ("1.0", "2.0", "3.0", "20.0", "20.0", "20.0")):
+        app.session_state[key] = value
+
+    at = app.run()
+    next(b for b in at.button if b.label == "Run Docking").click().run()
+
+    assert not at.exception
+    assert not [e.value for e in at.error], [e.value for e in at.error]
+    pending = at.session_state["_pending_rerun"]
+    assert pending["steps"] == ["get_input_files", "prepare_ligands", "dock", "visualize"]
+    latest = state_manager.load_latest_parameters()
+    assert latest["ligand_files"] == ["/workspace/orchestrator_output/uploads/actives_final.sdf"]
+    # Defaults the first run had are kept, not dropped to None.
+    for key in ("energy_range", "num_modes", "population"):
+        assert latest[key] == validated[key]
+
+
+# ---------------------------------------------------------------------------
 # Run completion (chat panel)
 # ---------------------------------------------------------------------------
 

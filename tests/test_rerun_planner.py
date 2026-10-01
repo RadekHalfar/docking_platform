@@ -143,3 +143,37 @@ def test_missing_required_params_union_across_steps():
 
 def test_missing_required_params_empty_steps():
     assert missing_required_params([], {}) == []
+
+
+@pytest.mark.parametrize(
+    "file_inputs",
+    [
+        {"protein_file": "/x/receptor.pdb", "ligand_files": ["/x/lig.sdf"]},
+        {"protein_file": "/x/receptor.pdb", "ligand_folder": "/x/ligands"},
+    ],
+)
+def test_missing_required_params_accepts_local_file_inputs(file_inputs):
+    # GUI "Local Files" / "Batch Processing" sessions have no
+    # protein_id/ligand_ids at all -- reported 2026-10-01 as "Cannot redock
+    # -- required parameters are missing: ligand_ids ..., protein_id ...".
+    params = {**file_inputs, "center": [1, 2, 3], "box_size": [20, 20, 20]}
+    assert missing_required_params(WORKFLOW_STEPS, params) == []
+
+
+def test_missing_required_params_empty_local_file_list_still_missing():
+    params = {"protein_file": "/x/receptor.pdb", "ligand_files": [], "center": [1, 2, 3], "box_size": [20, 20, 20]}
+    missing = missing_required_params(["dock"], params)
+    assert any("ligand_ids" in m for m in missing)
+
+
+@pytest.mark.parametrize(
+    "file_param, id_param",
+    [("protein_file", "protein_id"), ("ligand_files", "ligand_ids"), ("ligand_folder", "ligand_ids")],
+)
+def test_local_file_change_reruns_same_steps_as_its_id_counterpart(file_param, id_param):
+    assert compute_rerun_steps({file_param}) == compute_rerun_steps({id_param})
+
+
+def test_changed_ligand_files_reruns_ligand_preparation():
+    steps = compute_rerun_steps({"ligand_files"}, original_services=WORKFLOW_STEPS)
+    assert steps == ["get_input_files", "prepare_ligands", "dock", "visualize"]

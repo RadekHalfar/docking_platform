@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy
 import os
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 
 WORKFLOW_STEPS: List[str] = [
@@ -56,9 +56,25 @@ REQUIRED_PARAMETERS_BY_STEP: Dict[str, List[str]] = {
 }
 
 
+# Local-file inputs that stand in for a required ID parameter (GUI "Local
+# Files" / "Batch Processing" modes, CLI local paths) -- mirrors what
+# WorkflowParser.get_parameter_issue() already accepts, so a rerun check
+# doesn't report protein_id/ligand_ids "missing" for a file-based session.
+REQUIRED_PARAMETER_ALTERNATIVES: Dict[str, Tuple[str, ...]] = {
+    "protein_id": ("protein_file",),
+    "ligand_ids": ("ligand_files", "ligand_folder"),
+}
+
+
 PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
     "protein_id": frozenset({"get_input_files", "prepare_protein", "dock", "visualize"}),
     "ligand_ids": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
+    # File-based equivalents invalidate exactly what their ID counterparts
+    # do -- without these, swapping ligand files only redocked the *old*
+    # prepared ligands.
+    "protein_file": frozenset({"get_input_files", "prepare_protein", "dock", "visualize"}),
+    "ligand_files": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
+    "ligand_folder": frozenset({"get_input_files", "prepare_ligands", "dock", "visualize"}),
     "center": frozenset({"dock", "visualize"}),
     "box_size": frozenset({"dock", "visualize"}),
     "ph": frozenset({"prepare_ligands", "prepare_protein", "dock", "visualize"}),

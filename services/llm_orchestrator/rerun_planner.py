@@ -9,6 +9,7 @@ from typing import List, Optional, Set
 
 from services.llm_orchestrator.workflow_definition import (
     PARAM_INVALIDATION_MAP,
+    REQUIRED_PARAMETER_ALTERNATIVES,
     REQUIRED_PARAMETERS_BY_STEP,
     STEP_LABELS,
     WORKFLOW_STEPS,
@@ -63,7 +64,10 @@ def missing_required_params(steps: List[str], params: dict) -> List[str]:
     missing: List[str] = []
     for step in steps:
         for param in REQUIRED_PARAMETERS_BY_STEP.get(step, []):
-            if not params.get(param):
+            # A local-file input (protein_file, ligand_files, ligand_folder)
+            # satisfies its ID counterpart, as in WorkflowParser.
+            alternatives = REQUIRED_PARAMETER_ALTERNATIVES.get(param, ())
+            if not params.get(param) and not any(params.get(alt) for alt in alternatives):
                 missing.append(f"{param} (required by '{step}')")
     return missing
 

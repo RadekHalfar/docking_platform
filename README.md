@@ -398,7 +398,7 @@ docking_platform/
 │   ├── LLM_ORCHESTRATION.md    # Natural language interface guide
 │   ├── DOCKING_PARAMETERS.md   # Docking parameters reference
 │   ├── PYMOL_VISUALIZATION.md  # Legacy/optional PyMOL Visualizer service (not used by default)
-│   ├── STATE_PERSISTENCE_STRATEGY.md  # Checkpoint/undo persistence design (CLI-only)
+│   ├── STATE_PERSISTENCE_STRATEGY.md  # Checkpoint/undo persistence design (CLI + GUI)
 │   ├── VERBOSITY_LEVELS.md     # Verbosity modes guide
 │   └── *.md                    # Additional documentation
 │

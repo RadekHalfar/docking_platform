@@ -479,3 +479,275 @@ def test_sidebar_lists_completed_and_failed_sessions(app, output_base):
     load_keys = {b.key for b in at.sidebar.button if b.label == "Load"}
     assert "job_load_job_20260930_000002_aaaaaa" in load_keys
     assert "job_load_job_20260930_000003_bbbbbb" in load_keys
+
+
+# ---------------------------------------------------------------------------
+# Revision history + undo (Stage 13.2)
+# ---------------------------------------------------------------------------
+
+_HISTORY_JOB_ID = "job_20261001_000002_cafe01"
+_REV1_PARAMS = {
+    "protein_id": "6lu7",
+    "ligand_ids": ["ATP"],
+    "center": [1.0, 2.0, 3.0],
+    "box_size": [20.0, 20.0, 20.0],
+}
+_REV2_PARAMS = {**_REV1_PARAMS, "center": [5.0, 6.0, 7.0]}
+
+
+def _validated(params: dict) -> dict:
+    """What the GUI checkpoints: the validator's output, defaults filled in."""
+    from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
+    from services.llm_orchestrator.workflow_parser import WorkflowParser
+
+    return WorkflowParser().validate_workflow(
+        {"services": list(WORKFLOW_STEPS), "parameters": dict(params)}
+    )["parameters"]
+
+
+def _active_session_with_two_revisions(app, output_base):
+    """An active, completed RCSB session: rev 1 = initial params, rev 2 =
+    center changed and redocked. The form shows rev 2."""
+    from services.llm_orchestrator.interactive_session import InteractiveSession
+    from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
+    from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+
+    state_manager = WorkflowStateManager(output_base / _HISTORY_JOB_ID)
+    state_manager.save_parameters_checkpoint(_validated(_REV1_PARAMS), source="initial_parse")
+    state_manager.save_parameters_checkpoint(_validated(_REV2_PARAMS), source="interactive_update")
+    session = InteractiveSession()
+    session.activate(
+        _HISTORY_JOB_ID,
+        state_manager,
+        last_results={"status": "completed", "services_executed": list(WORKFLOW_STEPS)},
+    )
+
+    app.session_state["interactive_session"] = session
+    app.session_state["job_id"] = _HISTORY_JOB_ID
+    app.session_state["_job_done"] = True
+    app.session_state["input_mode"] = "rcsb"
+    app.session_state["params"] = dict(_REV2_PARAMS)
+    app.session_state["param_protein_id"] = "6lu7"
+    app.session_state["param_ligand_ids_text"] = "ATP"
+    for key, value in zip(_BOX_KEYS, ("5.0", "6.0", "7.0", "20.0", "20.0", "20.0")):
+        app.session_state[key] = value
+    return session, state_manager
+
+
+def _click(at, label):
+    return next(b for b in at.button if b.label == label).click().run()
+
+
+def _restore_rev1(at):
+    at.selectbox(key="revision_to_restore").set_value(1).run()
+    return _click(at, "Restore revision")
+
+
+def test_revision_history_expander_lists_revisions(app, output_base):
+    _active_session_with_two_revisions(app, output_base)
+
+    at = app.run()
+
+    assert not at.exception
+    history = next(e for e in at.expander if e.label == "Revision history")
+    table = "\n".join(m.value for m in history.markdown)
+    assert "| 1 |" in table and "| 2 |" in table
+    assert "initial\\_parse" in table
+    assert any("currently at revision 2" in c.value for c in history.caption)
+    assert at.selectbox(key="revision_to_restore").options == ["2", "1"]
+
+
+def test_revision_history_hidden_without_active_session(app):
+    at = app.run()
+
+    assert not at.exception
+    assert not [e for e in at.expander if e.label == "Revision history"]
+
+
+def test_restore_revision_loads_its_params_and_marks_all_pending(app, output_base):
+    from services.llm_orchestrator.workflow_definition import CORE_PARAMS
+
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+    state_manager.save_draft_parameters({**_REV2_PARAMS, "center": [9.0, 9.0, 9.0]})
+
+    at = _restore_rev1(app.run())
+
+    assert not at.exception
+    assert at.session_state["param_center_x"] == "1.0"
+    assert at.session_state["params"]["center"] == [1.0, 2.0, 3.0]
+    # The picker follows the restored box too.
+    assert at.session_state["picked_center"] == [1.0, 2.0, 3.0]
+    # A draft would otherwise win over the restore on the next Load.
+    assert state_manager.load_draft_parameters() is None
+    assert state_manager.load_latest_parameters()["center"] == [1.0, 2.0, 3.0]
+    assert state_manager.get_parameters_revision() == 3
+    assert session.pending_changed_params == set(CORE_PARAMS)
+    assert "Restored revision 1" in (output_base / _HISTORY_JOB_ID / "job.log").read_text()
+    assert any(t.startswith("Restored revision 1.") for t in _chat_texts(at))
+
+
+def test_redock_after_restore_plans_full_rerun(app, output_base):
+    # Without pending_changed_params the form equals the (restored)
+    # checkpoint and redock would be a no-op over the newer results.
+    from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS
+
+    _, state_manager = _active_session_with_two_revisions(app, output_base)
+
+    at = _click(_restore_rev1(app.run()), "Run Docking")
+
+    assert not at.exception
+    assert not [e.value for e in at.error], [e.value for e in at.error]
+    assert set(at.session_state["_pending_rerun"]["steps"]) == set(WORKFLOW_STEPS)
+    # Nothing differed from the restored checkpoint -> no extra revision.
+    assert state_manager.get_parameters_revision() == 3
+
+
+def test_cancelled_redock_plan_is_offered_again(app, output_base):
+    # The redock checkpoints the new params before "Confirm redock"; after
+    # Cancel the form equals that checkpoint, so a plain diff found nothing.
+    _active_session_with_two_revisions(app, output_base)
+    app.session_state["param_center_x"] = "8.0"
+
+    at = _click(app.run(), "Run Docking")
+    first_steps = at.session_state["_pending_rerun"]["steps"]
+    at = _click(at, "Cancel")
+    assert "_pending_rerun" not in at.session_state
+    at = _click(at, "Run Docking")
+
+    assert not at.exception
+    assert at.session_state["_pending_rerun"]["steps"] == first_steps
+    assert "No parameter changes detected — nothing to redock." not in _chat_texts(at)
+
+
+@pytest.mark.parametrize("status, cleared", [("completed", True), ("cancelled", False), ("failed", False)])
+def test_finished_run_clears_pending_only_when_completed(app, output_base, status, cleared):
+    session, _ = _active_session_with_two_revisions(app, output_base)
+    session.pending_changed_params |= {"center"}
+    app.session_state["_job_done"] = False
+    app.session_state["bridge"] = FakeBridge(result={"status": status, "results": {}, "errors": ["x"]})
+
+    at = app.run()
+
+    assert not at.exception
+    assert session.pending_changed_params == (set() if cleared else {"center"})
+
+
+class _RunningBridge(FakeBridge):
+    def is_running(self):
+        return True
+
+
+class _StopPolling(Exception):
+    pass
+
+
+@pytest.fixture
+def running_bridge(app, monkeypatch):
+    """A bridge that stays running. The page's bottom-of-script poll
+    (`time.sleep(2); st.rerun()`) would then loop forever, so app.py's own
+    sleep raises instead -- everything above it (all three panels) has
+    rendered by then, which is what these tests assert on."""
+    import sys
+    import time
+
+    real_sleep = time.sleep
+
+    def _sleep(seconds):
+        if sys._getframe(1).f_code.co_filename.endswith("app.py"):
+            raise _StopPolling()
+        real_sleep(seconds)
+
+    monkeypatch.setattr(time, "sleep", _sleep)
+    app.session_state["bridge"] = _RunningBridge()
+
+
+def _only_stop_polling_exception(at):
+    assert len(at.exception) == 1
+    assert "raise _StopPolling()" in at.exception[0].stack_trace[-1]
+
+
+def test_restore_disabled_while_job_runs(app, output_base, running_bridge):
+    _active_session_with_two_revisions(app, output_base)
+
+    at = app.run()
+
+    _only_stop_polling_exception(at)
+    restore = next(b for b in at.button if b.label == "Restore revision")
+    assert restore.disabled
+
+
+def test_chat_undo_refused_while_job_runs(app, output_base, running_bridge):
+    _, state_manager = _active_session_with_two_revisions(app, output_base)
+
+    at = app.run()
+    at.chat_input[0].set_value("undo 1").run()
+
+    _only_stop_polling_exception(at)
+    assert "A session is running — Stop it before restoring a revision." in _chat_texts(at)
+    assert state_manager.get_parameters_revision() == 2
+
+
+def test_chat_show_history_and_undo(app, output_base):
+    session, state_manager = _active_session_with_two_revisions(app, output_base)
+
+    at = app.run()
+    at.chat_input[0].set_value("show history").run()
+    assert not at.exception
+    reply = _chat_texts(at)[-1]
+    assert "| 2 |" in reply and "currently at revision **2**" in reply
+
+    at.chat_input[0].set_value("undo").run()
+    assert "Which revision?" in _chat_texts(at)[-1]
+
+    at.chat_input[0].set_value("undo 99").run()
+    assert _chat_texts(at)[-1].startswith("Cannot restore revision 99")
+    assert state_manager.get_parameters_revision() == 2
+
+    at.chat_input[0].set_value("undo 1").run()
+    assert not at.exception
+    assert _chat_texts(at)[-1].startswith("Restored revision 1.")
+    assert at.session_state["param_center_x"] == "1.0"
+    assert state_manager.load_latest_parameters()["center"] == [1.0, 2.0, 3.0]
+    assert session.pending_changed_params
+
+
+@pytest.mark.parametrize("trigger", ["run_completed", "chat_message"])
+def test_param_widgets_survive_early_rerun_in_chat_column(app, output_base, trigger):
+    # Reported: after a successful docking the Docking Box fields were empty.
+    # Both triggers call st.rerun() from the chat column, i.e. before the
+    # parameters panel renders; Streamlit's stale-widget cleanup runs on a
+    # rerun-interrupted run too, dropping every keyed widget not yet
+    # rendered, and init() then re-seeded the empty defaults.
+    _active_session_with_two_revisions(app, output_base)
+    at = app.run()  # widgets render once, as in the real page
+    # Typed by the user, so the values live in widget state -- the state
+    # the cleanup drops.
+    typed = {"param_center_x": "8.0", "param_box_z": "30.0", "param_ph": "6.5"}
+    for key, value in typed.items():
+        at.text_input(key=key).set_value(value)
+    at.run()
+
+    if trigger == "run_completed":
+        at.session_state["_job_done"] = False
+        at.session_state["bridge"] = FakeBridge(result={"status": "completed", "results": {}})
+        at.run()
+    else:
+        at.chat_input[0].set_value("show history").run()
+
+    assert not at.exception
+    assert [at.session_state[k] for k in _BOX_KEYS] == ["8.0", "6.0", "7.0", "20.0", "20.0", "30.0"]
+    assert at.text_input(key="param_center_x").value == "8.0"
+    assert at.session_state["input_mode"] == "rcsb"
+    assert at.session_state["param_protein_id"] == "6lu7"
+    assert at.session_state["param_ph"] == "6.5"
+    # Re-assigning widget keys every run must not trip Streamlit's
+    # "default value but also set via the Session State API" warning.
+    assert not [w.value for w in at.warning if "Session State" in w.value]
+
+
+def test_chat_history_without_active_session(app):
+    at = app.run()
+    at.chat_input[0].set_value("show history").run()
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "No active session — no history yet."

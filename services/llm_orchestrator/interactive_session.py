@@ -24,8 +24,11 @@ def compute_changed_params(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -
     Thin wrapper around :func:`common.param_diff.changed_parameter_keys` -- the
     GUI's one-shot equivalent of how the CLI's ``InteractiveSession``
     incrementally accumulates ``pending_changed_params`` across individual
-    ``set ...`` commands: the GUI submits the whole form at once, so a single
-    diff against the last on-disk checkpoint is all that's needed.
+    ``set ...`` commands: the GUI submits the whole form at once and diffs it
+    against the last on-disk checkpoint. Since Stage 13.2 the GUI also keeps
+    ``pending_changed_params`` for changes already checkpointed but not yet
+    run to completion (a restored revision, a cancelled redock plan), which
+    that diff can't see.
     """
     return set(changed_parameter_keys(old, new))
 
@@ -228,10 +231,16 @@ class InteractiveSession:
         return bool(self.job_id and self.state_manager)
 
     def activate(self, job_id: str, state_manager: WorkflowStateManager, last_results: Optional[Dict[str, Any]] = None) -> None:
-        """Attach a job/state manager as the active session context."""
+        """Attach a job/state manager as the active session context.
+
+        Resets ``pending_changed_params``: changes pending against the
+        previously attached job say nothing about this one (the GUI reuses
+        one session object across sidebar Loads).
+        """
         self.job_id = job_id
         self.state_manager = state_manager
         self.last_results = last_results
+        self.pending_changed_params = set()
 
     def clear(self) -> None:
         """Clear active job context."""

@@ -131,6 +131,43 @@ brand-new, unrelated session — it redocks the same one.
 - `job.log` and `workflow_results.json` for that session accumulate across
   every redock — the results panel and downloads always reflect the full
   history, not just the most recent partial run.
+- Clicking **Run Docking** checkpoints the new parameters straight away,
+  before you confirm. If you then **Cancel** (or the run is stopped or
+  fails), the session remembers that those parameters were never run to
+  completion, and the next **Run Docking** offers the same plan again
+  instead of reporting "nothing to redock". This memory only lasts while the
+  tab is open: after a **Load** or a page reload, only real form changes
+  are detected.
+
+## Revision History and Undo
+
+Every parameter checkpoint (first run, each redock, each restore) is a
+numbered **revision** of the session. While a session is active, the
+**Revision history** expander under **Current parameters** shows them as a
+table (revision, time, event, details), with a caption naming the revision
+the parameters are currently at.
+
+To go back to earlier parameters, pick a revision in the expander's
+**Revision** dropdown and click **Restore revision**. The dropdown lists only
+revisions that have parameters. Restoring:
+
+- fills the form (and the box picker) with that revision's parameters,
+  replacing everything, including fields the revision didn't set;
+- is recorded as a new `undo_restore` revision, so it is in `job.log` and
+  can itself be undone;
+- discards any **Save Session** draft and any staged redock plan;
+- does **not** change the results panel, which still shows the last run.
+  Click **Run Docking** afterwards. The plan reruns every step the restored
+  parameters affect (normally all of them), even though the form now matches
+  the checkpoint.
+
+**Restore revision** is disabled while the session is running: the running
+job re-reads the latest parameters before each step, so a restore would
+change it mid-run.
+
+The same commands work in chat, without an LLM call: `show history` (or
+`history`) posts the table, and `undo 3` restores revision 3. A bare `undo`
+asks which revision.
 
 ## Saving Parameters Without Docking
 

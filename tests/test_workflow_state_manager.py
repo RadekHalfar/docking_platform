@@ -368,3 +368,25 @@ def test_job_log_lines_are_timestamped_and_ordered(mgr):
         assert line.startswith("20"), f"expected an ISO timestamp prefix, got: {line}"
     assert "Parameters updated" in lines[0] or "Parameters checkpoint saved" in lines[0]
     assert "State checkpoint saved" in lines[1]
+
+
+# ---------------------------------------------------------------------------
+# get_parameters_revision (Phase 13, Stage 13.2)
+# ---------------------------------------------------------------------------
+
+def test_get_parameters_revision_none_before_any_checkpoint(mgr):
+    assert mgr.get_parameters_revision() is None
+
+
+def test_get_parameters_revision_ignores_later_state_updates(mgr):
+    rev = mgr.save_parameters_checkpoint(PARAMS_A, source="test")
+    mgr.save_execution_state_checkpoint(STATE_A, step="dock")
+    assert mgr.get_parameters_revision() == rev
+    assert mgr.get_current_revision() == rev + 1
+
+
+def test_get_parameters_revision_follows_a_restore(mgr):
+    rev_a = mgr.save_parameters_checkpoint(PARAMS_A, source="test")
+    mgr.save_parameters_checkpoint(PARAMS_B, source="test")
+    mgr.restore_revision(rev_a)
+    assert mgr.get_parameters_revision() == mgr.get_current_revision()

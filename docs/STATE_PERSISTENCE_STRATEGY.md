@@ -3,7 +3,7 @@
 ## Overview
 The workflow uses a hybrid persistence model that combines:
 - latest files for simple runtime reloads
-- immutable revisioned checkpoints for audit history and in-session undo (`undo <rev>` in the interactive CLI)
+- immutable revisioned checkpoints for audit history and in-session undo (`undo <rev>` in the interactive CLI; **Restore revision** / `undo <rev>` in the GUI)
 
 This is implemented in `services/llm_orchestrator/workflow_state_manager.py` and integrated into parser, orchestrator, and CLI flow.
 
@@ -20,9 +20,12 @@ parameters, computes a minimal rerun plan with the same
 `rerun_planner.compute_rerun_steps()` the CLI uses, and executes it behind a
 **Confirm redock** button (see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#redocking-after-a-parameter-change)). What
-the GUI does *not* yet have is `history`/`undo`/named `save_results`
-affordances — those exist in the CLI against the same `state_manager` this
-stage wires in, and are tracked as GUI-parity future work. Everything below
+the GUI does *not* yet have is a named `save_results` affordance (Phase 13,
+Stage 13.3). `history`/`undo` reached the GUI in Phase 13, Stage 13.2: a
+**Revision history** panel and the `show history`/`undo N` chat commands, over
+the same `list_revisions()`/`restore_revision()` the CLI uses (see
+[docs/GUI_GUIDE.md](GUI_GUIDE.md#revision-history-and-undo) and "GUI notes"
+under Phase 4 below). Everything below
 describes the interactive CLI session (`nlp_orchestrator.py --interactive`)
 except where a Stage 11.2/11.3 note calls out GUI behavior explicitly.
 
@@ -51,8 +54,8 @@ appears in the Failed Sessions list, not Session History (see
 **Not covered by this:** resuming a killed/crashed *process* (not to be
 confused with the Load-based session resumption above, which only ever acts
 on a job whose `execute_workflow()` call already returned and wrote its
-files). Undo/restore operates on `session.last_results`, which only exists
-in the memory of a live interactive session -- if the process running
+files). Undo/restore only promotes an existing checkpoint file to the
+"latest" files; it never re-runs or reloads an interrupted call -- if the process running
 `execute_workflow()` itself is killed mid-call (not stopped via the GUI's
 cooperative Stop button, which always finishes cleanly), there is currently
 no code path that reloads checkpoints to resume the *interrupted* call
@@ -264,6 +267,34 @@ user: rerun
   → compute_rerun_steps(pending_changed_params, original_services)
   → _execute_partial_rerun(...)
 ```
+
+### GUI notes (Phase 13, Stage 13.2)
+
+The GUI's **Restore revision** button and `undo N` chat command share
+`ui/app.py::_undo_to_revision()`. It calls the same `restore_revision()`, then:
+
+- clears `draft_parameters.json`, which would otherwise win over the restore
+  on the next Load;
+- drops any staged redock plan;
+- reloads the form via `load_session_params()`, which resets every `param_*`
+  widget first, so a key the revision lacks can't survive;
+- sets `pending_changed_params |= CORE_PARAMS`, as the CLI does.
+
+It refuses while the tab's own bridge is running, because
+`execute_workflow()` re-reads the latest parameters before every step.
+
+The GUI's redock (`_handle_redock_request`) plans from
+`changed | pending_changed_params`. After a checkpoint it adds the changed
+keys to `pending`. It clears `pending` only when a run of the active job
+**completes**. A stopped or failed run keeps it, which is stricter than the
+CLI's `rerun`, where `pending` is cleared either way. `InteractiveSession.activate()` resets
+`pending` (the GUI reuses one session object across Loads).
+
+**Limitation:** `pending_changed_params` lives in memory only. After a Load
+or a page reload, a checkpoint that was never run to completion (a cancelled
+redock plan, a stopped run, a restore not yet redocked) is no longer flagged.
+The next redock then only sees real form changes. Run **Run Docking** before
+switching away, or edit a parameter to force a plan.
 
 ### Safety Properties
 

@@ -144,6 +144,33 @@ def test_load_session_params_replaces_params_entirely():
     assert st.session_state.param_protein_id == "new"
 
 
+def test_load_session_params_resets_widgets_the_loaded_params_lack():
+    # e.g. restoring a protein_file revision over an RCSB one: without the
+    # reset, the stale protein_id widget would survive and be docked.
+    session_state.init()
+    st.session_state.param_protein_id = "6lu7"
+    st.session_state.param_ligand_ids_text = "ATP"
+    st.session_state.param_center_x = "9.0"
+    st.session_state.param_job_name = "my run"
+
+    session_state.load_session_params({"protein_file": "/x/receptor.pdb", "ligand_files": ["/x/l.sdf"]})
+
+    assert st.session_state.param_protein_id == ""
+    assert st.session_state.param_ligand_ids_text == ""
+    assert st.session_state.param_center_x == ""
+    # Names the *next* new session only -- not part of a loaded revision.
+    assert st.session_state.param_job_name == "my run"
+
+
+def test_load_session_params_sets_parallel_widgets_clamped():
+    session_state.init()
+    session_state.load_session_params(
+        {"protein_id": "6lu7", "parallel": True, "max_workers": session_state.DETECTED_CPU_COUNT + 50}
+    )
+    assert st.session_state.param_parallel is True
+    assert st.session_state.param_max_workers == session_state.DETECTED_CPU_COUNT
+
+
 # ---------------------------------------------------------------------------
 # clear_box_picker_state
 # ---------------------------------------------------------------------------

@@ -192,11 +192,13 @@ For docking one protein against every ligand file in a folder, see
 
 ### Interactive Mode
 
-**CLI only.** Everything in this section — session state, parameter
-updates, `rerun`, revision history/`undo`, and named result bundles — is
-implemented in `nlp_orchestrator.py`'s interactive terminal session. The
-Streamlit web UI (`ui/`) does not wire in `WorkflowStateManager` and has
-none of these capabilities; it only runs one-shot workflows. See
+This section describes `nlp_orchestrator.py`'s interactive terminal
+session. The Streamlit web UI (`ui/`) runs on the same
+`InteractiveSession`/`WorkflowStateManager` and covers part of it with its
+own controls: redocking after a parameter change, Load/resume, and revision
+history/undo. GUI chat also accepts `show history` and `undo N`, resolved
+deterministically without an LLM call. Named result bundles (`save results
+as`) are CLI-only for now. See [docs/GUI_GUIDE.md](GUI_GUIDE.md). See
 [docs/STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md) for the
 persistence layer these features are built on.
 

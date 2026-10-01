@@ -22,11 +22,12 @@ from services.llm_orchestrator.rerun_planner import (
     missing_required_params,
 )
 from services.llm_orchestrator.workflow_llm_parser import (
+    _deterministic_intent,
     detect_protein_geometry_command,
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
-from services.llm_orchestrator.workflow_definition import get_default_parameters
+from services.llm_orchestrator.workflow_definition import CORE_PARAMS, get_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
@@ -237,6 +238,13 @@ def _on_chat_submit(user_message: str) -> None:
         _handle_protein_geometry_command(geometry_target)
         return
 
+    # Only the revision commands are taken from the CLI's deterministic
+    # intents; everything else keeps the parameter-parsing path below.
+    intent = _deterministic_intent(user_message)
+    if intent is not None and intent["intent"] in ("show_history", "undo_revision"):
+        _handle_history_chat_intent(intent)
+        return
+
     with st.spinner("Parsing with LLM..."):
         try:
             prior = st.session_state.parser.parsed_workflow
@@ -389,18 +397,24 @@ def _handle_redock_request(session, params: dict) -> None:
     params = {**get_default_parameters(), **params}
     old_params = session.state_manager.load_latest_parameters() or {}
     changed = compute_changed_params(old_params, params)
-    if not changed:
+    # pending_changed_params holds changes already checkpointed but not yet
+    # run to completion: a restored revision (all CORE_PARAMS), or an
+    # earlier redock that was cancelled / failed. The form matches the
+    # checkpoint in those cases, so the diff alone would miss them.
+    rerun_keys = changed | session.pending_changed_params
+    if not rerun_keys:
         st.session_state.messages.append(
             {"role": "assistant", "content": "No parameter changes detected — nothing to redock."}
         )
         st.rerun()
         return
 
-    session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
-    session.state_manager.clear_draft_parameters()
+    if changed:
+        session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
+        session.state_manager.clear_draft_parameters()
 
     original_services = (session.last_results or {}).get("services_executed", [])
-    steps = compute_rerun_steps(changed, original_services=original_services)
+    steps = compute_rerun_steps(rerun_keys, original_services=original_services)
     if not steps:
         st.session_state.messages.append(
             {"role": "assistant", "content": "Parameters updated, but no steps need to be re-executed."}
@@ -408,7 +422,12 @@ def _handle_redock_request(session, params: dict) -> None:
         st.rerun()
         return
 
-    # params was just checkpointed unchanged above -- reuse it instead of a
+    # The checkpoint above now runs ahead of the results on disk until a
+    # run completes (render_chat() clears this) -- Cancel or the error
+    # return below must not lose that.
+    session.pending_changed_params |= changed
+
+    # params is what the checkpoint holds -- reuse it instead of a
     # redundant round trip back through the checkpoint file.
     missing = missing_required_params(steps, params)
     if missing:
@@ -459,6 +478,87 @@ def _execute_confirmed_redock() -> None:
         }
     )
     st.rerun()
+
+
+def _undo_to_revision(revision: int) -> str:
+    """Restore the active session's parameters to *revision* (the GUI's
+    ``undo <rev>``) and return the reply to show.
+
+    Shared by the Revision history panel's button (an on_click callback)
+    and the chat command; never calls st.rerun() and must run before the
+    parameter widgets render, since it rewrites their keys.
+    """
+    session = st.session_state.interactive_session
+    if not session.has_active_job():
+        return "No active session — run or load one first."
+    if _active_bridge_job_id() is not None:
+        # The orchestrator re-reads the latest parameters before every
+        # step, so a restore now would change the running job mid-flight.
+        return "A session is running — Stop it before restoring a revision."
+
+    try:
+        data = session.state_manager.restore_revision(revision)
+    except ValueError as exc:
+        return f"Cannot restore revision {revision}: {exc}"
+
+    restored = data["parameters"]
+    if restored is None:
+        return (
+            f"Revision {revision} has no parameter checkpoint — parameters unchanged "
+            "(runtime state restored)."
+        )
+
+    # A draft would otherwise win over the restored revision on the next Load.
+    session.state_manager.clear_draft_parameters()
+    st.session_state.pop("_pending_rerun", None)
+    _load_params_into_form(restored)
+    # The results on disk come from the newer parameters -- the next redock
+    # must rerun everything those affect, even though the form now matches
+    # the checkpoint exactly (mirrors the CLI's undo).
+    session.pending_changed_params |= CORE_PARAMS
+    return (
+        f"Restored revision {revision}. The results panel still shows the last run — "
+        "click **Run Docking** to rerun with the restored parameters."
+    )
+
+
+def _format_history_markdown(state_manager: WorkflowStateManager) -> str:
+    """The active job's revision history as a markdown table (the GUI's
+    equivalent of the CLI's ``show history``)."""
+    revisions = state_manager.list_revisions()
+    if not revisions:
+        return "No revisions recorded yet."
+
+    lines = ["| Rev | Time (UTC) | Event | Details |", "|---|---|---|---|"]
+    for r in revisions:
+        details = ", ".join(f"{k}={v}" for k, v in r["details"].items())
+        flags = [name for name, present in (("params", r["has_parameters"]), ("state", r["has_state"])) if present]
+        if flags:
+            details = f"{details} [{', '.join(flags)}]" if details else f"[{', '.join(flags)}]"
+        timestamp = r["timestamp"][:19].replace("T", " ")
+        event, details = (escape_markdown(s).replace("|", "\\|") for s in (r["event_type"], details))
+        lines.append(f"| {r['revision']} | {timestamp} | {event} | {details} |")
+    return "\n".join(lines)
+
+
+def _handle_history_chat_intent(intent: dict) -> None:
+    """Answer a deterministic ``show history`` / ``undo [N]`` chat command."""
+    session = st.session_state.interactive_session
+    if intent["intent"] == "show_history":
+        if not session.has_active_job():
+            reply = "No active session — no history yet."
+        else:
+            current = session.state_manager.get_parameters_revision()
+            reply = (
+                _format_history_markdown(session.state_manager)
+                + f"\n\nParameters are currently at revision **{current}**. "
+                "Type `undo <revision>` to restore one."
+            )
+    elif intent.get("name") is None:
+        reply = "Which revision? e.g. `undo 3` — type `show history` to list them."
+    else:
+        reply = _undo_to_revision(int(intent["name"]))
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
 def _reset_session(preserve: frozenset = frozenset({"settings"})) -> None:
@@ -583,6 +683,26 @@ def _render_settings_form() -> None:
             st.error(f"Could not apply settings: {exc}")
 
 
+def _load_params_into_form(params: dict) -> None:
+    """Make *params* the form's full parameter state: params dict + every
+    param_* widget (load_session_params), the box picker's own state, and
+    the chat parser. Shared by a sidebar Load and a revision restore. Must
+    run before the parameter widgets render (sidebar/chat code, or an
+    on_click callback).
+    """
+    load_session_params(params)
+    _sync_picker_box_from_manual_inputs()
+    # Seed parser.parsed_workflow so a chat follow-up sent right after this
+    # merges onto these parameters instead of being treated as a brand-new
+    # workflow (see parse_followup_with_llm usage in _on_chat_submit).
+    st.session_state.parser.validate_workflow(
+        {
+            "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+            "parameters": params,
+        }
+    )
+
+
 def _resume_session(job: dict) -> None:
     """Load a session's results into the results panel *and* resume it as
     the active interactive session, so redocking can continue immediately
@@ -602,17 +722,7 @@ def _resume_session(job: dict) -> None:
     # strictly newer.
     loaded_params = state_manager.load_draft_parameters() or state_manager.load_latest_parameters()
     if loaded_params:
-        load_session_params(loaded_params)
-        # Seed parser.parsed_workflow so a chat follow-up sent right after
-        # this Load merges onto these parameters instead of being treated
-        # as a brand-new workflow (see parse_followup_with_llm usage in
-        # _on_chat_submit).
-        st.session_state.parser.validate_workflow(
-            {
-                "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
-                "parameters": loaded_params,
-            }
-        )
+        _load_params_into_form(loaded_params)
     last_results = _load_workflow_results(job["job_id"])
     st.session_state.interactive_session.activate(
         job["job_id"], state_manager, last_results=last_results
@@ -828,6 +938,12 @@ def render_chat() -> None:
 
             if result and result.get("status") == "completed":
                 st.session_state["_job_done"] = True
+                # The checkpointed parameters have now actually been run.
+                # Only a *completed* run clears them (stricter than the
+                # CLI): after a stop/failure the results on disk still
+                # predate them, so the next redock must still include them.
+                if session.job_id == st.session_state.job_id:
+                    session.pending_changed_params = set()
                 st.session_state.messages.append(
                     {"role": "assistant", "content": "Workflow completed successfully!"}
                 )
@@ -914,6 +1030,54 @@ def _render_params_summary() -> None:
         )
 
 
+def _on_restore_revision_click() -> None:
+    # A callback, not an inline `if st.button(...)`: restoring rewrites the
+    # param_*/picker_box_* widget keys, which is only allowed before those
+    # widgets render -- inline, this panel's widgets already exist.
+    revision = st.session_state.get("revision_to_restore")
+    if revision is None:
+        return
+    st.session_state.messages.append(
+        {"role": "assistant", "content": _undo_to_revision(int(revision))}
+    )
+
+
+def _render_revision_history() -> None:
+    session = st.session_state.interactive_session
+    if not session.has_active_job():
+        return
+    state_manager = session.state_manager
+
+    with st.expander("Revision history"):
+        st.markdown(_format_history_markdown(state_manager))
+        current = state_manager.get_parameters_revision()
+        if current is not None:
+            st.caption(f"Parameters are currently at revision {current}.")
+
+        param_revisions = [
+            r["revision"] for r in reversed(state_manager.list_revisions()) if r["has_parameters"]
+        ]
+        if not param_revisions:
+            return
+        running = _active_bridge_job_id() is not None
+        # A selection left over from another session's history (after a Load).
+        if st.session_state.get("revision_to_restore") not in param_revisions:
+            st.session_state.pop("revision_to_restore", None)
+        st.selectbox("Revision", param_revisions, key="revision_to_restore")
+        st.button(
+            "Restore revision",
+            on_click=_on_restore_revision_click,
+            disabled=running,
+            use_container_width=True,
+            help=(
+                "A session is running — Stop it before restoring a revision."
+                if running
+                else "Restore that revision's parameters (recorded as a new revision); "
+                     "Run Docking then reruns with them."
+            ),
+        )
+
+
 def render_parameters_panel() -> None:
     st.subheader("Input & Parameters")
 
@@ -947,6 +1111,7 @@ def render_parameters_panel() -> None:
 
     with summary_slot:
         _render_params_summary()
+        _render_revision_history()
 
     with st.expander("Advanced"):
         col1, col2 = st.columns(2)

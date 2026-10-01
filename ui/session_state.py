@@ -30,6 +30,12 @@ _WIDGET_DEFAULTS = {
     "param_max_workers": DETECTED_CPU_COUNT,
 }
 
+# Keyed widgets whose values must survive a run that stops (st.rerun())
+# before rendering them -- see init(). Not the file uploaders (Streamlit
+# forbids setting them via session state) nor the box picker's size inputs
+# (they pass value=, and are re-synced from the Docking Box fields anyway).
+_PERSISTED_WIDGET_KEYS = (*_WIDGET_DEFAULTS, "input_mode", "revision_to_restore")
+
 # Shared by init() (first load) and start_new_session() (detaching from a
 # job without a full page reload) so the greeting text lives in one place.
 _GREETING_MESSAGE = {
@@ -79,6 +85,17 @@ def init() -> None:
     for key, default in _WIDGET_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = default
+
+    # Streamlit drops a keyed widget's value at the end of any run that
+    # didn't render it -- including a run cut short by st.rerun(), so e.g.
+    # the chat column's rerun after a finished docking run (or after a chat
+    # message) wiped every parameter field typed into the panel to its
+    # right, and the defaults above then came back empty. A value
+    # (re)assigned through st.session_state during a run is exempt from
+    # that run's cleanup, so re-assign them first thing every run.
+    for key in _PERSISTED_WIDGET_KEYS:
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
 
 
 def _build_llm_client(settings: dict):
@@ -187,8 +204,28 @@ def apply_parsed_params(parsed_params: dict) -> None:
 
 
 def load_session_params(loaded_params: dict) -> None:
-    """Replace current params with a loaded session's checkpointed parameters,
-    syncing both st.session_state.params and the param_* widget pre-fill keys
-    (same mapping apply_parsed_params uses)."""
+    """Replace current params with a loaded session's (or restored
+    revision's) checkpointed parameters, syncing both
+    st.session_state.params and the param_* widget pre-fill keys.
+
+    Widgets are reset to their defaults first: apply_parsed_params() only
+    writes keys present in *loaded_params*, so without the reset e.g. a
+    stale param_protein_id would survive loading a protein_file revision.
+    param_job_name is kept -- it only names the *next* new session.
+    parallel/max_workers are applied here rather than in
+    apply_parsed_params(), whose chat-parse callers carry the validator's
+    default ``parallel: False`` and would reset the checkbox every message.
+    """
+    for key, default in _WIDGET_DEFAULTS.items():
+        if key != "param_job_name":
+            st.session_state[key] = default
     st.session_state.params = {}
     apply_parsed_params(loaded_params)
+    if loaded_params.get("parallel") is not None:
+        st.session_state["param_parallel"] = bool(loaded_params["parallel"])
+    if loaded_params.get("max_workers") is not None:
+        # Clamped to the widget's own bounds (a checkpoint may come from a
+        # machine with more cores than this one).
+        st.session_state["param_max_workers"] = min(
+            max(1, int(loaded_params["max_workers"])), DETECTED_CPU_COUNT
+        )

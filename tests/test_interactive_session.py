@@ -80,3 +80,22 @@ def test_resolve_pdb_path_happy_path():
         resolve_prepared_protein_pdb_path(last_results)
         == "/app/orchestrator_output/job_1/prepared/6lu7_prepared.pdb"
     )
+
+
+# ---------------------------------------------------------------------------
+# InteractiveSession.activate (Phase 13, Stage 13.2)
+# ---------------------------------------------------------------------------
+
+def test_activate_resets_pending_changed_params(tmp_path):
+    # The GUI reuses one session object across sidebar Loads -- changes
+    # pending against the previous job must not leak into the next one.
+    from services.llm_orchestrator.interactive_session import InteractiveSession
+    from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+
+    session = InteractiveSession()
+    session.activate("job_a", WorkflowStateManager(tmp_path / "job_a"))
+    session.pending_changed_params |= {"center"}
+
+    session.activate("job_b", WorkflowStateManager(tmp_path / "job_b"))
+
+    assert session.pending_changed_params == set()

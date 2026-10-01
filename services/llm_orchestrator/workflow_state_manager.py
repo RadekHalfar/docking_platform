@@ -173,6 +173,17 @@ class WorkflowStateManager:
             return params
         return None
 
+    def get_parameters_revision(self) -> Optional[int]:
+        """Revision the latest parameters were checkpointed (or restored) at.
+
+        Differs from get_current_revision(), which also counts state_update
+        events -- this is the revision whose parameters are current.
+        """
+        payload = self._load_json_file(self.parameters_file)
+        if not payload or payload.get("revision") is None:
+            return None
+        return int(payload["revision"])
+
     def save_draft_parameters(self, parameters: Dict[str, Any]) -> None:
         """Persist in-progress parameter edits that haven't been run/checkpointed
         yet. Unlike save_parameters_checkpoint, this is overwritten in place --

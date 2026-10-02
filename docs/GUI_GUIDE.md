@@ -155,7 +155,8 @@ To go back to earlier parameters, pick a revision in the expander's
 **Revision** dropdown and click **Restore revision**. The dropdown lists only
 revisions that have parameters. Restoring:
 
-- fills the form (and the box picker) with that revision's parameters,
+- fills the form with that revision's parameters (the box picker's viewer
+  shows the restored box),
   replacing everything, including fields the revision didn't set;
 - is recorded as a new `undo_restore` revision, so it is in `job.log` and
   can itself be undone;
@@ -376,25 +377,28 @@ Docking Box Visually** control: click **Load receptor for box picking** to
 run just enough of the workflow to fetch and prepare the receptor (no
 ligands, no docking yet), then the same 3Dmol.js viewer appears with:
 
-- **Box size X/Y/Z** number inputs — resize the search box live; the +/-
-  buttons step by a whole Å at a time.
+- **X − / X + … Z − / Z +** buttons above the viewer — grow or shrink the
+  box along one axis by 1 Å per click (never below 1 Å).
 - Click any receptor atom to set the box **center** — a red marker and label
-  show what you clicked, and a live blue box outline shows the resulting
+  show what you clicked, and a blue box outline shows the resulting
   search region. Residues inside the box are highlighted (orange cartoon
   plus thin side-chain sticks) so you can see exactly which part of the
   protein will be searched.
 - Red/green/blue arrows from the box center, labeled **X**/**Y**/**Z**,
   show which box edge each Box size field controls.
 
-If the **Docking Box** fields already have a valid center and size (from a
-previous pick, manual entry, or a chat geometry command), the box and axis
-arrows appear immediately when the receptor loads — no click needed just
-to see what's already set.
+The viewer always draws exactly what the **Docking Box** fields below it
+hold — those six fields are the only copy of the box. A click writes the
+center into them, the − / + buttons write the size, and anything else that
+sets the box (typing, a chat message with coordinates, a geometry command,
+**Load**, **Restore revision**) moves the drawn box too. So a box that is
+already set shows as soon as the receptor loads, and **Run Docking** needs
+no separate step.
 
-The picked center and size are written straight into the same
-**Docking Box** center/box-size fields used by manual entry, so **Run
-Docking** needs no separate step — type over any of the six fields
-afterward if you want to fine-tune the numbers by hand.
+While the Box size fields are empty (or hold something that isn't a
+positive number), the viewer draws a 20 Å placeholder and says so under
+the viewer; a click or a − / + step fills that 20 Å size in, so the box
+you saw is the box that gets docked.
 
 This is a lighter, purely in-browser alternative to the CLI's
 `pymol-interactive`-based box selection (see
@@ -406,7 +410,7 @@ Once a receptor is loaded here (or a job has already run
 [Auto-Filling the Docking Box from the Protein](#auto-filling-the-docking-box-from-the-protein)
 are a faster alternative to clicking: "set up box center as protein
 center" / "look across all protein" compute the same kind of values
-without needing to click an atom or drag sliders.
+without needing to click an atom or step the size.
 
 A receptor loaded here belongs to one protein. It is discarded when you
 start a **New Session** or a fresh job, and when a **Load** or **Restore

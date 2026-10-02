@@ -43,8 +43,11 @@ def render_mol_viewer(
             instance (e.g. results viewer vs. box picker).
 
     Returns:
-        In box_picker mode, ``{"center": [x, y, z]}`` for the most recently
-        clicked receptor atom, or ``None`` if nothing has been clicked yet.
+        In box_picker mode, ``{"center": [x, y, z], "clickId": <ms timestamp>}``
+        for the most recently clicked receptor atom, or ``None`` if nothing
+        has been clicked yet. The same value comes back on every rerun until
+        the next click; ``clickId`` tells a new click (even on the same atom)
+        from that repeat.
     """
     return _mol_viewer(
         receptorPdb=receptor_pdb,

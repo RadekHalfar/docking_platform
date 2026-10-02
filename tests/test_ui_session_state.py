@@ -175,18 +175,20 @@ def test_load_session_params_sets_parallel_widgets_clamped():
 # clear_box_picker_state
 # ---------------------------------------------------------------------------
 
-def test_clear_box_picker_state_removes_all_four_keys():
+def test_clear_box_picker_state_removes_picker_keys_but_not_the_box():
     st.session_state["_box_picker_receptor_pdb"] = "/x/y.pdb"
-    st.session_state["picked_center"] = [1, 2, 3]
-    st.session_state["_box_picker_last_size"] = [20, 20, 20]
+    st.session_state["_box_picker_last_click"] = {"center": [1, 2, 3], "clickId": 1}
     st.session_state["_pending_geometry_target"] = "center"
+    st.session_state["_box_picker_error"] = "boom"
+    st.session_state["param_center_x"] = "1.0"
 
     session_state.clear_box_picker_state()
 
-    assert "_box_picker_receptor_pdb" not in st.session_state
-    assert "picked_center" not in st.session_state
-    assert "_box_picker_last_size" not in st.session_state
-    assert "_pending_geometry_target" not in st.session_state
+    for key in ("_box_picker_receptor_pdb", "_box_picker_last_click",
+                "_pending_geometry_target", "_box_picker_error"):
+        assert key not in st.session_state
+    # The Docking Box fields are the box itself, not picker state.
+    assert st.session_state["param_center_x"] == "1.0"
 
 
 def test_clear_box_picker_state_is_a_noop_when_nothing_to_clear():
@@ -224,12 +226,12 @@ def test_start_new_session_resets_job_identity_and_chat():
 def test_start_new_session_clears_stale_box_picker_receptor():
     session_state.init()
     st.session_state["_box_picker_receptor_pdb"] = "/x/protein_a.pdb"
-    st.session_state["picked_center"] = [1.0, 2.0, 3.0]
+    st.session_state["_box_picker_last_click"] = {"center": [1.0, 2.0, 3.0], "clickId": 1}
 
     session_state.start_new_session()
 
     assert "_box_picker_receptor_pdb" not in st.session_state
-    assert "picked_center" not in st.session_state
+    assert "_box_picker_last_click" not in st.session_state
 
 
 def test_start_new_session_preserves_parameter_widgets():

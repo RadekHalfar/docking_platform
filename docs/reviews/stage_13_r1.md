@@ -251,6 +251,14 @@ still holds, unchanged.
    (it changes the picker's UI). Trigger comment: `ui/app.py`,
    `_sync_picker_box_from_manual_inputs()` docstring. Future Work:
    `dev_plan.md` Phase 13.
+   **Done in Stage 13.5** (`dev_plan.md`): the viewer draws the Docking Box
+   fields, a click and the new − / + size buttons write them. The picker's
+   size inputs, `picked_center`, `_box_picker_last_size`, the sync/seed/mirror
+   helpers (with the trigger comment) and the `on_change` wiring are gone. A
+   click is told from the component's repeated value by a `clickId`. Two
+   more drifts of this kind turned up while doing it and are fixed by the
+   same change: a typed center reverted to the last clicked atom, and a
+   chat-parsed box never reached the viewer.
 3. **`pending_changed_params` vs `parameters_ran()` — two sources of truth**
    (altitude #5). Fix: record the parameters revision each completed run used
    and derive pending keys from it — exact and persistent, replacing both and

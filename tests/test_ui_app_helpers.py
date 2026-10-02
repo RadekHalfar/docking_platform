@@ -88,90 +88,55 @@ def test_collect_form_params_folder_mode_skips_ligand_text_field():
 
 
 # ---------------------------------------------------------------------------
-# _sync_picker_box_from_manual_inputs -- the unconditional variant used by
-# _apply_protein_geometry, as opposed to _seed_picker_box_from_manual_inputs'
-# guarded "only if nothing picked yet" version below.
+# Box picker writes into the Docking Box fields -- the only box state
+# (Stage 13.5): _apply_viewer_click, _step_box_size
 # ---------------------------------------------------------------------------
 
-def test_sync_picker_box_from_manual_inputs_overwrites_existing_pick():
-    st.session_state.picked_center = [9.0, 9.0, 9.0]
-    st.session_state.param_center_x = "1.0"
-    st.session_state.param_center_y = "2.0"
-    st.session_state.param_center_z = "3.0"
+def test_apply_viewer_click_writes_center_and_keeps_a_set_size():
+    st.session_state.param_box_x = "30"
+    st.session_state.param_box_y = "31"
+    st.session_state.param_box_z = "32"
 
-    app._sync_picker_box_from_manual_inputs()
+    app._apply_viewer_click([1.0, 2.5, -3.25])
 
-    assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
-
-
-def test_sync_picker_box_skips_box_size_below_picker_minimum():
-    # The picker's number_inputs have min_value=1.0 -- writing 0.5 into
-    # their keys would raise, so the box half is left untouched.
-    st.session_state.picker_box_x = 20.0
-    st.session_state.param_center_x = "1.0"
-    st.session_state.param_center_y = "2.0"
-    st.session_state.param_center_z = "3.0"
-    st.session_state.param_box_x = "0.5"
-    st.session_state.param_box_y = "20"
-    st.session_state.param_box_z = "20"
-
-    app._sync_picker_box_from_manual_inputs()
-
-    assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
-    assert st.session_state["picker_box_x"] == 20.0
-    assert "_box_picker_last_size" not in st.session_state
+    assert [st.session_state[k] for k in app._BOX_WIDGET_KEYS] == [
+        "1.000", "2.500", "-3.250", "30", "31", "32",
+    ]
 
 
-# ---------------------------------------------------------------------------
-# _seed_picker_box_from_manual_inputs
-# ---------------------------------------------------------------------------
+def test_apply_viewer_click_fills_in_the_shown_size_when_unset():
+    st.session_state.param_box_x = "30"  # y/z unset -> the size isn't set
 
-def test_seed_picker_box_from_manual_inputs_seeds_both():
-    st.session_state.param_center_x = "1.0"
-    st.session_state.param_center_y = "2.0"
-    st.session_state.param_center_z = "3.0"
-    st.session_state.param_box_x = "10"
-    st.session_state.param_box_y = "20"
-    st.session_state.param_box_z = "30"
+    app._apply_viewer_click([1.0, 2.0, 3.0])
 
-    app._seed_picker_box_from_manual_inputs()
-
-    assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
-    assert st.session_state["picker_box_x"] == 10.0
-    assert st.session_state["picker_box_y"] == 20.0
-    assert st.session_state["picker_box_z"] == 30.0
-    assert st.session_state["_box_picker_last_size"] == [10.0, 20.0, 30.0]
+    assert [st.session_state[k] for k in app._BOX_WIDGET_KEYS[3:]] == ["20.000"] * 3
 
 
-def test_seed_picker_box_from_manual_inputs_partial_center_only():
-    st.session_state.param_center_x = "1.0"
-    st.session_state.param_center_y = "2.0"
-    st.session_state.param_center_z = "3.0"
-    # Box size fields left unset -> that half is skipped, not partially seeded.
+def test_step_box_size_changes_one_axis():
+    st.session_state.param_box_x = "25"
+    st.session_state.param_box_y = "25"
 
-    app._seed_picker_box_from_manual_inputs()
+    app._step_box_size(1, 1.0)
 
-    assert st.session_state["picked_center"] == [1.0, 2.0, 3.0]
-    assert "picker_box_x" not in st.session_state
-    assert "_box_picker_last_size" not in st.session_state
+    assert st.session_state["param_box_x"] == "25"
+    assert st.session_state["param_box_y"] == "26.000"
 
 
-def test_seed_picker_box_from_manual_inputs_noop_when_already_picked():
-    st.session_state.picked_center = [9.0, 9.0, 9.0]
-    st.session_state.param_center_x = "1.0"
-    st.session_state.param_center_y = "2.0"
-    st.session_state.param_center_z = "3.0"
+def test_step_box_size_stops_at_the_minimum():
+    st.session_state.param_box_z = "1.5"
 
-    app._seed_picker_box_from_manual_inputs()
+    app._step_box_size(2, -1.0)
 
-    assert st.session_state["picked_center"] == [9.0, 9.0, 9.0]
+    assert st.session_state["param_box_z"] == "1.000"
 
 
-def test_seed_picker_box_from_manual_inputs_noop_when_manual_fields_empty():
-    app._seed_picker_box_from_manual_inputs()
+@pytest.mark.parametrize("value", ["", "abc"])
+def test_step_box_size_steps_from_the_placeholder_when_unset(value):
+    st.session_state.param_box_x = value
 
-    assert st.session_state.get("picked_center") is None
-    assert "picker_box_x" not in st.session_state
+    app._step_box_size(0, 1.0)
+
+    assert st.session_state["param_box_x"] == "21.000"
 
 
 # ---------------------------------------------------------------------------
@@ -293,12 +258,6 @@ def test_handle_protein_geometry_command_center(tmp_path, mini_protein_pdb_text)
     assert st.session_state.param_center_x == str(expected_center[0])
     assert "box_size" not in st.session_state.params
     assert "Protein center set to" in st.session_state.messages[-1]["content"]
-    # Regression: this command takes the immediate path (a receptor was
-    # already loaded) -- no bridge transition runs, so the box picker's own
-    # viewer state (picked_center) must be synced here directly, or the
-    # picker keeps showing a stale/no box despite the manual fields being
-    # correct (reported: "I don't see protein and docking box").
-    assert st.session_state["picked_center"] == expected_center
 
 
 def test_handle_protein_geometry_command_box_size(tmp_path, mini_protein_pdb_text):
@@ -315,10 +274,6 @@ def test_handle_protein_geometry_command_box_size(tmp_path, mini_protein_pdb_tex
     assert st.session_state.param_box_x == str(expected_box[0])
     assert "center" not in st.session_state.params
     assert "cover the whole protein" in st.session_state.messages[-1]["content"]
-    assert st.session_state["picker_box_x"] == expected_box[0]
-    assert st.session_state["picker_box_y"] == expected_box[1]
-    assert st.session_state["picker_box_z"] == expected_box[2]
-    assert st.session_state["_box_picker_last_size"] == expected_box
 
 
 def test_handle_protein_geometry_command_malformed_pdb_reports_error(tmp_path):

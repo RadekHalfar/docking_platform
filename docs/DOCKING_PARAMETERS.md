@@ -497,8 +497,9 @@ ligands concurrently) instead of a per-ligand core count. See
 
 The Streamlit GUI's **Pick Docking Box Visually** control does this for you
 in-browser, no PyMOL required: load the receptor, click an atom to set the
-center (a live translucent box shows the resulting region), and adjust the
-X/Y/Z size sliders until the box covers the binding site. See
+center (a box outline shows the resulting region), and grow/shrink it with
+the X/Y/Z − / + buttons (1 Å per click) or by typing in the Docking Box
+fields until the box covers the binding site. See
 [GUI_GUIDE.md](GUI_GUIDE.md#picking-the-docking-box-visually).
 
 ### Method 0b: Chat Command (Auto-Fill from Protein Geometry)

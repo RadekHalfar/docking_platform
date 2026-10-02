@@ -163,12 +163,7 @@ def test_fresh_page_renders_without_exception(app):
 # ---------------------------------------------------------------------------
 
 def test_box_picker_passes_center_and_size_to_viewer(app, viewer):
-    app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)
-    app.session_state["picked_center"] = [1.0, 2.0, 3.0]
-    app.session_state["picker_box_x"] = 22.0
-    app.session_state["picker_box_y"] = 24.0
-    app.session_state["picker_box_z"] = 26.0
-    app.session_state["_box_picker_last_size"] = [22.0, 24.0, 26.0]
+    _load_picker_receptor(app, ("1.0", "2.0", "3.0"), ("22.0", "24.0", "26.0"))
 
     at = app.run()
 
@@ -178,7 +173,7 @@ def test_box_picker_passes_center_and_size_to_viewer(app, viewer):
     assert call["center"] == [1.0, 2.0, 3.0]
     assert call["box_size"] == [22.0, 24.0, 26.0]
     assert "ATOM" in call["receptor_pdb"]
-    assert any("Picked center: (1.00, 2.00, 3.00)" in c.value for c in at.caption)
+    assert any("Box center: (1.00, 2.00, 3.00)" in c.value for c in at.caption)
 
 
 def test_box_picker_without_receptor_offers_load_button(app, viewer):
@@ -240,12 +235,10 @@ def _summary_text(at) -> str:
 
 
 def _load_picker_receptor(app, center, size):
+    """A receptor loaded for box picking, with these Docking Box fields."""
     app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)
-    app.session_state["picked_center"] = center
-    app.session_state["picker_box_x"] = size[0]
-    app.session_state["picker_box_y"] = size[1]
-    app.session_state["picker_box_z"] = size[2]
-    app.session_state["_box_picker_last_size"] = list(size)
+    for key, value in zip(_BOX_KEYS, (*center, *size)):
+        app.session_state[key] = value
 
 
 def test_summary_shows_docking_box_fields_not_stale_parsed_params(app):
@@ -271,21 +264,28 @@ def test_summary_shows_docking_box_fields_not_stale_parsed_params(app):
     assert "9.0" not in summary
 
 
-def test_summary_updates_after_box_picker_resize_in_same_run(app):
-    # A resize is mirrored into the Docking Box fields by the box picker,
-    # which renders *below* the summary -- the summary must still show it.
-    _load_picker_receptor(app, [1.0, 2.0, 3.0], (20.0, 20.0, 20.0))
-    app.session_state["picker_box_x"] = 30.0
-
+def test_box_size_step_updates_summary_and_viewer(app, viewer):
+    # The picker's + button writes the Docking Box field (Stage 13.5) --
+    # the summary above and the viewer both follow it in the next run.
+    _load_picker_receptor(app, ("1.0", "2.0", "3.0"), ("20.0", "20.0", "20.0"))
     at = app.run()
 
+    at.button(key="box_step_x_up").click().run()
+
     assert not at.exception
-    assert "**Box:** 30.000 / 20.000 / 20.000" in _summary_text(at)
+    assert "**Box:** 21.000 / 20.0 / 20.0" in _summary_text(at)
+    assert viewer.last("box_picker")["box_size"] == [21.0, 20.0, 20.0]
+    assert at.text_input(key="param_box_x").value == "21.000"
+
+    at.button(key="box_step_x_down").click().run()
+    at.button(key="box_step_x_down").click().run()
+
+    assert at.text_input(key="param_box_x").value == "19.000"
 
 
 def test_summary_updates_after_visual_center_pick(app, viewer):
-    _load_picker_receptor(app, None, (20.0, 20.0, 20.0))
-    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0]}
+    _load_picker_receptor(app, ("", "", ""), ("20.0", "20.0", "20.0"))
+    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0], "clickId": 1}
 
     at = app.run()
 
@@ -298,9 +298,7 @@ def test_summary_updates_after_visual_center_pick(app, viewer):
 # ---------------------------------------------------------------------------
 
 def _picker_with_matching_fields(app):
-    _load_picker_receptor(app, [1.0, 2.0, 3.0], (20.0, 20.0, 20.0))
-    for key, value in zip(_BOX_KEYS, ("1.0", "2.0", "3.0", "20.0", "20.0", "20.0")):
-        app.session_state[key] = value
+    _load_picker_receptor(app, ("1.0", "2.0", "3.0"), ("20.0", "20.0", "20.0"))
     at = app.run()
     assert not at.exception
     return at
@@ -315,7 +313,6 @@ def test_typing_center_in_docking_box_moves_picker_box(app, viewer):
     at.text_input(key="param_center_x").set_value("7.5").run()
 
     assert not at.exception
-    assert at.session_state["picked_center"] == [7.5, 2.0, 3.0]
     assert viewer.last("box_picker")["center"] == [7.5, 2.0, 3.0]
     # The typed value stays as typed -- not overwritten from the picker.
     assert at.text_input(key="param_center_x").value == "7.5"
@@ -327,18 +324,29 @@ def test_typing_box_size_in_docking_box_resizes_picker_box(app, viewer):
     at.text_input(key="param_box_x").set_value("30").run()
 
     assert not at.exception
-    assert at.number_input(key="picker_box_x").value == 30.0
     assert viewer.last("box_picker")["box_size"] == [30.0, 20.0, 20.0]
     assert at.text_input(key="param_box_x").value == "30"
 
 
-def test_docking_box_size_below_picker_minimum_does_not_crash(app, viewer):
+@pytest.mark.parametrize("typed", ["-1", "0", "abc", ""])
+def test_undrawable_box_size_shows_placeholder_without_crash(app, viewer, typed):
+    at = _picker_with_matching_fields(app)
+
+    at.text_input(key="param_box_x").set_value(typed).run()
+
+    assert not at.exception
+    assert viewer.last("box_picker")["box_size"] is None
+    assert any("20 Å placeholder" in c.value for c in at.caption)
+    assert at.text_input(key="param_box_x").value == typed
+
+
+def test_small_positive_box_size_is_drawn_as_typed(app, viewer):
     at = _picker_with_matching_fields(app)
 
     at.text_input(key="param_box_x").set_value("0.5").run()
 
     assert not at.exception
-    assert at.number_input(key="picker_box_x").value == 20.0
+    assert viewer.last("box_picker")["box_size"] == [0.5, 20.0, 20.0]
 
 
 # ---------------------------------------------------------------------------
@@ -568,10 +576,11 @@ def test_revision_history_hidden_without_active_session(app):
     assert not [e for e in at.expander if e.label == "Revision history"]
 
 
-def test_restore_revision_loads_its_params_and_marks_all_pending(app, output_base):
+def test_restore_revision_loads_its_params_and_marks_all_pending(app, viewer, output_base):
     from services.llm_orchestrator.workflow_definition import CORE_PARAMS
 
     session, state_manager = _active_session_with_two_revisions(app, output_base)
+    app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)  # same protein: kept
     state_manager.save_draft_parameters({**_REV2_PARAMS, "center": [9.0, 9.0, 9.0]})
 
     at = _restore_rev1(app.run())
@@ -579,8 +588,8 @@ def test_restore_revision_loads_its_params_and_marks_all_pending(app, output_bas
     assert not at.exception
     assert at.session_state["param_center_x"] == "1.0"
     assert at.session_state["params"]["center"] == [1.0, 2.0, 3.0]
-    # The picker follows the restored box too.
-    assert at.session_state["picked_center"] == [1.0, 2.0, 3.0]
+    # The picker's viewer draws the restored box too.
+    assert viewer.last("box_picker")["center"] == [1.0, 2.0, 3.0]
     # A draft would otherwise win over the restore on the next Load.
     assert state_manager.load_draft_parameters() is None
     assert state_manager.load_latest_parameters()["center"] == [1.0, 2.0, 3.0]
@@ -936,25 +945,6 @@ def session_state_warnings(monkeypatch):
     return recorded
 
 
-def test_picker_box_size_survives_early_rerun_in_chat_column(app, output_base, session_state_warnings):
-    # A size typed into the picker's own input came back at the old value
-    # after any chat-column rerun, and the picker's resize mirror then wrote
-    # that value into the Docking Box fields actually docked with.
-    _active_session_with_two_revisions(app, output_base)
-    app.session_state["_box_picker_receptor_pdb"] = str(FIXTURE_PDB)
-    app.session_state["picked_center"] = [5.0, 6.0, 7.0]
-    at = app.run()
-    at.number_input(key="picker_box_x").set_value(61.0).run()
-    assert at.session_state["param_box_x"] == "61.000"
-
-    at.chat_input[0].set_value("show history").run()
-
-    assert not at.exception
-    assert [at.session_state[k] for k in _BOX_KEYS[3:]] == ["61.000", "20.000", "20.000"]
-    assert at.number_input(key="picker_box_x").value == 61.0
-    assert not [w for w in session_state_warnings if "Session State" in w]
-
-
 def test_receptor_load_with_box_fields_set_logs_no_session_state_warning(app, viewer, session_state_warnings):
     for key, value in zip(_BOX_KEYS, ("1.0", "2.0", "3.0", "30.0", "31.0", "32.0")):
         app.session_state[key] = value
@@ -1164,3 +1154,74 @@ def test_save_session_replies_without_rerun(app, output_base, page_reruns):
         "Parameters saved. Click **Run Docking** to apply them.",
     )
     assert page_reruns == []
+
+
+# ---------------------------------------------------------------------------
+# Stage 13.5: the Docking Box fields are the only box state -- the picker's
+# viewer draws them, a click / size step writes them
+# ---------------------------------------------------------------------------
+
+def _receptor_loaded_with_box(app, center=("1.0", "2.0", "3.0"), size=("20.0", "20.0", "20.0")):
+    """Docking Box fields set, then "Load receptor for box picking" finishes."""
+    for key, value in zip(_BOX_KEYS, (*center, *size)):
+        app.session_state[key] = value
+    app.session_state["box_picker_bridge"] = FakeBridge(
+        result={
+            "status": "completed",
+            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
+        }
+    )
+    at = app.run()
+    assert not at.exception
+    return at
+
+
+def test_typed_center_survives_after_a_viewer_click(app, viewer):
+    # The component keeps returning its last click on every run; the picker
+    # re-applied it whenever it differed from its own copy of the center, so
+    # after one click a typed center reverted to the clicked atom.
+    at = _receptor_loaded_with_box(app)
+    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0], "clickId": 1}
+    at.run()
+    assert at.session_state["param_center_x"] == "4.000"
+
+    at.text_input(key="param_center_x").set_value("7.5").run()
+    at.run()
+
+    assert not at.exception
+    assert at.text_input(key="param_center_x").value == "7.5"
+    assert viewer.last("box_picker")["center"] == [7.5, 5.0, 6.0]
+
+
+def test_clicking_the_same_atom_again_after_typing_is_applied(app, viewer):
+    at = _receptor_loaded_with_box(app)
+    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0], "clickId": 1}
+    at.run()
+    at.text_input(key="param_center_x").set_value("7.5").run()
+
+    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0], "clickId": 2}
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["param_center_x"] == "4.000"
+    assert viewer.last("box_picker")["center"] == [4.0, 5.0, 6.0]
+
+
+def test_chat_parsed_box_moves_the_picker_box(app, viewer, monkeypatch):
+    # apply_parsed_params() wrote the Docking Box fields but nothing synced
+    # the picker's own copy, so its viewer kept showing the old box.
+    monkeypatch.setattr(
+        "services.llm_orchestrator.workflow_llm_parser.parse_workflow_with_llm",
+        lambda client, message: {
+            "services": ["dock"],
+            "parameters": {"protein_id": "6lu7", "center": [9.0, 9.0, 9.0], "box_size": [25.0, 26.0, 27.0]},
+        },
+    )
+    at = _receptor_loaded_with_box(app)
+
+    at.chat_input[0].set_value("dock 6lu7 with center 9 9 9 box 25 26 27").run()
+
+    assert not at.exception
+    call = viewer.last("box_picker")
+    assert call["center"] == [9.0, 9.0, 9.0]
+    assert call["box_size"] == [25.0, 26.0, 27.0]

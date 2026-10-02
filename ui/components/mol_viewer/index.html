@@ -209,7 +209,10 @@
 
       hintEl.textContent = "Click a receptor atom to set the docking box center";
       viewer.setClickable({ model: receptorModel }, true, function (atom) {
-        setComponentValue({ center: [atom.x, atom.y, atom.z] });
+        // clickId makes every click a new value -- even a second click on
+        // the same atom -- so the page can tell a click from the component
+        // re-returning its last one (ui/app.py, _render_box_picker).
+        setComponentValue({ center: [atom.x, atom.y, atom.z], clickId: Date.now() });
         viewer.removeAllLabels();
         viewer.addLabel(
           (atom.resn || "") + " " + (atom.resi !== undefined ? atom.resi : "") + " / " + atom.atom,

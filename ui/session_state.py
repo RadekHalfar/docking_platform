@@ -30,20 +30,11 @@ _WIDGET_DEFAULTS = {
     "param_max_workers": DETECTED_CPU_COUNT,
 }
 
-# The box picker's size number_inputs. Seeded here rather than via the
-# widgets' value= argument: these keys are also written through
-# st.session_state (sync from the Docking Box fields, re-assignment in
-# init()), and Streamlit warns when a widget has both.
-_PICKER_BOX_DEFAULTS = {"picker_box_x": 20.0, "picker_box_y": 20.0, "picker_box_z": 20.0}
-
 # Keyed widgets whose values must survive a run that stops (st.rerun())
 # before rendering them -- see init(). Not the file uploaders (Streamlit
-# forbids setting them via session state). The picker sizes must be in
-# here (Review Stage R1, Phase 13): when one was dropped, its input came
-# back at the default and the picker's resize mirror then wrote that
-# default into the real Docking Box fields.
+# forbids setting them via session state).
 _PERSISTED_WIDGET_KEYS = (
-    *_WIDGET_DEFAULTS, *_PICKER_BOX_DEFAULTS,
+    *_WIDGET_DEFAULTS,
     "input_mode", "revision_to_restore", "save_bundle_name", "save_scope",
 )
 
@@ -93,15 +84,15 @@ def init() -> None:
     if "interactive_session" not in st.session_state:
         st.session_state.interactive_session = InteractiveSession()
 
-    for key, default in {**_WIDGET_DEFAULTS, **_PICKER_BOX_DEFAULTS}.items():
+    for key, default in _WIDGET_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = default
 
     # Streamlit drops a keyed widget's value at the end of any run that
     # didn't render it -- a widget in a branch not taken this run (another
-    # input mode, the picker sizes with no receptor loaded), or one after a
-    # st.rerun() that cut the run short (a sidebar Load/Delete runs before
-    # every panel; Run Docking before the results panel's save fields).
+    # input mode), or one after a st.rerun() that cut the run short (a
+    # sidebar Load/Delete runs before every panel; Run Docking before the
+    # results panel's save fields).
     # Originally found when the chat column's reply reruns (gone since Stage
     # 13.4) wiped every parameter field. A value (re)assigned through
     # st.session_state during a run is exempt from that run's cleanup, so
@@ -132,7 +123,7 @@ def apply_settings(new_settings: dict) -> None:
 
 
 def clear_box_picker_state() -> None:
-    """Discard the box picker's loaded receptor/picked-center/size state.
+    """Discard the box picker's loaded receptor and click marker.
 
     Used whenever that state might no longer correspond to the protein
     actually in play: starting a fresh box-picker load, the user
@@ -147,8 +138,7 @@ def clear_box_picker_state() -> None:
     for the same reason -- it shouldn't fire against a different job.
     """
     st.session_state.pop("_box_picker_receptor_pdb", None)
-    st.session_state.pop("picked_center", None)
-    st.session_state.pop("_box_picker_last_size", None)
+    st.session_state.pop("_box_picker_last_click", None)
     st.session_state.pop("_pending_geometry_target", None)
     st.session_state.pop("_box_picker_error", None)
 

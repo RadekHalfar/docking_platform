@@ -151,18 +151,12 @@ def _find_receptor_pdb_for_geometry() -> Path | None:
 
 def _apply_protein_geometry(receptor_path: Path, target: str) -> None:
     """Compute center/box_size from *receptor_path*'s bounding box, apply it
-    to the manual Docking Box fields and the box picker's own viewer state,
-    and report the result in chat.
+    to the Docking Box fields (which the box picker's viewer draws), and
+    report the result in chat.
 
     Shared by the immediate path (a receptor is already prepared) and the
-    deferred path (``_process_box_picker_bridge()``,
-    once a just-started fetch/prepare job finishes). Syncing the picker's
-    state here too (not just the manual fields) matters for the immediate
-    path specifically: no bridge transition happens there, so
-    ``_process_box_picker_bridge()`` -- the only other place
-    that seeds the picker -- never runs; without this the box picker's
-    viewer would keep showing a stale/no box after a geometry command even
-    though the manual fields were updated correctly.
+    deferred path (``_process_box_picker_bridge()``, once a just-started
+    fetch/prepare job finishes).
     """
     try:
         pdb_text = _read_file_bytes(
@@ -184,7 +178,6 @@ def _apply_protein_geometry(receptor_path: Path, target: str) -> None:
             f"Box size set to ({box_size[0]}, {box_size[1]}, {box_size[2]}) "
             "to cover the whole protein (+10% margin)."
         )
-    _sync_picker_box_from_manual_inputs()
     st.session_state.messages.append({"role": "assistant", "content": message})
 
 
@@ -785,8 +778,7 @@ def _render_settings_form() -> None:
 
 def _load_params_into_form(params: dict) -> None:
     """Make *params* the form's full parameter state: params dict + every
-    param_* widget (load_session_params), the box picker's own state, and
-    the chat parser. Shared by a sidebar Load and a revision restore. Must
+    param_* widget (load_session_params) and the chat parser. Shared by a sidebar Load and a revision restore. Must
     run before the parameter widgets render (sidebar/chat code, or an
     on_click callback).
     """
@@ -799,7 +791,6 @@ def _load_params_into_form(params: dict) -> None:
     if [st.session_state.params.get(k) for k in protein_keys] != [params.get(k) for k in protein_keys]:
         clear_box_picker_state()
     load_session_params(params)
-    _sync_picker_box_from_manual_inputs()
     # Seed parser.parsed_workflow so a chat follow-up sent right after this
     # merges onto these parameters instead of being treated as a brand-new
     # workflow (see parse_followup_with_llm usage in _on_chat_submit).
@@ -1079,8 +1070,8 @@ def _process_box_picker_bridge() -> None:
     """Handle a finished "Load receptor for box picking" job: record the
     receptor, apply a geometry chat command that was waiting for it, and
     clear the bridge. Runs before the layout (see ``_process_bridges``), so
-    the picker_box_*/param_* keys it writes are set before their widgets
-    exist, and its chat reply is drawn this same run."""
+    the param_* keys it writes are set before their widgets exist, and its
+    chat reply is drawn this same run."""
     bridge: OrchestratorBridge | None = st.session_state.get("box_picker_bridge")
     if not bridge or bridge.is_running():
         return
@@ -1103,7 +1094,6 @@ def _process_box_picker_bridge() -> None:
             st.session_state["_box_picker_receptor_pdb"] = pdb_path
             if pending_target:
                 _apply_protein_geometry(_resolve_container_path(pdb_path), pending_target)
-            _seed_picker_box_from_manual_inputs()
         else:
             panel_error = "Receptor was prepared but no PDB path was returned."
             failure = "Receptor was prepared but no PDB path was returned -- could not set this."
@@ -1158,8 +1148,12 @@ def _render_chat_history(container) -> None:
 
 # ── Parameters panel ──────────────────────────────────────────────────────────
 
-# Smallest box edge (Å) the box picker's size inputs accept.
+# Smallest box edge (Å) the box picker's − buttons step down to.
 _PICKER_MIN_BOX_SIZE = 1.0
+# Box edge (Å) the picker's viewer draws while the Box size fields are unset
+# (the component's own fallback), and what a click or a size step fills in
+# then -- so the box that was shown is the box that gets docked.
+_PICKER_DEFAULT_BOX_SIZE = 20.0
 
 _BOX_WIDGET_KEYS = (
     "param_center_x", "param_center_y", "param_center_z",
@@ -1192,7 +1186,7 @@ def _render_params_summary() -> None:
     # Docking box — read from the Docking Box fields, not params["center"] /
     # params["box_size"]: the fields are what _collect_form_params() actually
     # docks with, and every writer updates them (manual entry, box-picker
-    # click/resize, chat-parsed values, geometry commands), whereas the
+    # click/size step, chat-parsed values, geometry commands), whereas the
     # params lists only change on chat parsing or a run -- preferring them
     # left the summary stale after a visual pick or resize.
     def _coord(widget_keys: tuple) -> str:
@@ -1213,8 +1207,8 @@ def _render_params_summary() -> None:
 
 def _on_restore_revision_click() -> None:
     # A callback, not an inline `if st.button(...)`: restoring rewrites the
-    # param_*/picker_box_* widget keys, which is only allowed before those
-    # widgets render -- inline, this panel's widgets already exist.
+    # param_* widget keys, which is only allowed before those widgets
+    # render -- inline, this panel's widgets already exist.
     revision = st.session_state.get("revision_to_restore")
     if revision is None:
         return
@@ -1264,8 +1258,8 @@ def render_parameters_panel() -> None:
     st.subheader("Input & Parameters")
 
     # Shown at the top but filled in last: the box picker below can still
-    # change the Docking Box fields during this run (e.g. mirroring a box
-    # resize), and the summary must reflect that, not the pre-run values.
+    # change the Docking Box fields during this run (a viewer click), and
+    # the summary must reflect that, not the pre-run values.
     summary_slot = st.container()
 
     mode = st.radio(
@@ -1529,75 +1523,34 @@ def _read_box_fields() -> tuple[list[float] | None, list[float] | None]:
     return triple(_BOX_WIDGET_KEYS[:3]), triple(_BOX_WIDGET_KEYS[3:])
 
 
-def _mirror_box_to_manual_inputs(center: list, box_size: list) -> None:
-    """Write picked/adjusted values into the manual text-input keys, which
-    _collect_form_params() reads -- the picker augments the manual form
-    rather than bypassing it, so "Run Docking" needs no separate code path.
+def _apply_viewer_click(center: list) -> None:
+    """Write a center clicked in the box picker's viewer into the Docking
+    Box fields -- the picker keeps no box of its own, so "Run Docking" and
+    the viewer both read these. If the Box size fields are unset, fill in
+    the size the viewer was showing, so the box picked is the box docked.
     Must run before _render_docking_box() instantiates those widgets.
     """
-    st.session_state["param_center_x"] = f"{center[0]:.3f}"
-    st.session_state["param_center_y"] = f"{center[1]:.3f}"
-    st.session_state["param_center_z"] = f"{center[2]:.3f}"
-    st.session_state["param_box_x"] = f"{box_size[0]:.3f}"
-    st.session_state["param_box_y"] = f"{box_size[1]:.3f}"
-    st.session_state["param_box_z"] = f"{box_size[2]:.3f}"
+    for key, value in zip(_BOX_WIDGET_KEYS[:3], center):
+        st.session_state[key] = f"{value:.3f}"
+    _, box_size = _read_box_fields()
+    if box_size is None:
+        for key in _BOX_WIDGET_KEYS[3:]:
+            st.session_state[key] = f"{_PICKER_DEFAULT_BOX_SIZE:.3f}"
 
 
-def _sync_picker_box_from_manual_inputs() -> None:
-    """Unconditionally mirror the manual Docking Box fields into the box
-    picker's own center/size state (``picked_center`` / ``picker_box_x/y/z``
-    / ``_box_picker_last_size``).
-
-    The picker keeps this as separate state (rather than reading the manual
-    fields directly) because it's also written the other way -- clicking an
-    atom in the 3D viewer sets ``picked_center`` first and mirrors it out to
-    the manual fields (``_mirror_box_to_manual_inputs``). Anything that
-    changes the manual fields *without* going through the picker (a chat
-    geometry command, applying LLM-parsed parameters) has to push the
-    update here explicitly too, or the viewer silently keeps showing the
-    old box -- see ``_apply_protein_geometry``, which calls this after
-    updating either field so the viewer reflects a geometry command
-    immediately regardless of whether the receptor it read was already
-    loaded or was just fetched for that command.
-
-    NOTE (Review Stage R1, Phase 13, altitude finding #2, deferred): this
-    two-way mirror is the root of a whole bug class -- three Phase 13 fixes
-    plus R1 finding #1 were the two copies of the box drifting apart.
-    Fix: make the Docking Box fields the only state (the viewer reads
-    them, a click writes ``param_center_*``, the picker's duplicate size
-    inputs go), which removes this function, the seed/mirror helpers,
-    ``_box_picker_last_size`` and the ``on_change`` wiring. A UI change, so
-    its own stage. Trigger: the next picker/Docking Box out-of-sync bug, or
-    any new writer of the box. See dev_plan.md Phase 13 Future Work and
-    docs/reviews/stage_13_r1.md.
+def _step_box_size(axis: int, delta: float) -> None:
+    """on_click for the picker's − / + buttons: change one Box size field by
+    *delta* Å, never below ``_PICKER_MIN_BOX_SIZE``. An unset or unparsable
+    field steps from ``_PICKER_DEFAULT_BOX_SIZE`` (what the viewer shows
+    then). A callback runs before the next script run, i.e. before the
+    Docking Box widgets exist, so writing their keys is allowed.
     """
-    center, box_size = _read_box_fields()
-    if center is not None:
-        st.session_state["picked_center"] = center
-    # The picker's number_inputs enforce min_value; pushing a smaller value
-    # (e.g. a half-typed "0.5") into their keys would raise. Leave the picker
-    # as-is until the fields hold a size it can display.
-    if box_size is not None and min(box_size) >= _PICKER_MIN_BOX_SIZE:
-        st.session_state["picker_box_x"] = box_size[0]
-        st.session_state["picker_box_y"] = box_size[1]
-        st.session_state["picker_box_z"] = box_size[2]
-        st.session_state["_box_picker_last_size"] = box_size
-
-
-def _seed_picker_box_from_manual_inputs() -> None:
-    """If the manual Docking Box fields already hold a valid center/size
-    (from a previous pick, manual entry, or a chat geometry command) and
-    the picker has no center yet, seed the picker's widget/session state
-    from them so the box is visible immediately on load instead of only
-    after a click.
-
-    Guarded (unlike ``_sync_picker_box_from_manual_inputs``) because this
-    runs on every receptor load and must not clobber a center the user
-    already picked by clicking in the 3D viewer.
-    """
-    if st.session_state.get("picked_center") is not None:
-        return
-    _sync_picker_box_from_manual_inputs()
+    key = _BOX_WIDGET_KEYS[3 + axis]
+    try:
+        current = float(st.session_state.get(key, ""))
+    except (ValueError, TypeError):
+        current = _PICKER_DEFAULT_BOX_SIZE
+    st.session_state[key] = f"{max(_PICKER_MIN_BOX_SIZE, current + delta):.3f}"
 
 
 def _start_box_picker_prep() -> tuple[bool, str | None, str]:
@@ -1678,41 +1631,50 @@ def _render_box_picker() -> None:
         str(receptor_path), receptor_path.stat().st_mtime
     ).decode("utf-8", errors="replace")
 
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        bx = st.number_input("Box size X", key="picker_box_x", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
-    with s2:
-        by = st.number_input("Box size Y", key="picker_box_y", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
-    with s3:
-        bz = st.number_input("Box size Z", key="picker_box_z", min_value=_PICKER_MIN_BOX_SIZE, step=1.0)
+    # The viewer draws the Docking Box fields -- the only box state; a click
+    # or a − / + step writes them. Nothing here keeps a copy to drift from.
+    center, box_size = _read_box_fields()
+    if box_size is not None and min(box_size) <= 0:
+        box_size = None  # not drawable; the viewer falls back to its default
 
-    center = st.session_state.get("picked_center")
+    # One row of six (not three columns of two): Streamlit advises against
+    # nesting columns more than once, and this panel is already a column.
+    step_cols = iter(st.columns(6))
+    for axis, name in enumerate("XYZ"):
+        for delta, sign, verb, suffix in ((-1.0, "−", "Shrink", "down"), (1.0, "+", "Grow", "up")):
+            next(step_cols).button(
+                f"{name} {sign}", key=f"box_step_{name.lower()}_{suffix}", width="stretch",
+                on_click=_step_box_size, args=(axis, delta),
+                help=f"{verb} box {name} by 1 Å",
+            )
 
+    viewer_key = f"box_picker_{st.session_state.get('_box_picker_job_id')}"
     click = render_mol_viewer(
         receptor_pdb,
         mode="box_picker",
         center=center,
-        box_size=[bx, by, bz],
+        box_size=box_size,
         height=450,
-        key=f"box_picker_{st.session_state.get('_box_picker_job_id')}",
+        key=viewer_key,
     )
-    if click and click.get("center") and click["center"] != center:
-        center = click["center"]
-        st.session_state["picked_center"] = center
-        st.session_state["_box_picker_last_size"] = [bx, by, bz]
-        _mirror_box_to_manual_inputs(center, [bx, by, bz])
+    # The component returns its last click on every run until the next one;
+    # each click carries a fresh clickId, so comparing the whole value with
+    # the last one applied tells a new click (even on the same atom) from a
+    # repeat -- and a repeat must not overwrite a center typed since.
+    if click and click.get("center") and click != st.session_state.get("_box_picker_last_click"):
+        st.session_state["_box_picker_last_click"] = click
+        _apply_viewer_click(click["center"])
         st.rerun()
 
-    # Keep the manual fields (and hence the box actually docked with) in sync
-    # if the user resizes after already having picked a center.
-    if center and st.session_state.get("_box_picker_last_size") != [bx, by, bz]:
-        st.session_state["_box_picker_last_size"] = [bx, by, bz]
-        _mirror_box_to_manual_inputs(center, [bx, by, bz])
-
     if center:
-        st.caption(f"Picked center: ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})")
+        st.caption(f"Box center: ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})")
     else:
         st.caption("Click a receptor atom in the viewer to set the box center.")
+    if box_size is None:
+        st.caption(
+            f"Box size is not set — the viewer shows a {_PICKER_DEFAULT_BOX_SIZE:g} Å "
+            "placeholder, which a click or − / + fills in."
+        )
 
     if st.button("Discard picked receptor"):
         clear_box_picker_state()
@@ -1720,27 +1682,21 @@ def _render_box_picker() -> None:
 
 
 def _render_docking_box() -> None:
-    # on_change pushes manual edits into the box picker's own state, so the
-    # 3D viewer follows typed values (the picker renders above these fields
-    # and keeps separate state -- see _sync_picker_box_from_manual_inputs).
-    # A callback runs before the next script run, i.e. before the picker's
-    # widgets exist, so writing their keys there is allowed.
-    sync = _sync_picker_box_from_manual_inputs
     st.markdown("**Docking Box**")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.text_input("Center X", key="param_center_x", placeholder="0.0", on_change=sync)
+        st.text_input("Center X", key="param_center_x", placeholder="0.0")
     with c2:
-        st.text_input("Center Y", key="param_center_y", placeholder="0.0", on_change=sync)
+        st.text_input("Center Y", key="param_center_y", placeholder="0.0")
     with c3:
-        st.text_input("Center Z", key="param_center_z", placeholder="0.0", on_change=sync)
+        st.text_input("Center Z", key="param_center_z", placeholder="0.0")
     b1, b2, b3 = st.columns(3)
     with b1:
-        st.text_input("Box X", key="param_box_x", placeholder="20.0", on_change=sync)
+        st.text_input("Box X", key="param_box_x", placeholder="20.0")
     with b2:
-        st.text_input("Box Y", key="param_box_y", placeholder="20.0", on_change=sync)
+        st.text_input("Box Y", key="param_box_y", placeholder="20.0")
     with b3:
-        st.text_input("Box Z", key="param_box_z", placeholder="20.0", on_change=sync)
+        st.text_input("Box Z", key="param_box_z", placeholder="20.0")
 
 
 # ── Results panel ─────────────────────────────────────────────────────────────

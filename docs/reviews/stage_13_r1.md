@@ -350,5 +350,7 @@ into `_error` (a real thread boundary). No band-aids found.
 - **`ui` restarted** against the live stack: healthy, HTTP 200 on
   :3000, `_stcore/health` ok, no errors/deprecation/Session-State warnings
   in its log.
-- **Not done:** the click-through of every Phase 13 control in a real
-  browser — the owner's check (checklist in the hand-over).
+- **Live-browser click-through** of every Phase 13 control: the owner's
+  check (checklist in the hand-over). **Passed 2026-10-02**, together with
+  the checks for Stage 13.4, Stage 13.5 and the Save Session fix. This
+  review's last exit criterion is met, and Phase 13 is closed.

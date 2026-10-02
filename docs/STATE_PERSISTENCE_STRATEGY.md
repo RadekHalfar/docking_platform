@@ -90,7 +90,14 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
     compares against `load_latest_parameters()` (the real checkpoint)
     regardless of whether a draft exists. `_resume_session()` prefers
     this file over `workflow_parameters.json` when both are present; it's
-    deleted the next time a real checkpoint is saved for that job.
+    deleted the next time a real checkpoint is saved for that job, and by
+    a **Save Session** that finds no change against the checkpoint (a
+    stale draft would otherwise bring back an edit the form was set back
+    from). The draft holds the same defaults-filled shape as a checkpoint
+    (`_params_as_checkpointed()` in `ui/app.py`, shared with the redock
+    diff); Save Session diffs that against the checkpoint, so an unchanged
+    form is reported as unchanged (2026-10-02 fix, `dev_plan.md` Phase 13
+    changelog).
 - `checkpoints/rev_XXXXXX_parameters.json`
   - immutable snapshot for each parameter update revision
 - `checkpoints/rev_XXXXXX_state.json`

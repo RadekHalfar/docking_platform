@@ -349,22 +349,41 @@ def _handle_run_docking() -> None:
     st.rerun()
 
 
+def _params_as_checkpointed(params: dict) -> dict:
+    """*params* (the form-updated ``st.session_state.params``) the way a
+    checkpoint holds them, for diffing against one.
+
+    The first run checkpoints WorkflowParser.validate_workflow()'s output,
+    which fills in defaults (energy_range, num_modes, population, ...); the
+    form doesn't carry those. Without the same defaults every diff
+    "changes" them to None -- a bogus redock plan and a checkpoint that
+    silently drops them (2026-10-01), and a Save Session that could never
+    say "no changes" (Stage 13.4 finding).
+    """
+    return {**get_default_parameters(), **params}
+
+
 def _handle_save_session() -> None:
     """Persist the current form's parameter edits as a draft, without
     running/redocking anything. Lets edits (e.g. a box-size tweak) survive
-    switching to a different session and back."""
+    switching to a different session and back.
+
+    With nothing changed against the checkpoint, any earlier draft is
+    dropped: Load prefers a draft, so a stale one would bring back an edit
+    the form has since been set back from."""
     session = st.session_state.interactive_session
     if not session.has_active_job():
         return
-    form_params = _collect_form_params()
-    st.session_state.params.update(form_params)
+    st.session_state.params.update(_collect_form_params())
+    params = _params_as_checkpointed(st.session_state.params)
     checkpointed = session.state_manager.load_latest_parameters() or {}
-    if not compute_changed_params(checkpointed, form_params):
+    if not compute_changed_params(checkpointed, params):
+        session.state_manager.clear_draft_parameters()
         st.session_state.messages.append(
             {"role": "assistant", "content": "No parameter changes to save."}
         )
     else:
-        session.state_manager.save_draft_parameters(st.session_state.params)
+        session.state_manager.save_draft_parameters(params)
         st.session_state.messages.append(
             {"role": "assistant", "content": "Parameters saved. Click **Run Docking** to apply them."}
         )
@@ -378,12 +397,7 @@ def _handle_redock_request(session, params: dict) -> None:
     ``[Y/n]`` prompt) via a two-step "Run Docking" → "Confirm redock" button
     pair, since Streamlit has no blocking ``input()``.
     """
-    # The first run checkpoints WorkflowParser.validate_workflow()'s output,
-    # which fills in defaults (energy_range, num_modes, population, ...);
-    # the form doesn't carry those. Apply the same defaults here, or every
-    # redock "changes" them to None -- a bogus dock/visualize plan and a
-    # checkpoint that silently drops them.
-    params = {**get_default_parameters(), **params}
+    params = _params_as_checkpointed(params)
     old_params = session.state_manager.load_latest_parameters() or {}
     changed = compute_changed_params(old_params, params)
     # pending_changed_params holds changes already checkpointed but not yet

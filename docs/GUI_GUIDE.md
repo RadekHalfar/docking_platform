@@ -236,8 +236,10 @@ click **Save Session**, next to **Run Docking**. **Save Session** writes
 your current form values to disk as a draft without running or
 redocking anything, so they survive switching to a different session
 (**Load**) and back. It's disabled when there's no active session to
-save into, and reports "No parameter changes to save" if nothing
-actually changed.
+save into, and reports "No parameter changes to save" if the form matches
+the session's last checkpoint. In that case it also removes any draft saved
+earlier, so setting a field back and clicking **Save Session** really undoes
+the saved edit (otherwise **Load** would bring the draft back).
 
 If you edit a parameter and switch sessions **without** clicking **Save
 Session** first, that edit is lost, the same as before this button

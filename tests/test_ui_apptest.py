@@ -1144,16 +1144,59 @@ def test_redock_with_nothing_changed_replies_without_rerun(app, output_base, pag
 
 
 def test_save_session_replies_without_rerun(app, output_base, page_reruns):
-    _active_session_with_two_revisions(app, output_base)
+    _, state_manager = _active_session_with_two_revisions(app, output_base)
+    app.session_state["param_max_workers"] = _validated(_REV2_PARAMS)["max_workers"]
 
     at = _click(app.run(), "Save Session")
 
     assert not at.exception
-    assert _chat_texts(at)[-1] in (
-        "No parameter changes to save.",
-        "Parameters saved. Click **Run Docking** to apply them.",
-    )
+    # The form equals the checkpoint. Diffing the form's own keys alone
+    # against the defaults-filled checkpoint always found a "change".
+    assert _chat_texts(at)[-1] == "No parameter changes to save."
+    assert state_manager.load_draft_parameters() is None
     assert page_reruns == []
+
+
+def _load_history_job(at):
+    return next(b for b in at.sidebar.button if b.key == f"job_load_{_HISTORY_JOB_ID}").click().run()
+
+
+def test_save_session_saves_a_real_change_with_defaults(app, output_base):
+    _, state_manager, _ = _completed_session_with_artifacts(app, output_base)
+    app.session_state["param_max_workers"] = _validated(_REV2_PARAMS)["max_workers"]
+    at = app.run()
+    at.text_input(key="param_center_x").set_value("8.5").run()
+
+    at = _click(at, "Save Session")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "Parameters saved. Click **Run Docking** to apply them."
+    draft = state_manager.load_draft_parameters()
+    assert draft["center"] == [8.5, 6.0, 7.0]
+    # Same shape as the checkpoint a redock would write -- defaults kept.
+    checkpoint = state_manager.load_latest_parameters()
+    assert {k: draft[k] for k in ("energy_range", "num_modes", "population")} == {
+        k: checkpoint[k] for k in ("energy_range", "num_modes", "population")
+    }
+    at = _load_history_job(at)
+    assert at.session_state["param_center_x"] == "8.5"
+
+
+def test_save_session_with_form_back_at_checkpoint_clears_stale_draft(app, output_base):
+    # An edit was saved, then the form was set back to the checkpoint: the
+    # old draft stayed on disk, and Load (which prefers a draft) brought the
+    # undone edit back.
+    _, state_manager, _ = _completed_session_with_artifacts(app, output_base)
+    state_manager.save_draft_parameters(_validated({**_REV2_PARAMS, "center": [8.5, 6.0, 7.0]}))
+    app.session_state["param_max_workers"] = _validated(_REV2_PARAMS)["max_workers"]
+
+    at = _click(app.run(), "Save Session")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "No parameter changes to save."
+    assert state_manager.load_draft_parameters() is None
+    at = _load_history_job(at)
+    assert at.session_state["param_center_x"] == "5.0"
 
 
 # ---------------------------------------------------------------------------

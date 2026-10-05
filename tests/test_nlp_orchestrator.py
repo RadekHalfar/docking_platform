@@ -820,6 +820,129 @@ def test_handle_set_protein_geometry_file_missing_on_disk(tmp_path):
     assert changed == set()
 
 
+# ---------------------------------------------------------------------------
+# Stage 15.2: docking_algorithm from the CLI ("use vina", "dock with vina")
+# ---------------------------------------------------------------------------
+
+_ALGO_SERVICES = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
+
+
+def _algo_session(tmp_path, name, **extra_params):
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / name)
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [10, 20, 30], "box_size": [25, 30, 35],
+         **extra_params},
+        source="initial_parse",
+    )
+    session.activate(
+        name, state_manager,
+        last_results={"status": "completed", "services_executed": list(_ALGO_SERVICES), "results": {}},
+    )
+    return session, state_manager
+
+
+def test_handle_set_docking_algorithm_persists(tmp_path):
+    session, state_manager = _algo_session(tmp_path, "job_algo")
+    changed = cli._handle_set_docking_algorithm("vina", session)
+    assert changed == {"docking_algorithm"}
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "vina"
+
+
+def test_handle_set_docking_algorithm_unchanged_is_noop(tmp_path, capsys):
+    """Old checkpoints without the key read as moldina (finding 9)."""
+    session, state_manager = _algo_session(tmp_path, "job_algo_same")
+    revision = state_manager.get_current_revision()
+    assert cli._handle_set_docking_algorithm("moldina", session) == set()
+    assert state_manager.get_current_revision() == revision
+    assert "already Moldina (PSO)" in capsys.readouterr().out
+
+
+def _run_loop_after_job(monkeypatch, tmp_path, llm_client, commands, name):
+    """Drive the real interactive loop: the first input starts a (faked)
+    job, then *commands* run through the real intent classification."""
+    orchestrator = Mock()
+    orchestrator.execute_workflow.return_value = {
+        "status": "completed", "services_executed": ["dock", "visualize"], "results": {}, "errors": [],
+    }
+    holder = {}
+
+    def fake_process(_user_input, *_args, **kwargs):
+        sess = kwargs["session"]
+        _, sm = _algo_session(tmp_path, name)
+        sess.activate(name, sm, last_results={
+            "status": "completed", "services_executed": list(_ALGO_SERVICES), "results": {},
+        })
+        holder["state_manager"] = sm
+        return 0
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+    answers = iter(["Download 6lu7 and ATP, prepare and dock", *commands, "end"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+    cli._run_interactive_loop(llm_client, orchestrator, WorkflowParser(), cli.CLARIFICATION_MODE_HYBRID)
+    return orchestrator, holder["state_manager"]
+
+
+def test_interactive_loop_dock_with_vina_switches_and_redocks(monkeypatch, tmp_path, llm_client):
+    """Finding 6: "dock with vina" switches the algorithm and reruns only
+    dock + visualize -- not the plain full rerun the "dock" prefix gives."""
+    orchestrator, state_manager = _run_loop_after_job(
+        monkeypatch, tmp_path, llm_client, ["dock with vina", "y"], "job_loop_vina",
+    )
+
+    orchestrator.execute_workflow.assert_called_once()
+    workflow = orchestrator.execute_workflow.call_args.args[0]
+    assert workflow["services"] == ["dock", "visualize"]
+    assert workflow["parameters"]["docking_algorithm"] == "vina"
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "vina"
+    llm_client.generate.assert_not_called()
+
+
+def test_interactive_loop_use_algorithm_only_switches(monkeypatch, tmp_path, capsys, llm_client):
+    orchestrator, state_manager = _run_loop_after_job(
+        monkeypatch, tmp_path, llm_client, ["use vina"], "job_loop_use",
+    )
+
+    orchestrator.execute_workflow.assert_not_called()
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "vina"
+    assert "Type 'rerun' or 'dock'" in capsys.readouterr().out
+
+
+def test_interactive_loop_use_vina_then_rerun_redocks_dock_only(monkeypatch, tmp_path, llm_client):
+    orchestrator, _ = _run_loop_after_job(
+        monkeypatch, tmp_path, llm_client, ["use vina", "rerun", "y"], "job_loop_rerun",
+    )
+
+    workflow = orchestrator.execute_workflow.call_args.args[0]
+    assert workflow["services"] == ["dock", "visualize"]
+    assert workflow["parameters"]["docking_algorithm"] == "vina"
+
+
+def test_handle_update_parameters_normalizes_algorithm_alias(monkeypatch, tmp_path, llm_client):
+    session, state_manager = _algo_session(tmp_path, "job_algo_alias")
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"docking_algorithm": "AutoDock Vina"},
+    )
+    changed = cli._handle_update_parameters("please dock using autodock vina next time", llm_client, session)
+    assert changed == {"docking_algorithm"}
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "vina"
+
+
+def test_handle_update_parameters_drops_unknown_algorithm(monkeypatch, tmp_path, capsys, llm_client):
+    session, state_manager = _algo_session(tmp_path, "job_algo_bad")
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"docking_algorithm": "gnina", "ph": 6.5},
+    )
+    changed = cli._handle_update_parameters("use gnina at ph 6.5", llm_client, session)
+    assert changed == {"ph"}
+    params = state_manager.load_latest_parameters()
+    assert "docking_algorithm" not in params
+    assert params["ph"] == 6.5
+    assert "'gnina' is not recognised" in capsys.readouterr().out
+
+
 def test_handle_search_ligand_updates_session_parameters(monkeypatch, tmp_path):
     """Searching ligands by name should persist selected component ID."""
     session = InteractiveSession()

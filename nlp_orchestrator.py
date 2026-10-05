@@ -43,7 +43,7 @@ from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS
 from services.llm_orchestrator.interactive_session import resolve_prepared_protein_pdb_path
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
-from common.docking_algorithm import normalize_docking_algorithm
+from common.docking_algorithm import DOCKING_ALGORITHM_LABELS, normalize_docking_algorithm
 from common.pdb_geometry import compute_protein_center_and_box
 from common.path_utils import from_container_path
 from common.utils import generate_job_id
@@ -115,6 +115,8 @@ def _print_interactive_help() -> None:
     print("  - set center to 10,20,30     # Update docking box center")
     print("  - set up box center as protein center  # Center box on the loaded protein")
     print("  - look across all protein    # Size box to cover the whole protein (+10%)")
+    print("  - use vina / use moldina     # Switch docking algorithm (Vina Monte Carlo | Moldina PSO)")
+    print("  - dock with vina             # Switch algorithm and redock (dock + visualize only)")
     print("  - search ligand aspirin       # Search RCSB ligands by name and choose one")
     print("  - state / show state         # Show active job state from disk")
     print("  - end / quit / exit          # End session")
@@ -182,6 +184,18 @@ def _handle_update_parameters(
     Returns the set of changed parameter keys (empty if nothing changed).
     """
     updates = extract_updates_from_command_with_llm(llm_client, user_input)
+    # The LLM's value is never trusted as-is: an unrecognised algorithm
+    # would only fail later inside moldina-runner.
+    if "docking_algorithm" in updates:
+        raw_algorithm = updates.pop("docking_algorithm")
+        algorithm = normalize_docking_algorithm(raw_algorithm)
+        if algorithm is None:
+            print(
+                f"Docking algorithm '{raw_algorithm}' is not recognised. "
+                "Use 'moldina' (PSO) or 'vina' (Monte Carlo)."
+            )
+        else:
+            updates["docking_algorithm"] = algorithm
     if not updates:
         print("Could not extract any parameter updates from that command.")
         print("Examples: 'change ligand to HEM', 'set center to 10,20,30'")
@@ -237,6 +251,44 @@ def _handle_set_protein_geometry(
         print(f"Box size to cover the whole protein (+10% margin): {box_size}")
 
     return _persist_parameter_updates(updates, session)
+
+
+def _handle_set_docking_algorithm(
+    algorithm: str,
+    session: "InteractiveSession",
+) -> Set[str]:
+    """Persist a ``docking_algorithm`` switch ("use vina", "dock with
+    moldina"). Returns the changed keys -- empty when the session already
+    uses *algorithm* (or nothing could be persisted)."""
+    label = DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)
+    if session.state_manager is not None:
+        current = (session.state_manager.load_latest_parameters() or {}).get("docking_algorithm", "moldina")
+        if current == algorithm:
+            print(f"Docking algorithm is already {label}.")
+            return set()
+    print(f"Docking algorithm: {label}")
+    return _persist_parameter_updates({"docking_algorithm": algorithm}, session)
+
+
+def _rerun_pending(
+    session: "InteractiveSession",
+    orchestrator: WorkflowOrchestrator,
+    extra: Optional[Set[str]] = None,
+) -> bool:
+    """Rerun the steps affected by the pending parameter changes (plus
+    *extra*), or every core step if nothing is pending -- the ``rerun``
+    command. Returns False when there was nothing to rerun or the rerun
+    was cancelled."""
+    original = (session.last_results or {}).get("services_executed", [])
+    if not original:
+        print("No previous workflow execution to rerun. Use 'new <request>' instead.")
+        return False
+    rerun_params = session.pending_changed_params | (extra or set())
+    result = _execute_partial_rerun(
+        session, orchestrator, changed_params=rerun_params or CORE_PARAMS,
+    )
+    session.pending_changed_params = set()
+    return result is not None
 
 
 def _mark_changed_and_hint_rerun(
@@ -755,6 +807,14 @@ def _dispatch_intent(
         _mark_changed_and_hint_rerun(session, changed)
         return True
 
+    if intent == "set_docking_algorithm":
+        changed = _handle_set_docking_algorithm((intent_result or {}).get("name"), session)
+        if (intent_result or {}).get("rerun"):
+            # "dock with vina": switch, then redock what that invalidates.
+            return _rerun_pending(session, orchestrator, extra=changed)
+        _mark_changed_and_hint_rerun(session, changed)
+        return True
+
     if intent == "search_ligand":
         applied = _handle_search_ligand(
             orchestrator=orchestrator,
@@ -773,17 +833,7 @@ def _dispatch_intent(
         return True
 
     if intent == "rerun_steps":
-        original = (session.last_results or {}).get("services_executed", [])
-        if original:
-            rerun_params = session.pending_changed_params if session.pending_changed_params else CORE_PARAMS
-            result = _execute_partial_rerun(
-                session, orchestrator, changed_params=rerun_params,
-            )
-            session.pending_changed_params = set()
-            return result is not None
-        else:
-            print("No previous workflow execution to rerun. Use 'new <request>' instead.")
-            return False
+        return _rerun_pending(session, orchestrator)
 
     if intent == "save_results":
         return _handle_save_results(intent_result or {}, session)

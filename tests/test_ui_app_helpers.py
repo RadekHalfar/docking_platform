@@ -331,3 +331,78 @@ def test_on_chat_submit_geometry_command_does_not_touch_llm_parser(monkeypatch, 
 
     assert st.session_state.messages[0]["content"] == "look across all protein"
     assert "cover the whole protein" in st.session_state.messages[-1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Stage 15.2: docking_algorithm from GUI chat
+# ---------------------------------------------------------------------------
+
+def _boom(*args, **kwargs):
+    raise AssertionError("LLM parser must not be called for an algorithm command")
+
+
+def test_on_chat_submit_algorithm_command_skips_llm(monkeypatch):
+    st.session_state.messages = []
+    st.session_state.params = {}
+    monkeypatch.setattr(app, "parse_workflow_with_llm", _boom)
+    monkeypatch.setattr(app, "parse_followup_with_llm", _boom)
+
+    app._on_chat_submit("dock with vina")
+
+    assert st.session_state.params["docking_algorithm"] == "vina"
+    reply = st.session_state.messages[-1]["content"]
+    assert "Vina (Monte Carlo)" in reply
+    assert "Run Docking" in reply
+
+
+def _setup_llm_chat(monkeypatch, followup_params):
+    """A prior chat turn exists, so the follow-up LLM path runs."""
+    st.session_state.messages = []
+    st.session_state.params = {"docking_algorithm": "vina"}
+    parser = WorkflowParser()
+    parser.validate_workflow({"services": ["dock"], "parameters": {"protein_id": "6lu7"}})
+    st.session_state.parser = parser
+    st.session_state.llm_client = object()
+    monkeypatch.setattr(app, "parse_workflow_with_llm", _boom)
+    monkeypatch.setattr(
+        app, "parse_followup_with_llm",
+        lambda *_a, **_k: {"services_add": [], "parameters": dict(followup_params)},
+    )
+
+
+def test_on_chat_submit_llm_default_does_not_reset_algorithm(monkeypatch):
+    """Finding 8: the validator's default "moldina" (also carried in the
+    prior turn's parameters) must not overwrite a chosen algorithm."""
+    _setup_llm_chat(monkeypatch, {"ph": 6.5})
+
+    app._on_chat_submit("set pH to 6.5")
+
+    assert st.session_state.params["docking_algorithm"] == "vina"
+    assert st.session_state.params["ph"] == 6.5
+    assert "Algorithm" not in st.session_state.messages[-1]["content"]
+
+
+def test_on_chat_submit_llm_explicit_algorithm_applied_and_echoed(monkeypatch):
+    _setup_llm_chat(monkeypatch, {"docking_algorithm": "PSO"})
+
+    app._on_chat_submit("and run it with particle swarm please")
+
+    assert st.session_state.params["docking_algorithm"] == "moldina"
+    assert "- Algorithm: **Moldina (PSO)**" in st.session_state.messages[-1]["content"]
+
+
+def test_on_chat_submit_first_parse_without_algorithm_keeps_choice(monkeypatch):
+    st.session_state.messages = []
+    st.session_state.params = {"docking_algorithm": "vina"}
+    st.session_state.parser = WorkflowParser()
+    st.session_state.llm_client = object()
+    monkeypatch.setattr(app, "parse_followup_with_llm", _boom)
+    monkeypatch.setattr(
+        app, "parse_workflow_with_llm",
+        lambda *_a, **_k: {"services": ["dock"], "parameters": {"protein_id": "6lu7"}},
+    )
+
+    app._on_chat_submit("dock 6lu7")
+
+    assert st.session_state.params["docking_algorithm"] == "vina"
+    assert st.session_state.params["protein_id"] == "6lu7"

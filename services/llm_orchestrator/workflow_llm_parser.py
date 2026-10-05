@@ -7,6 +7,8 @@ import re
 import requests
 from typing import Any, Dict, List, Optional
 
+from common.docking_algorithm import normalize_docking_algorithm
+
 from .llm_base import BaseLLMClient
 from .workflow_parser import WorkflowParser
 
@@ -33,9 +35,12 @@ Extract the following:
    - center (docking box center [x, y, z])
    - box_size (docking box dimensions [x, y, z])
    - ph (pH value, default 7.4)
-   - exhaustiveness (docking thoroughness, default 8)
-   - cpu (number of CPUs, default 1)
-   - population (PSO population, default 500)
+   - exhaustiveness (docking thoroughness, default 8; only affects the "vina" algorithm)
+   - cpu (number of CPUs, default 1; only affects the "vina" algorithm)
+   - population (PSO population, default 500; only affects the "moldina" algorithm)
+   - docking_algorithm ("moldina" = Moldina PSO, the default, or "vina" = AutoDock Vina Monte Carlo).
+     ONLY set this when the user names an algorithm (vina, autodock vina, monte carlo, moldina, PSO);
+     otherwise omit it.
 
 CRITICAL RULE FOR LIGAND_IDS:
 - If user says "two WWO ligands", you MUST output: ["WWO", "WWO"]
@@ -54,6 +59,7 @@ User: "Dock with ATP and render image" -> services: ["get_input_files", "prepare
 User: "Dock and show results" -> services: ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
 User: "Dock protein 6lu7 against all ligands in /data/ligands" -> ligand_folder: "/data/ligands" (no ligand_ids)
 User: "Dock 6lu7 with every ligand file in ./my_ligands" -> ligand_folder: "./my_ligands" (no ligand_ids)
+User: "Dock 6lu7 with ATP using vina" -> ligand_ids: ["ATP"], docking_algorithm: "vina"
 
 Wrong Examples (DO NOT DO THIS):
 User: "Dock with two WWO ligands" -> ligand_ids: ["WWO"] WRONG! Should be ["WWO", "WWO"]
@@ -182,10 +188,11 @@ Return strict JSON with this exact shape:
 Rules:
 1. "services_add" lists any NEW services this message implies (from: get_input_files, prepare_ligands,
    prepare_protein, dock, visualize) that were not already active. Return [] if none.
-2. For scalar fields (protein_id, center, box_size, ph, exhaustiveness, cpu, population): include a field
-   in "parameters" ONLY if this message explicitly gives or changes that value. If the message does not
-   mention a field, OMIT it entirely — do not guess, repeat, or invent a value. Omitted fields keep their
-   previous value; you don't need to restate it.
+2. For scalar fields (protein_id, center, box_size, ph, exhaustiveness, cpu, population, docking_algorithm):
+   include a field in "parameters" ONLY if this message explicitly gives or changes that value. If the message
+   does not mention a field, OMIT it entirely — do not guess, repeat, or invent a value. Omitted fields keep
+   their previous value; you don't need to restate it. docking_algorithm is "moldina" (Moldina PSO) or
+   "vina" (AutoDock Vina Monte Carlo).
 3. For ligand_ids: you are given the CURRENT ligand list already collected. Interpret this message against
    that current list and return the COMPLETE resulting array (not just the newly added/removed part):
    - "add"/"also"/"another"/"one more"/"plus" -> extend the current list with the new ligand(s), preserving
@@ -350,7 +357,7 @@ def extract_updates_with_llm(
         "Rules:\n"
         "1. Update only values that are explicitly supported by the user answer.\n"
         "2. Prefer the target parameter. Do not modify unrelated fields unless the user answer clearly provides them too.\n"
-        "3. Allowed fields only: protein_id, ligand_ids, center, box_size, ph, exhaustiveness, cpu, population, num_modes, energy_range.\n"
+        "3. Allowed fields only: protein_id, ligand_ids, center, box_size, ph, exhaustiveness, cpu, population, num_modes, energy_range, docking_algorithm.\n"
         "4. Never infer missing scientific values from defaults, prior examples, or typical practice.\n"
         '5. If the user answer is ambiguous, partial, contradictory, or not machine-usable, return {"parameter_updates": {}}.\n'
         "6. Keep existing workflow capabilities intact: do not invent new services or new parameter names.\n"
@@ -360,7 +367,8 @@ def extract_updates_with_llm(
         "- ligand_ids: JSON array of strings. Preserve multiplicity exactly when the user specifies counts.\n"
         '- Count words must be expanded when explicit, e.g. one/two/three ATP -> ["ATP"], ["ATP", "ATP"], ["ATP", "ATP", "ATP"].\n'
         '- center and box_size: JSON array of exactly 3 numbers, extracted from forms like "10,20,30" or "[10, 20, 30]".\n'
-        "- Numeric scalar fields must be returned as numbers, not strings.\n\n"
+        "- Numeric scalar fields must be returned as numbers, not strings.\n"
+        '- docking_algorithm: exactly "moldina" (Moldina PSO) or "vina" (AutoDock Vina Monte Carlo).\n\n'
         "Examples:\n"
         "User answer: 6lu7\n"
         'Output: {"parameter_updates": {"protein_id": "6lu7"}}\n\n'
@@ -439,6 +447,7 @@ _SESSION_INTENTS = frozenset({
     "update_parameters",
     "use_pymol_box",
     "set_protein_geometry",
+    "set_docking_algorithm",
     "rerun_steps",
     "show_state",
     "show_history",
@@ -478,8 +487,9 @@ _EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM = (
     'Return JSON only with this exact shape: {"parameter_updates": {...}}. '
     "Never include markdown, explanations, comments, or code fences. "
     'Do not invent values. If the command is ambiguous or unrelated, return {"parameter_updates": {}}. '
-    "Allowed fields only: protein_id, ligand_ids, center, box_size, ph, exhaustiveness, cpu, population, num_modes, energy_range. "
+    "Allowed fields only: protein_id, ligand_ids, center, box_size, ph, exhaustiveness, cpu, population, num_modes, energy_range, docking_algorithm. "
     "ligand_ids must be a JSON array of strings. "
+    'docking_algorithm must be exactly "moldina" (Moldina PSO) or "vina" (AutoDock Vina Monte Carlo). '
     "center and box_size must be JSON arrays of exactly 3 numbers. "
     "Preserve multiplicity when counts are stated: 'two ATP' → [\"ATP\",\"ATP\"], 'three HEM' → [\"HEM\",\"HEM\",\"HEM\"]. "
     "Examples:\n"
@@ -489,6 +499,8 @@ _EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM = (
     'Output: {"parameter_updates": {"center": [10.0, 20.0, 30.0]}}\n\n'
     "Command: use two ATP ligands\n"
     'Output: {"parameter_updates": {"ligand_ids": ["ATP", "ATP"]}}\n\n'
+    "Command: set the docking algorithm to autodock vina\n"
+    'Output: {"parameter_updates": {"docking_algorithm": "vina"}}\n\n'
     "Command: save results as hem_trial\n"
     'Output: {"parameter_updates": {}}'
 )
@@ -548,6 +560,58 @@ def detect_protein_geometry_command(text: str) -> Optional[str]:
     return None
 
 
+# "use vina" / "switch to PSO" / "set docking_algorithm = vina" / "dock with
+# vina". Anchored over the whole command (only "the", a trailing
+# "algorithm"/"search"/"mode" and punctuation may surround the algorithm), so
+# "dock 6lu7 with ATP" or "dock with vina and visualize" never match -- the
+# former must stay a rerun, the latter a longer request (Phase 15 finding 6).
+_ALGORITHM_TERM = (
+    r"(?P<alg>autodock[\s_-]+vina"
+    r"|vina(?:\s*\(\s*monte[\s_-]+carlo\s*\)|[\s_-]+monte[\s_-]+carlo)?"
+    r"|monte[\s_-]+carlo"
+    r"|moldina(?:\s*\(\s*pso\s*\)|[\s_-]+pso)?"
+    r"|pso)"
+    r"(?:\s+(?:algorithm|search|mode))?[\s.!]*$"
+)
+_ALGORITHM_KEY_SEP = r"(?:\s+(?:to|as)\s+|\s*[=:]\s*|\s+)(?:the\s+)?"
+_DOCK_WITH_ALGORITHM_RE = re.compile(
+    r"^(?:please\s+)?(?:re[\s-]?dock|dock|re[\s-]?run|run|execute)"
+    r"(?:\s+(?:it|docking))?(?:\s+again)?\s+(?:with|using)\s+(?:the\s+)?" + _ALGORITHM_TERM,
+    re.IGNORECASE,
+)
+_SET_ALGORITHM_RE = re.compile(
+    r"^(?:please\s+)?(?:"
+    r"(?:use|switch\s+to|change\s+to)\s+(?:the\s+)?"
+    r"|(?:(?:set|change|switch|use)\s+(?:the\s+)?)?(?:docking[\s_]+)?algorithm" + _ALGORITHM_KEY_SEP +
+    r")" + _ALGORITHM_TERM,
+    re.IGNORECASE,
+)
+
+
+def detect_docking_algorithm_command(text: str) -> Optional[Dict[str, Any]]:
+    """Detect a chat command that switches the docking algorithm.
+
+    Pure regex, no LLM call, like :func:`detect_protein_geometry_command`.
+    Returns ``{"algorithm": "moldina"|"vina", "rerun": bool}`` -- *rerun* is
+    True for "dock/rerun/run with <algorithm>", which also asks to redock --
+    or ``None`` (no match; the caller falls through to its normal parsing).
+    An unrecognised name ("use gnina") is not a match, so it reaches the
+    LLM parameter extraction, whose output is validated.
+    """
+    stripped = text.strip()
+    rerun = True
+    match = _DOCK_WITH_ALGORITHM_RE.match(stripped)
+    if match is None:
+        rerun = False
+        match = _SET_ALGORITHM_RE.match(stripped)
+    if match is None:
+        return None
+    algorithm = normalize_docking_algorithm(re.sub(r"[()]", " ", match.group("alg")))
+    if algorithm is None:
+        return None
+    return {"algorithm": algorithm, "rerun": rerun}
+
+
 def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     """Return an intent result dict if *text* matches an unambiguous pattern, else None."""
     t = text.strip().lower()
@@ -594,6 +658,16 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     if search_match:
         query = search_match.group(1).strip()
         return {"intent": "search_ligand", "name": query or None}
+
+    # Before the rerun prefix ("dock with vina" switches, then redocks) and
+    # the generic update prefix ("use vina", "set docking_algorithm vina").
+    algorithm_command = detect_docking_algorithm_command(text)
+    if algorithm_command is not None:
+        return {
+            "intent": "set_docking_algorithm",
+            "name": algorithm_command["algorithm"],
+            "rerun": algorithm_command["rerun"],
+        }
 
     if re.match(r"^(rerun|run|dock|execute)\b", t):
         return {"intent": "rerun_steps", "name": None}
@@ -790,7 +864,7 @@ def extract_updates_from_command_with_llm(
         "Extract all workflow parameter updates from this command:\n\n"
         f"{user_input}\n\n"
         "Allowed fields: protein_id, ligand_ids, center, box_size, "
-        "ph, exhaustiveness, cpu, population, num_modes, energy_range."
+        "ph, exhaustiveness, cpu, population, num_modes, energy_range, docking_algorithm."
     )
     try:
         raw = llm_client.generate(prompt, system=_EXTRACT_PARAM_UPDATES_FROM_COMMAND_SYSTEM, temperature=0.1)

@@ -359,6 +359,38 @@ function ahead of its own chat-parsing call, so both commands work
 identically from the browser — see
 [GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
 
+#### Set docking algorithm (Phase 15)
+
+`set_docking_algorithm` is also classified deterministically
+(`workflow_llm_parser.py::detect_docking_algorithm_command()`). It is checked in
+`_deterministic_intent()` before the `rerun|run|dock|execute` prefix, because
+otherwise "dock with vina" would rerun with the old algorithm. It is
+anchored over the whole command, so a longer sentence that only mentions an
+algorithm ("dock 6lu7 with ATP", "dock with vina and visualize") doesn't
+match. Recognised forms (case-insensitive, with an optional trailing
+"algorithm"/"search"/"mode"):
+
+| Command | Effect |
+|---|---|
+| `use vina`, `switch to PSO`, `change to moldina` | switch only |
+| `set docking_algorithm vina`, `set the docking algorithm to monte carlo`, `algorithm: vina` | switch only |
+| `dock with vina`, `redock using moldina`, `rerun with pso` | switch, then rerun |
+
+Algorithm names: `vina`, `autodock vina`, `monte carlo`, `vina (monte carlo)`
+→ `vina`; `moldina`, `pso`, `moldina (pso)` → `moldina`
+(`common/docking_algorithm.py`). An unknown name ("use gnina") isn't
+matched. It reaches the LLM `update_parameters` extraction, and
+`_handle_update_parameters()` rejects it with "Docking algorithm 'gnina' is not
+recognised…" instead of persisting it.
+
+In the CLI, a switch persists a checkpoint (unless the session already uses
+that algorithm) and invalidates `dock`/`visualize`. "dock with …" then goes
+straight to the rerun plan (dock and visualize only, `[Y/n]`). The GUI
+chat runs the same detector before its LLM parse, but it only switches the
+algorithm; **Run Docking** applies it. A chat message that doesn't name an
+algorithm never resets the chosen one, even though the parser fills the
+default `"moldina"`.
+
 #### Rerun steps
 
 `rerun`, `dock`, or `rerun docking` triggers a partial re-execution:

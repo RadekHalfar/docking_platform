@@ -4,6 +4,7 @@ import pytest
 
 from services.llm_orchestrator.workflow_llm_parser import (
     classify_session_intent,
+    detect_docking_algorithm_command,
     detect_protein_geometry_command,
     extract_updates_from_command_with_llm,
     split_command_sequence,
@@ -308,3 +309,104 @@ def test_update_parameters_catchall_still_wins_for_non_geometry_set_commands(llm
     result = classify_session_intent(llm_client, "set center to 10,20,30")
     assert result["intent"] == "update_parameters"
     llm_client.generate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# detect_docking_algorithm_command -- Stage 15.2 ("use vina" / "dock with
+# vina" chat commands). Pure regex, no LLM; checked before the rerun prefix
+# (Phase 15 finding 6).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "command,algorithm,rerun",
+    [
+        ("use vina", "vina", False),
+        ("Use Vina.", "vina", False),
+        ("use autodock vina", "vina", False),
+        ("use AutoDock-Vina", "vina", False),
+        ("use monte carlo", "vina", False),
+        ("use the vina algorithm", "vina", False),
+        ("switch to vina (monte carlo)", "vina", False),
+        ("change to PSO", "moldina", False),
+        ("switch to moldina", "moldina", False),
+        ("use moldina (pso)", "moldina", False),
+        ("use moldina pso search", "moldina", False),
+        ("set docking_algorithm vina", "vina", False),
+        ("set docking_algorithm=vina", "vina", False),
+        ("set docking_algorithm = moldina", "moldina", False),
+        ("set docking algorithm to vina", "vina", False),
+        ("set the algorithm to PSO", "moldina", False),
+        ("change the docking algorithm to monte carlo", "vina", False),
+        ("switch algorithm to vina", "vina", False),
+        ("algorithm: vina", "vina", False),
+        ("docking algorithm moldina", "moldina", False),
+        ("please use vina", "vina", False),
+        ("dock with vina", "vina", True),
+        ("Dock using AutoDock Vina!", "vina", True),
+        ("redock with vina", "vina", True),
+        ("re-dock with moldina", "moldina", True),
+        ("rerun with pso", "moldina", True),
+        ("rerun docking with vina", "vina", True),
+        ("run it again with vina", "vina", True),
+        ("dock again using moldina", "moldina", True),
+    ],
+)
+def test_detect_docking_algorithm_command(command, algorithm, rerun):
+    assert detect_docking_algorithm_command(command) == {"algorithm": algorithm, "rerun": rerun}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dock",
+        "rerun",
+        "rerun docking",
+        "dock 6lu7 with ATP",
+        "dock with ATP",
+        "use two ATP ligands",
+        "set center to 10,20,30",
+        "use pymol box",
+        "use protein center",
+        "search vina",
+        "dock with vina and visualize",
+        "new dock 6lu7 with vina",
+        "Download 6lu7 and ATP, prepare and dock with vina",
+        "what is vina?",
+        "use vina for ligand HEM",
+        "set docking_algorithm gnina",
+        "use gnina",
+        "vinardo",
+    ],
+)
+def test_detect_docking_algorithm_command_no_false_positives(command):
+    assert detect_docking_algorithm_command(command) is None
+
+
+@pytest.mark.parametrize(
+    "command,algorithm,rerun",
+    [
+        ("dock with vina", "vina", True),
+        ("use vina", "vina", False),
+        ("set docking_algorithm vina", "vina", False),
+        ("switch to PSO", "moldina", False),
+    ],
+)
+def test_algorithm_phrases_classify_as_set_docking_algorithm(llm_client, command, algorithm, rerun):
+    """"dock with vina" must switch, not hit the rerun prefix; "set
+    docking_algorithm vina" must not fall to the LLM update path."""
+    result = classify_session_intent(llm_client, command)
+    assert result["intent"] == "set_docking_algorithm"
+    assert result["name"] == algorithm
+    assert result["rerun"] is rerun
+    llm_client.generate.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["dock", "rerun docking", "run", "dock 6lu7 with ATP"])
+def test_plain_dock_commands_still_rerun(llm_client, command):
+    assert classify_session_intent(llm_client, command)["intent"] == "rerun_steps"
+    llm_client.generate.assert_not_called()
+
+
+def test_algorithm_switch_chains_with_rerun():
+    assert split_command_sequence("use vina and rerun") == ["use vina", "rerun"]
+    assert split_command_sequence("change ligand to HEM and use vina") == ["change ligand to HEM", "use vina"]

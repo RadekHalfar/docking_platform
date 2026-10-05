@@ -2,10 +2,11 @@
 
 The committed ``moldina`` binary runs two searches: Moldina's Particle Swarm
 Optimization (``--search_alg_PSO --population N``) and, with both flags
-omitted, the classic AutoDock Vina 1.1.2-era Monte Carlo search it was forked
-from. ``docking_algorithm`` picks between them. Shared by ``moldina-runner``
-(builds the command) and the orchestrator (defaults and validation), so the
-allowed values and aliases have one definition.
+omitted, the AutoDock Vina 1.2.x Monte Carlo search of the fork it is built
+on (``docs/MOLDINA_DOCKING.md`` § Vina mode). ``docking_algorithm`` picks
+between them. Shared by ``moldina-runner`` (builds the command), the
+orchestrator (defaults and validation) and the chat front ends (labels), so
+the allowed values and aliases have one definition.
 """
 from __future__ import annotations
 
@@ -13,6 +14,12 @@ from typing import Any, Dict, Optional, Tuple
 
 DOCKING_ALGORITHMS: Tuple[str, ...] = ("moldina", "vina")
 DEFAULT_DOCKING_ALGORITHM = "moldina"
+
+# Human-readable names for replies and (Stage 15.3) the GUI selector.
+DOCKING_ALGORITHM_LABELS: Dict[str, str] = {
+    "moldina": "Moldina (PSO)",
+    "vina": "Vina (Monte Carlo)",
+}
 
 _ALIASES: Dict[str, str] = {
     "moldina": "moldina",

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from common.docking_algorithm import DOCKING_ALGORITHM_LABELS
 from common.path_utils import from_container_path
 from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
@@ -27,6 +28,7 @@ from services.llm_orchestrator.rerun_planner import (
 )
 from services.llm_orchestrator.workflow_llm_parser import (
     _deterministic_intent,
+    detect_docking_algorithm_command,
     detect_protein_geometry_command,
     parse_followup_with_llm,
     parse_workflow_with_llm,
@@ -225,12 +227,33 @@ def _handle_protein_geometry_command(target: str) -> None:
         st.session_state.messages.append({"role": "assistant", "content": message})
 
 
+def _handle_docking_algorithm_command(algorithm: str) -> None:
+    """Apply a "use vina" / "dock with moldina" chat command. The GUI only
+    switches -- docking always starts from Run Docking, so the CLI's
+    "dock with ..." redock is not mirrored here."""
+    apply_parsed_params({"docking_algorithm": algorithm})
+    label = DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)
+    session = st.session_state.get("interactive_session")
+    if session is not None and session.has_active_job():
+        hint = "Click **Run Docking** to redock with it (docking and visualization only)."
+    else:
+        hint = "It will be used when you click **Run Docking**."
+    st.session_state.messages.append(
+        {"role": "assistant", "content": f"Docking algorithm set to **{label}**. {hint}"}
+    )
+
+
 def _on_chat_submit(user_message: str) -> None:
     st.session_state.messages.append({"role": "user", "content": user_message})
 
     geometry_target = detect_protein_geometry_command(user_message)
     if geometry_target is not None:
         _handle_protein_geometry_command(geometry_target)
+        return
+
+    algorithm_command = detect_docking_algorithm_command(user_message)
+    if algorithm_command is not None:
+        _handle_docking_algorithm_command(algorithm_command["algorithm"])
         return
 
     # Only the revision and save commands are taken from the CLI's
@@ -259,11 +282,19 @@ def _on_chat_submit(user_message: str) -> None:
                 ))
                 parameters = {**prior["parameters"], **delta.get("parameters", {})}
                 parsed = {"services": services, "parameters": parameters}
+                algorithm_explicit = "docking_algorithm" in delta.get("parameters", {})
             else:
                 parsed = parse_workflow_with_llm(st.session_state.llm_client, user_message)
+                algorithm_explicit = "docking_algorithm" in (parsed.get("parameters") or {})
 
             validated = st.session_state.parser.validate_workflow(parsed)
-            apply_parsed_params(validated["parameters"])
+            # validate_workflow() fills the default "moldina" (and the prior
+            # turn's value rides along in a follow-up merge); applying that
+            # would reset an algorithm the user chose (Phase 15 finding 8).
+            to_apply = dict(validated["parameters"])
+            if not algorithm_explicit:
+                to_apply.pop("docking_algorithm", None)
+            apply_parsed_params(to_apply)
 
             p = validated["parameters"]
             missing = validated.get("missing_required", [])
@@ -281,6 +312,9 @@ def _on_chat_submit(user_message: str) -> None:
             if p.get("box_size"):
                 b = p["box_size"]
                 lines.append(f"- Box size: ({b[0]}, {b[1]}, {b[2]})")
+            if algorithm_explicit and "docking_algorithm" not in missing:
+                algorithm = p.get("docking_algorithm")
+                lines.append(f"- Algorithm: **{DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}**")
             if missing:
                 lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
 

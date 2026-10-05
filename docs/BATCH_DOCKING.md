@@ -143,11 +143,14 @@ what I expected" note below for why `limits.cpus` in particular needs care when 
 These are also the values the GUI reads to size its parallel-worker control — see below.
 
 The GUI's Advanced expander has a **"Parallel ligand docking"** checkbox and a **"Max
-parallel workers"** number input, pre-filled/capped from `moldina-runner`'s configured
+parallel workers"** number input. Its maximum is `moldina-runner`'s configured
 `limits.cpus` above (`ui/worker_cap.py::detect_moldina_worker_cap()`, which parses
 `docker-compose.yml` directly — bind-mounted into the `ui` container alongside the rest
-of the repo). The caption under the control says so: "Docking service is limited to N
-CPUs (docker-compose.yml)". It falls back to the `ui` container's own `os.cpu_count()`
+of the repo). Its default is the measured best from the
+[benchmark baseline](#benchmark-baseline-2026-10-05) below, never above that maximum
+(`ui/worker_cap.py::default_worker_count()`, `min(MEASURED_BEST_WORKERS, cap)`). The
+caption under the control states both: "Docking service is limited to N CPUs
+(docker-compose.yml). Benchmarked best: 8 workers (up to ~612 MiB memory each; …)". It falls back to the `ui` container's own `os.cpu_count()`
 only if the compose file can't be found or parsed, or has no positive `limits.cpus`, so
 a parsing failure never blocks GUI startup. The fallback is not silent: the expander
 shows a warning that the CPU limit couldn't be read (with the reason) and that the real
@@ -191,9 +194,9 @@ python3 benchmark_docking.py --job-id <prepared job> --worker-counts 2,4,6,8,10 
     --sample-stats --json-out bench.json
 ```
 
-Memory is the residual risk, not CPU: no numeric per-ligand memory budget is recorded yet,
-so a high worker count on a large batch can still exhaust `limits.memory`. Use
-`--sample-stats` to measure it. It polls `docker stats --no-stream` against
+Memory is the residual risk, not CPU: a high worker count on a large batch can still
+exhaust `limits.memory`. The measured figure is in the baseline below. Use
+`--sample-stats` to re-measure it. It polls `docker stats --no-stream` against
 `moldina-runner` on a background thread while each configuration runs, failed ones
 included, and adds peak memory, mean memory and peak memory per worker to the table and
 the JSON. Peak memory per worker is `(peak − idle baseline) / min(workers, ligands)`. The
@@ -206,3 +209,41 @@ and reported, not hidden. Start with a modest worker count, re-run the benchmark
 jobs start failing unexpectedly. This setting is available via the
 `parallel`/`max_workers` parameters on the `run_docking` MCP tool for CLI/direct callers
 too — both default to off/1 (sequential) if omitted.
+
+#### Benchmark baseline (2026-10-05)
+
+This is the baseline for the next change to `moldina-runner`'s resource limits. After any
+such change, re-run the benchmark and update this table, `MEASURED_BEST_WORKERS` and
+`MEASURED_PEAK_MIB_PER_WORKER` in `ui/worker_cap.py`.
+
+- **Limits:** `cpus: '10'`, `memory: 8G`. Probe: `os.cpu_count()` inside the container is 20,
+  and cgroup v2 `cpu.max` is `1000000 100000`, an effective budget of 10.00 cores.
+- **Workload:** 50 ligands from `job_20261001_071808_ee7e7d` (box 20 × 20 × 20 Å), Moldina PSO
+  defaults (`--population 500`, `--num-modes 15`, `--energy-range 100`), `cpu=1` per ligand.
+  All 300 dockings succeeded.
+- **Command:** `python3 benchmark_docking.py --job-id job_20261001_071808_ee7e7d --num-ligands 50 --worker-counts 2,4,6,8,10 --sample-stats --json-out docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json`
+- **Raw data:** [`docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json`](benchmarks/2026-10-05_moldina_cpus10_mem8g.json).
+  The idle baseline was 37.5 MiB, and no memory samples failed.
+
+| Workers | Wall clock (s) | s/ligand | Speed-up | Peak memory (MiB) | Mean memory (MiB) | Peak memory/worker (MiB) |
+|---|---|---|---|---|---|---|
+| 1 (sequential) | 113.8 | 2.3 | 1.00× | 647.6 | 376.8 | 610.1 |
+| 2 | 58.4 | 1.2 | 1.95× | 1260.5 | 784.5 | 611.5 |
+| 4 | 30.8 | 0.6 | 3.69× | 2233.3 | 1532.7 | 548.9 |
+| 6 | 26.3 | 0.5 | 4.32× | 3293.2 | 2273.4 | 542.6 |
+| **8** | **24.3** | 0.5 | **4.68×** | 3809.3 | 3033.6 | 471.5 |
+| 10 | 23.4 | 0.5 | 4.86× | 4963.3 | 3809.6 | 492.6 |
+
+**How the default was chosen.** The rule was fixed before the run: the GUI default is the
+smallest worker count whose wall clock is within 5% of the fastest. The fastest was 10
+workers (23.4 s), so the threshold was 24.6 s. 8 workers (24.3 s) meets it, and 6 workers
+(26.3 s) does not. The memory check passes: 37.5 MiB idle + 8 × 612 MiB (the worst
+per-worker figure) ≈ 4.8 GiB, well under 8 GiB. The measured peak at 8 workers was 3.7 GiB.
+
+**Reading the numbers.**
+- Scaling is near-linear up to 4 workers (3.69×), then flattens: 4→8 workers buys only
+  about 27% more speed. Above about 4 workers, each extra worker is less efficient.
+- Memory grows by roughly 0.5–0.6 GiB per worker. Peaks are sampled lower bounds,
+  because each `docker stats` call takes about 1–2 s.
+- These ligands dock in about 2.3 s each on their own. Ligands that take longer may scale
+  differently, so re-benchmark with a representative job if your batches differ a lot.

@@ -18,6 +18,7 @@ st = pytest.importorskip("streamlit")
 
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from ui import session_state
+from ui.worker_cap import MEASURED_BEST_WORKERS
 
 
 @pytest.fixture(autouse=True)
@@ -160,6 +161,13 @@ def test_load_session_params_resets_widgets_the_loaded_params_lack():
     assert st.session_state.param_center_x == ""
     # Names the *next* new session only -- not part of a loaded revision.
     assert st.session_state.param_job_name == "my run"
+
+
+def test_max_workers_default_is_measured_best_clamped_to_cap():
+    session_state.init()
+    assert st.session_state.param_max_workers == min(
+        MEASURED_BEST_WORKERS, session_state.WORKER_CAP.cap
+    )
 
 
 def test_load_session_params_sets_parallel_widgets_clamped():

@@ -618,7 +618,11 @@ is only a soft scheduling hint that isn't strongly enforced outside Swarm mode. 
 `limits.cpus` also raises the ceiling the GUI's "Max parallel workers" control and the
 `moldina_runner` service itself clamp to for [parallel docking](BATCH_DOCKING.md#optional-parallel-docking)
 — but doesn't guarantee that many real cores if deployed on smaller hardware than the
-quota assumes (both sides account for this, see the linked section for why).
+quota assumes (both sides account for this, see the linked section for why). After
+changing `limits.cpus` or `limits.memory`, re-run the
+[benchmark](BATCH_DOCKING.md#benchmark-baseline-2026-10-05): the GUI's default worker
+count (`MEASURED_BEST_WORKERS` in `ui/worker_cap.py`) was measured under the current
+limits and doesn't follow them automatically.
 
 ### Multi-Stage Builds
 

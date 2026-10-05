@@ -3,7 +3,16 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from ui.worker_cap import WorkerCap, describe_worker_cap, detect_moldina_worker_cap
+import pytest
+
+from ui.worker_cap import (
+    MEASURED_BEST_WORKERS,
+    MEASURED_PEAK_MIB_PER_WORKER,
+    WorkerCap,
+    default_worker_count,
+    describe_worker_cap,
+    detect_moldina_worker_cap,
+)
 
 
 def _write_compose(tmp_path, cpus):
@@ -124,6 +133,7 @@ class TestDescribeWorkerCap:
         assert warning is None
         assert caption.startswith("Docking service is limited to 10 CPUs (docker-compose.yml).")
         assert "memory usage" in caption
+        assert _MEASURED_TEXT in caption
 
     def test_fallback_source_warns_with_reason(self):
         warning, caption = describe_worker_cap(WorkerCap(16, "fallback", "some reason"))
@@ -131,3 +141,20 @@ class TestDescribeWorkerCap:
         assert "The real limit may be lower." in warning
         assert "(some reason)" in warning
         assert "memory usage" in caption
+        assert _MEASURED_TEXT in caption
+
+
+_MEASURED_TEXT = (
+    f"Benchmarked best: {MEASURED_BEST_WORKERS} workers "
+    f"(up to ~{MEASURED_PEAK_MIB_PER_WORKER} MiB memory each"
+)
+
+
+class TestDefaultWorkerCount:
+    @pytest.mark.parametrize("cap", [1, MEASURED_BEST_WORKERS - 1, MEASURED_BEST_WORKERS,
+                                     MEASURED_BEST_WORKERS + 1, 64])
+    def test_is_measured_best_clamped_to_cap(self, cap):
+        assert default_worker_count(WorkerCap(cap, "compose")) == min(MEASURED_BEST_WORKERS, cap)
+
+    def test_fallback_cap_is_clamped_too(self):
+        assert default_worker_count(WorkerCap(2, "fallback", "r")) == 2

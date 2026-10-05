@@ -34,7 +34,7 @@ AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
 import ui.session_state as session_state
 from common.pdb_geometry import compute_protein_center_and_box
-from ui.worker_cap import WorkerCap
+from ui.worker_cap import MEASURED_BEST_WORKERS, WorkerCap, default_worker_count
 
 APP_PATH = Path(__file__).resolve().parents[1] / "ui" / "app.py"
 FIXTURE_PDB = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
@@ -166,15 +166,23 @@ def test_fresh_page_renders_without_exception(app):
 
 def test_worker_cap_from_compose_shows_limit_caption(app, monkeypatch):
     monkeypatch.setattr("ui.session_state.WORKER_CAP", WorkerCap(10, "compose"))
+    # The widget default is frozen from the real cap at import time.
+    monkeypatch.setitem(
+        session_state._WIDGET_DEFAULTS, "param_max_workers",
+        default_worker_count(WorkerCap(10, "compose")),
+    )
 
     at = app.run()
 
     assert not at.exception
     assert any(
         "Docking service is limited to 10 CPUs (docker-compose.yml)" in c.value
+        and f"Benchmarked best: {MEASURED_BEST_WORKERS} workers" in c.value
         for c in at.caption
     )
     assert not any("CPU limit" in w.value for w in at.warning)
+    # Stage 14.3: a fresh session defaults to the measured best, not the cap.
+    assert at.number_input(key="param_max_workers").value == min(MEASURED_BEST_WORKERS, 10)
 
 
 def test_worker_cap_fallback_shows_warning_with_reason(app, monkeypatch):
@@ -182,7 +190,10 @@ def test_worker_cap_fallback_shows_warning_with_reason(app, monkeypatch):
     monkeypatch.setattr("ui.session_state.WORKER_CAP", WorkerCap(3, "fallback", reason))
     # The widget default is frozen from the real cap at import time; a
     # default above the patched max would make st.number_input raise.
-    monkeypatch.setitem(session_state._WIDGET_DEFAULTS, "param_max_workers", 3)
+    monkeypatch.setitem(
+        session_state._WIDGET_DEFAULTS, "param_max_workers",
+        default_worker_count(WorkerCap(3, "fallback", reason)),
+    )
 
     at = app.run()
 

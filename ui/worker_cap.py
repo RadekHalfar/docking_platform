@@ -15,6 +15,18 @@ import yaml
 
 _CPUS_KEY_PATH = ("services", "moldina-runner", "deploy", "resources", "limits", "cpus")
 
+# Measured default for "Max parallel workers" (Stage 14.3). Benchmarked
+# 2026-10-05 with moldina-runner limits cpus '10' / memory 8G, 50 ligands:
+# docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json, table in
+# docs/BATCH_DOCKING.md ("Benchmark baseline"). Rule: the smallest worker
+# count within 5% of the fastest wall clock (8 -> 24.3 s vs 10 -> 23.4 s).
+# Re-run benchmark_docking.py --sample-stats and update both numbers after
+# changing moldina-runner's resource limits.
+MEASURED_BEST_WORKERS = 8
+# Worst idle-subtracted peak memory per worker seen across all configurations
+# (611.5 MiB at 2 workers), rounded up — a sampled lower bound, not a hard limit.
+MEASURED_PEAK_MIB_PER_WORKER = 612
+
 _MEMORY_NOTE = (
     "Running many ligands in parallel increases memory usage — lower this if "
     "docking sessions start failing unexpectedly."
@@ -83,19 +95,28 @@ def detect_moldina_worker_cap(compose_path: Optional[Path] = None) -> WorkerCap:
     return WorkerCap(limit, "compose")
 
 
+def default_worker_count(worker_cap: WorkerCap) -> int:
+    """The GUI's default worker count: the measured best, never above the cap."""
+    return min(MEASURED_BEST_WORKERS, worker_cap.cap)
+
+
 def describe_worker_cap(worker_cap: WorkerCap) -> tuple[Optional[str], str]:
     """Return the GUI's (warning, caption) text for *worker_cap*.
 
     The warning is None unless the cap came from the fallback path.
     """
+    measured = (
+        f"Benchmarked best: {MEASURED_BEST_WORKERS} workers (up to "
+        f"~{MEASURED_PEAK_MIB_PER_WORKER} MiB memory each; see docs/BATCH_DOCKING.md)."
+    )
     if worker_cap.source == "compose":
         return None, (
             f"Docking service is limited to {worker_cap.cap} CPUs "
-            f"(docker-compose.yml). {_MEMORY_NOTE}"
+            f"(docker-compose.yml). {measured} {_MEMORY_NOTE}"
         )
     warning = (
         "Couldn't read the docking service's CPU limit from docker-compose.yml; "
         "showing this machine's core count instead. The real limit may be lower. "
         f"({worker_cap.reason})"
     )
-    return warning, _MEMORY_NOTE
+    return warning, f"{measured} {_MEMORY_NOTE}"

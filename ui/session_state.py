@@ -5,11 +5,11 @@ from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.settings import load_settings, save_settings
-from ui.worker_cap import detect_moldina_worker_cap
+from ui.worker_cap import default_worker_count, detect_moldina_worker_cap
 
 # Detected once at import time — the docking service's worker ceiling (and
-# where it came from), used to pre-fill/cap the "max parallel workers"
-# control and to explain that number in the GUI.
+# where it came from), used to cap the "max parallel workers" control, to
+# default it to min(measured best, cap) and to explain both in the GUI.
 WORKER_CAP = detect_moldina_worker_cap()
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
@@ -28,7 +28,7 @@ _WIDGET_DEFAULTS = {
     "param_exhaustiveness": "8",
     "param_cpu": "1",
     "param_parallel": False,
-    "param_max_workers": WORKER_CAP.cap,
+    "param_max_workers": default_worker_count(WORKER_CAP),
 }
 
 # Keyed widgets whose values must survive a run that stops (st.rerun())

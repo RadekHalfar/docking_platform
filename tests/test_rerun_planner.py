@@ -25,6 +25,7 @@ from services.llm_orchestrator.workflow_definition import (
         ({"box_size"}, ["dock", "visualize"]),
         ({"protein_id"}, ["get_input_files", "prepare_protein", "dock", "visualize"]),
         ({"exhaustiveness"}, ["dock", "visualize"]),
+        ({"docking_algorithm"}, ["dock", "visualize"]),
     ],
 )
 def test_compute_rerun_steps_map(changed_params, expected_steps):

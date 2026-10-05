@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
+
 
 WORKFLOW_STEPS: List[str] = [
     "get_input_files",
@@ -34,6 +36,7 @@ DEFAULT_PARAMETERS: Dict[str, object] = {
     "energy_range": 100.0,
     "parallel": False,
     "max_workers": 1,
+    "docking_algorithm": DEFAULT_DOCKING_ALGORITHM,
     "add_hydrogens": True,
     "remove_waters": True,
     "generate_3d": True,
@@ -79,6 +82,7 @@ PARAM_INVALIDATION_MAP: Dict[str, FrozenSet[str]] = {
     "energy_range": frozenset({"dock", "visualize"}),
     "parallel": frozenset({"dock", "visualize"}),
     "max_workers": frozenset({"dock", "visualize"}),
+    "docking_algorithm": frozenset({"dock", "visualize"}),
 }
 
 # File-based inputs invalidate exactly what their ID counterparts do --

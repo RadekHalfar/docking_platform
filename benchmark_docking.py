@@ -66,6 +66,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, DOCKING_ALGORITHMS
 from common.mcp_client import call_mcp_tool
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -350,25 +351,24 @@ def format_stats_columns(stats: Dict[str, float]) -> str:
 
 def run_docking(url, receptor, ligands, center, box_size, output_dir,
                  parallel, max_workers, exhaustiveness, population,
-                 num_modes, energy_range, timeout) -> dict:
-    return call_mcp_tool(
-        url, "run_docking",
-        {
-            "receptor_path": receptor,
-            "ligand_paths": ligands,
-            "output_dir": output_dir,
-            "center": list(center),
-            "box_size": list(box_size),
-            "cpu": 1,
-            "population": population,
-            "exhaustiveness": exhaustiveness,
-            "num_modes": num_modes,
-            "energy_range": energy_range,
-            "parallel": parallel,
-            "max_workers": max_workers,
-        },
-        timeout=timeout,
-    )
+                 num_modes, energy_range, timeout, docking_algorithm="moldina") -> dict:
+    arguments = {
+        "receptor_path": receptor,
+        "ligand_paths": ligands,
+        "output_dir": output_dir,
+        "center": list(center),
+        "box_size": list(box_size),
+        "cpu": 1,
+        "exhaustiveness": exhaustiveness,
+        "num_modes": num_modes,
+        "energy_range": energy_range,
+        "parallel": parallel,
+        "max_workers": max_workers,
+        "docking_algorithm": docking_algorithm,
+    }
+    if docking_algorithm == "moldina":  # PSO-only; Vina mode has no population
+        arguments["population"] = population
+    return call_mcp_tool(url, "run_docking", arguments, timeout=timeout)
 
 
 def run_timed(call: Callable[[], dict],
@@ -405,7 +405,9 @@ def main() -> None:
     parser.add_argument("--worker-counts", type=str, default="2,4,5,8,10",
                          help="Comma-separated worker counts to benchmark in parallel mode (default: 2,4,5,8,10)")
     parser.add_argument("--exhaustiveness", type=int, default=8)
-    parser.add_argument("--population", type=int, default=500)
+    parser.add_argument("--population", type=int, default=500, help="PSO population (Moldina mode only)")
+    parser.add_argument("--docking-algorithm", choices=DOCKING_ALGORITHMS, default=DEFAULT_DOCKING_ALGORITHM,
+                         help="Search to benchmark: 'moldina' (PSO) or 'vina' (Monte Carlo) (default: moldina)")
     parser.add_argument("--num-modes", type=int, default=15)
     parser.add_argument("--energy-range", type=float, default=100.0)
     parser.add_argument("--url", default=DEFAULT_URL, help=f"moldina_runner MCP URL (default: {DEFAULT_URL})")
@@ -457,7 +459,8 @@ def main() -> None:
     run_id = uuid.uuid4().hex[:8]
     timeout = max(300, args.timeout_per_ligand * len(ligands))
 
-    print(f"\nBenchmarking {len(ligands)} ligand(s) across {len(configs)} configuration(s): "
+    print(f"\nBenchmarking {len(ligands)} ligand(s) with docking_algorithm={args.docking_algorithm} "
+          f"across {len(configs)} configuration(s): "
           f"{', '.join(label for label, *_ in configs)}\n")
 
     rows = []
@@ -470,7 +473,7 @@ def main() -> None:
             lambda: run_docking(
                 args.url, receptor, ligands, center, box, output_dir,
                 parallel, workers, args.exhaustiveness, args.population,
-                args.num_modes, args.energy_range, timeout,
+                args.num_modes, args.energy_range, timeout, args.docking_algorithm,
             ),
             sampler,
         )
@@ -520,6 +523,7 @@ def main() -> None:
         payload = {
             "job_id": args.job_id, "num_ligands": len(ligands),
             "center": center, "box_size": box, "run_id": run_id,
+            "docking_algorithm": args.docking_algorithm,
             "results": rows,
         }
         if args.sample_stats:

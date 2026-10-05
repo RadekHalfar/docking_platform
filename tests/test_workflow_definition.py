@@ -4,7 +4,9 @@ import pytest
 
 from services.llm_orchestrator.workflow_definition import (
     CORE_PARAMS,
+    DEFAULT_PARAMETERS,
     REQUIRED_PARAMETERS_BY_STEP,
+    get_default_parameters,
 )
 
 
@@ -26,3 +28,9 @@ def test_core_params_subset_of_dock_step_requirements():
     assert CORE_PARAMS <= dock_required, (
         f"CORE_PARAMS has keys not in dock requirements: {CORE_PARAMS - dock_required}"
     )
+
+
+def test_docking_algorithm_defaults_to_moldina():
+    """Phase 15: sessions/parameters without the key read as Moldina (PSO)."""
+    assert DEFAULT_PARAMETERS["docking_algorithm"] == "moldina"
+    assert get_default_parameters()["docking_algorithm"] == "moldina"

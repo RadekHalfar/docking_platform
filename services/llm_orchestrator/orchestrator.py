@@ -533,6 +533,7 @@ class WorkflowOrchestrator:
                 
                 if self.verbosity != VERBOSITY_LOW:
                     logger.info(f"Docking parameters:")
+                    logger.info(f"  Algorithm: {params.get('docking_algorithm', 'moldina')}")
                     logger.info(f"  Center: {params['center']}")
                     logger.info(f"  Box Size: {params['box_size']}")
                     logger.info(f"  Exhaustiveness: {params.get('exhaustiveness', 8)}")
@@ -566,6 +567,7 @@ class WorkflowOrchestrator:
                         "energy_range": params.get("energy_range", 100.0),
                         "parallel": parallel,
                         "max_workers": max_workers,
+                        "docking_algorithm": params.get("docking_algorithm", "moldina"),
                     },
                     timeout=dock_timeout,
                 )

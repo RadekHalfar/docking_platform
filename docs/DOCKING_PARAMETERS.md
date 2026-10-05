@@ -206,9 +206,10 @@ Complete overview of all parameters used in the molecular docking workflow acros
 | `output_dir` | string | **Yes** | - | Directory for docking output files |
 | `center` | array | **Yes** | - | Search box center `[x, y, z]` in Angstroms |
 | `box_size` | array | **Yes** | - | Search box dimensions `[x, y, z]` in Angstroms |
-| `cpu` | integer | No | `1` | Number of CPU cores to use per ligand |
-| `population` | integer | No | `500` | PSO population size (min: 5) |
-| `exhaustiveness` | integer | No | `8` | Search exhaustiveness |
+| `docking_algorithm` | string | No | `"moldina"` | Search algorithm: `"moldina"` (PSO) or `"vina"` (Monte Carlo) — see below |
+| `cpu` | integer | No | `1` | Number of CPU cores to use per ligand (Vina mode only — PSO ignores it) |
+| `population` | integer | No | `500` | PSO population size (min: 5; Moldina mode only) |
+| `exhaustiveness` | integer | No | `8` | Search exhaustiveness (Vina mode only — PSO ignores it) |
 | `num_modes` | integer | No | `15` | Maximum number of binding modes |
 | `energy_range` | number | No | `100.0` | Max energy difference for modes (kcal/mol) |
 | `parallel` | boolean | No | `false` | Dock up to `max_workers` ligands concurrently instead of one at a time |
@@ -240,14 +241,38 @@ Complete overview of all parameters used in the molecular docking workflow acros
   - Too small: May miss optimal binding pose
   - Too large: Slower computation, less focused search
 
+#### `docking_algorithm` - Search Algorithm
+- **Values:** `"moldina"` (default) or `"vina"`. Aliases are accepted and
+  normalised (`pso`, `Moldina (PSO)` → `moldina`; `autodock vina`,
+  `monte carlo`, `Vina (Monte Carlo)` → `vina`, case-insensitive); anything
+  else is rejected — by the workflow parser's clarification prompt, and by
+  `run_docking` itself with a `ValueError`.
+- **What changes:** both modes run the same committed `moldina` binary with
+  the same `center.txt`. `"moldina"` adds `--population N --search_alg_PSO`
+  (Particle Swarm Optimization); `"vina"` omits both, so the binary runs
+  AutoDock Vina's own Monte Carlo search. See
+  [MOLDINA_DOCKING.md § Vina mode](MOLDINA_DOCKING.md#vina-mode) for exactly
+  which Vina that is.
+- **Which parameters apply:** `population` is PSO-only. `exhaustiveness` and
+  `cpu` are Vina-only: measured on the committed binary, PSO's run time and
+  search are unaffected by them (see the same section).
+- **Recorded:** in the dock result (`docking_algorithm` key) and in
+  `parameters.txt`. Changing it reruns dock and visualize only.
+- **Choosing:** PSO is far faster per ligand (seconds vs. ~1.5 minutes for
+  6lu7/ATP at the defaults) but in that comparison scored worse
+  (-4.3 vs. -5.8 kcal/mol); Vina's search is the more thorough one here.
+
 ### Performance Parameters
 
 #### `cpu` - CPU Cores
 - **Default/fixed via GUI:** `1` — not currently exposed as a GUI-tunable
-  setting (Moldina's own internal PSO parallelism isn't a priority right
-  now); only direct/CLI callers of `run_docking` can override it.
+  setting; only direct/CLI callers of `run_docking` can override it.
 - **Range:** 1 - number of available cores
-- **Impact:** More cores speeds up a single ligand's own search
+- **Impact:** Vina mode only — more cores speed up a single ligand's own
+  Monte Carlo search. PSO ignores it.
+- **Interaction with `max_workers`:** each parallel worker runs a process
+  using `cpu` cores, so the server clamps workers to
+  `CPU budget // cpu` (see below).
 
 #### `parallel` / `max_workers` - Concurrent Ligands
 - **Default:** `parallel=false` (sequential — one ligand docked at a time)
@@ -268,7 +293,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
 - **Server-side safety clamp:** `max_workers` is capped to the number of
   ligands in the batch and to `moldina-runner`'s real, schedulable CPU
   budget — `min(cgroup CPU quota, os.cpu_count())`, via
-  `_detect_effective_cpu_count()`. Neither number is trusted alone: Docker
+  `_detect_effective_cpu_count()` — divided by `cpu`, so workers × `cpu`
+  never exceeds it (e.g. a 10-CPU budget with `cpu=4` allows 2 workers). Neither number is trusted alone: Docker
   Compose's `deploy.resources.limits.cpus` is a scheduling quota, not a CPU
   mask, so `os.cpu_count()` doesn't reflect it and can report far more
   cores than are actually schedulable — but the configured quota isn't
@@ -284,7 +310,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
   modest and watch for failures on large batches.
 
 #### `population` - PSO Population Size
-- **Range:** 5 - 10000+
+- **Moldina (PSO) mode only** — not passed to the binary in Vina mode.
+- **Range:** 5 - 5000 (clamped)
 - **Default:** 500
 - **Impact:** 
   - Larger = better exploration, slower
@@ -295,7 +322,10 @@ Complete overview of all parameters used in the molecular docking workflow acros
   - Thorough: 1000-2000
 
 #### `exhaustiveness` - Search Thoroughness
-- **Range:** 1 - 100+
+- **Vina mode only** — measured on the committed binary, PSO's run time and
+  result don't change between 1 and 16 (it isn't even printed in the PSO
+  log header). It is still passed in both modes.
+- **Range:** 1 - 64 (clamped)
 - **Default:** 8
 - **Impact:**
   - Higher = more thorough search, slower
@@ -441,8 +471,9 @@ longer part of the default workflow.
 | | `ligand_paths` | - | Prepared PDBQT list |
 | | **`center`** | - | Must determine from structure |
 | | **`box_size`** | - | Must encompass binding site |
-| | `exhaustiveness` | `8` | Higher = better quality |
-| | `population` | `500` | PSO parameter |
+| | `docking_algorithm` | `"moldina"` | `"moldina"` (PSO) or `"vina"` (Monte Carlo) |
+| | `exhaustiveness` | `8` | Higher = better quality (Vina mode only) |
+| | `population` | `500` | PSO parameter (Moldina mode only) |
 | **Visualization** | `pose_results` | - | Docking output (`run_docking` results) |
 | | `output_dir` | - | Where to write converted pose files |
 | | `formats` | `["sdf", "pdb", "mol2"]` | PDBQT is always available too (native, no conversion) |

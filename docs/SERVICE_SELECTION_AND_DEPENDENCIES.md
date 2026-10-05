@@ -432,6 +432,7 @@ steps are re-executed. The rerun planner lives in
 | `energy_range` | | | | ✅ | ✅ |
 | `parallel` | | | | ✅ | ✅ |
 | `max_workers` | | | | ✅ | ✅ |
+| `docking_algorithm` | | | | ✅ | ✅ |
 
 Before a rerun starts, the planner checks that each planned step's required
 parameters are present (`missing_required_params()`). A local-file input

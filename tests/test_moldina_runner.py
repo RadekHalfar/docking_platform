@@ -19,7 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, mock_open
 
-from services.moldina_runner import MoldinaRunner, _detect_effective_cpu_count, _clamp_docking_params
+from services.moldina_runner import (
+    MoldinaRunner,
+    _build_docking_command,
+    _clamp_docking_params,
+    _detect_effective_cpu_count,
+)
 
 
 # Skip all tests if running on CI without WSL
@@ -1131,3 +1136,111 @@ class TestRunCancellable:
             assert _run_cancellable(["moldina"], stop_check=lambda: True) is None
         assert proc.terminated_requested is True
         assert proc.killed is True
+
+
+class TestDockingAlgorithm:
+    """Stage 15.1: docking_algorithm selects PSO ("moldina") or Monte Carlo ("vina")."""
+
+    _SHARED = dict(cpu=2, population=300, exhaustiveness=8, num_modes=9, energy_range=3.0)
+
+    @pytest.fixture
+    def runner(self, temp_dir, mock_platform_linux):
+        with patch.object(MoldinaRunner, '_find_moldina_executable', return_value='/usr/bin/Moldina'):
+            return MoldinaRunner(cache_dir=temp_dir)
+
+    @staticmethod
+    def _files(temp_dir, n_ligands=1):
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        Path(receptor).touch()
+        ligands = []
+        for i in range(n_ligands):
+            p = os.path.join(temp_dir, f"ligand{i}.pdbqt")
+            Path(p).touch()
+            ligands.append(p)
+        return receptor, ligands, os.path.join(temp_dir, "output")
+
+    def test_pso_command_has_population_and_pso_flag(self):
+        cmd = _build_docking_command("m", "r", "l", "c", "o", algorithm="moldina", **self._SHARED)
+        assert cmd[-3:] == ['--population', '300', '--search_alg_PSO']
+
+    def test_vina_command_omits_pso_flags(self):
+        cmd = _build_docking_command("m", "r", "l", "c", "o", algorithm="vina", **self._SHARED)
+        assert '--search_alg_PSO' not in cmd
+        assert '--population' not in cmd
+
+    def test_shared_flags_identical_in_both_modes(self):
+        pso = _build_docking_command("m", "r", "l", "c", "o", algorithm="moldina", **self._SHARED)
+        vina = _build_docking_command("m", "r", "l", "c", "o", algorithm="vina", **self._SHARED)
+        assert pso[:len(vina)] == vina
+        for flag, value in [('--cpu', '2'), ('--exhaustiveness', '8'), ('--num_modes', '9'),
+                            ('--energy_range', '3.0'), ('--config', 'c'), ('--out', 'o')]:
+            assert vina[vina.index(flag) + 1] == value
+
+    def test_default_is_pso(self, runner, temp_dir, mock_subprocess):
+        receptor, ligands, output_dir = self._files(temp_dir)
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        result = runner.run_moldina_docking(receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20))
+
+        assert '--search_alg_PSO' in mock_subprocess.run.call_args[0][0]
+        assert result["docking_algorithm"] == "moldina"
+        params = Path(output_dir, "parameters.txt").read_text()
+        assert "docking_algorithm = moldina" in params
+        assert "population = 500" in params
+        assert "search_alg_PSO" in params
+
+    def test_vina_mode_end_to_end(self, runner, temp_dir, mock_subprocess):
+        receptor, ligands, output_dir = self._files(temp_dir)
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        result = runner.run_moldina_docking(
+            receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20), docking_algorithm="vina",
+        )
+
+        cmd = mock_subprocess.run.call_args[0][0]
+        assert '--search_alg_PSO' not in cmd and '--population' not in cmd
+        assert result["docking_algorithm"] == "vina"
+        params = Path(output_dir, "parameters.txt").read_text()
+        assert "docking_algorithm = vina" in params
+        assert "population" not in params
+        assert "search_alg_PSO" not in params
+
+    def test_alias_is_normalised(self, runner, temp_dir, mock_subprocess):
+        receptor, ligands, output_dir = self._files(temp_dir)
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        result = runner.run_moldina_docking(
+            receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20), docking_algorithm="AutoDock Vina",
+        )
+
+        assert result["docking_algorithm"] == "vina"
+
+    def test_unknown_algorithm_raises_before_anything_runs(self, runner, temp_dir, mock_subprocess):
+        receptor, ligands, output_dir = self._files(temp_dir)
+
+        with pytest.raises(ValueError, match="Unknown docking_algorithm 'gnina'"):
+            runner.run_moldina_docking(
+                receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20), docking_algorithm="gnina",
+            )
+
+        assert not mock_subprocess.run.called
+        assert not os.path.exists(output_dir)
+
+    @pytest.mark.parametrize("cpu,expected_workers", [(1, 8), (2, 4), (4, 2), (8, 1)])
+    def test_workers_clamped_to_quota_divided_by_cpu(self, runner, temp_dir, mock_subprocess,
+                                                     cpu, expected_workers):
+        """workers × cpu never exceeds the container's CPU budget (finding 3)."""
+        receptor, ligands, output_dir = self._files(temp_dir, n_ligands=10)
+        mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
+
+        with patch('services.moldina_runner.ThreadPoolExecutor', wraps=ThreadPoolExecutor) as mock_pool, \
+                patch('services.moldina_runner._detect_effective_cpu_count', return_value=8):
+            runner.run_moldina_docking(
+                receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20),
+                cpu=cpu, parallel=True, max_workers=8, docking_algorithm="vina",
+            )
+
+        if expected_workers > 1:
+            mock_pool.assert_called_once_with(max_workers=expected_workers)
+        else:
+            mock_pool.assert_not_called()  # one worker runs the sequential loop

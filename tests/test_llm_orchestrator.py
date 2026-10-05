@@ -469,6 +469,94 @@ class TestWorkflowParser:
         assert result["parameters"]["cpu"] == DEFAULT_PARAMETERS["cpu"]
 
 
+class TestDockingAlgorithmParameter:
+    """Phase 15, Stage 15.1: docking_algorithm defaults, aliases and validation."""
+
+    _DOCK_PARAMS = {
+        "protein_id": "6lu7",
+        "ligand_ids": ["ATP"],
+        "center": [10, 20, 30],
+        "box_size": [25, 30, 35],
+    }
+
+    def _validate(self, **extra):
+        parser = WorkflowParser()
+        result = parser.validate_workflow(
+            {"services": ["dock"], "parameters": {**self._DOCK_PARAMS, **extra}}
+        )
+        return parser, result
+
+    def test_default_is_moldina(self):
+        _, result = self._validate()
+        assert result["parameters"]["docking_algorithm"] == "moldina"
+        assert result["missing_required"] == []
+
+    def test_alias_is_normalised(self):
+        _, result = self._validate(docking_algorithm="AutoDock Vina")
+        assert result["parameters"]["docking_algorithm"] == "vina"
+        assert result["missing_required"] == []
+
+    def test_unknown_value_is_reported_with_allowed_values(self):
+        parser, result = self._validate(docking_algorithm="gnina")
+        assert result["missing_required"] == ["docking_algorithm"]
+        assert parser.get_parameter_issue("docking_algorithm") == "invalid"
+        prompt = parser.format_missing_prompt()
+        assert "'gnina' is not recognised" in prompt
+        assert "'moldina'" in prompt and "'vina'" in prompt
+
+    def test_unknown_value_ignored_when_not_docking(self):
+        parser = WorkflowParser()
+        result = parser.validate_workflow(
+            {"services": ["get_input_files"],
+             "parameters": {"protein_id": "6lu7", "docking_algorithm": "gnina"}}
+        )
+        assert "docking_algorithm" not in result["missing_required"]
+
+    def test_update_parameters_normalises_alias_and_clears_missing(self):
+        parser, _ = self._validate(docking_algorithm="gnina")
+        parser.update_parameters({"docking_algorithm": "Monte Carlo"}, persist=False)
+        assert parser.parsed_workflow["parameters"]["docking_algorithm"] == "vina"
+        assert parser.get_missing_parameters() == []
+
+    def test_summary_shows_algorithm(self):
+        parser, _ = self._validate(docking_algorithm="vina")
+        assert "Docking Algorithm: vina" in parser.get_workflow_summary()
+
+    @pytest.mark.parametrize("params_extra,expected", [({}, "moldina"), ({"docking_algorithm": "vina"}, "vina")])
+    def test_orchestrator_passes_algorithm_to_run_docking(self, tmp_path, params_extra, expected):
+        params = {
+            "protein_id": "6lu7",
+            "ligand_ids": ["A"],
+            "center": [0.0, 0.0, 0.0],
+            "box_size": [20.0, 20.0, 20.0],
+            **params_extra,
+        }
+        state_manager = WorkflowStateManager(tmp_path / "algo_job")
+        state_manager.save_parameters_checkpoint(params, source="test")
+        state_manager.save_execution_state_checkpoint(
+            {
+                "prepared_protein": "/app/orchestrator_output/x/prepared/receptor.pdbqt",
+                "prepared_ligands": ["/app/orchestrator_output/x/prepared/A.pdbqt"],
+            },
+            step="prepare_protein",
+        )
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(
+            return_value={"status": "ok", "stopped": False, "successful": 1, "failed": 0,
+                          "errors": [], "results": [], "docking_algorithm": expected}
+        )
+
+        orchestrator.execute_workflow(
+            {"services": ["dock"], "parameters": params},
+            job_id="algo_job",
+            state_manager=state_manager,
+        )
+
+        tool, arguments = orchestrator.call_mcp_tool.call_args[0][1:3]
+        assert tool == "run_docking"
+        assert arguments["docking_algorithm"] == expected
+
+
 class TestWorkflowOrchestrator:
     """Test workflow orchestrator."""
     

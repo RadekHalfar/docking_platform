@@ -178,7 +178,9 @@ both can report far more cores than are actually available. The clamp therefore 
 cgroup quota directly
 (`services/moldina_runner/__init__.py:_detect_effective_cpu_count()`; cgroup v2's
 `cpu.max`, falling back to v1's `cpu.cfs_quota_us`/`cpu.cfs_period_us`) and takes
-`min(configured quota, os.cpu_count())` — never trusting either number alone. This
+`min(configured quota, os.cpu_count())` — never trusting either number alone — then
+divides that by the per-ligand `cpu`, so workers × `cpu` never exceeds it (this matters in
+Vina mode, whose search really uses `cpu` cores; PSO ignores `cpu`). This
 matters if you raise `cpus:` further: a higher quota doesn't require or reserve that many
 real cores, so deploying the same config on smaller hardware than it assumes (e.g.
 `cpus: '10'` run on a 4-core machine) would otherwise let the quota alone claim more
@@ -198,6 +200,9 @@ with `python3` (it needs `requests` and `docker` on PATH):
 python3 benchmark_docking.py --job-id <prepared job> --worker-counts 2,4,6,8,10 \
     --sample-stats --json-out bench.json
 ```
+
+`--docking-algorithm vina` benchmarks Vina's Monte Carlo search instead of PSO (the
+default); `--population` is then not sent.
 
 Memory is the residual risk, not CPU: a high worker count on a large batch can still
 exhaust `limits.memory`. The measured figure is in the baseline below. Use

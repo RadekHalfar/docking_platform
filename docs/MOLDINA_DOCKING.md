@@ -2,7 +2,7 @@
 
 ## Overview
 
-Moldina is an advanced molecular docking tool that uses Particle Swarm Optimization (PSO) for improved binding pose prediction. This guide covers using Moldina through the MCP server interface.
+Moldina is an advanced molecular docking tool that uses Particle Swarm Optimization (PSO) for improved binding pose prediction. The same binary also runs AutoDock Vina's own Monte Carlo search, selected per run with `docking_algorithm` (see [Vina mode](#vina-mode)). This guide covers using Moldina through the MCP server interface.
 
 ## What is Moldina?
 
@@ -22,6 +22,66 @@ Moldina builds on AutoDock Vina but replaces the iterated local search algorithm
 | Pose Diversity | Limited | More diverse |
 | Best For | High-throughput screening | Accurate binding prediction |
 
+The table above is the general literature view. What this platform's
+committed binary actually measured on 6lu7/ATP is in [Vina mode](#vina-mode)
+below, and it doesn't match every row.
+
+## Vina mode
+
+`run_docking` takes `docking_algorithm`: `"moldina"` (default) or `"vina"`.
+Both run the committed `moldina` binary, in the same container, with the
+same `center.txt` (center/size only) and the same shared flags. The only
+difference is on the command line (`_build_docking_command()` in
+`services/moldina_runner/__init__.py`):
+
+- `"moldina"` adds `--population N --search_alg_PSO`; the log header says
+  `Search Algorithm: Particle Swarm Optimization (Moldina)`.
+- `"vina"` omits both, and the binary runs its own Vina search; the log
+  header says `Search Algorithm: Monte Carlo (Vina Default)`.
+
+**Which Vina this is.** The binary reports `AutoDock Vina aea4fd5-mod` and
+offers AutoDock Vina **1.2.x** options (`--scoring vina|vinardo|ad4`,
+`--batch`, `--autobox`, `--max_evals`, `--min_rmsd`), and its Vina-mode
+output uses 1.2.x formatting (`Performing docking (random seed: …)`,
+3-decimal affinities). So "Vina" here is Vina 1.2.x's Monte Carlo search
+inside this Moldina fork — not Vina 1.1.2, and not an unmodified upstream
+Vina release. The fork's exact source commit is unknown
+([Moldina/README.md](../Moldina/README.md#provenance-of-the-committed-binary)).
+Vina-only options such as `--scoring` and `--seed` aren't exposed.
+
+**Which parameters apply** — measured on the committed binary (Stage 15.1,
+2026-10-05; 6lu7 receptor, ATP, center `[-10.8, 12.5, 68.9]`, box 22 Å,
+`num_modes=15`, `energy_range=100`, one ligand at a time, `moldina-runner`
+limited to 10 CPUs):
+
+| Mode | exhaustiveness | cpu | Wall time | Best affinity (kcal/mol) |
+|------|---------------:|----:|----------:|-------------------------:|
+| PSO  | 1  | 1 | 3.4 s | -4.2 |
+| PSO  | 8  | 1 | 2.5 s | -4.3 |
+| PSO  | 16 | 1 | 2.7 s | -4.0 |
+| PSO  | 8  | 4 | 2.9 s | -4.8 |
+| Vina | 2  | 1 | 33.7 s | -5.49 |
+| Vina | 8  | 1 | 106.1 s | -5.80 |
+| Vina | 8  | 4 | 33.7 s | -5.79 |
+
+- PSO ignores `exhaustiveness` and `cpu`: run time stays flat between 1 and 16,
+  and between 1 and 4 CPUs. The PSO log header doesn't print
+  `Exhaustiveness` either. The best-affinity spread (-4.0 to -4.8) is PSO's
+  run-to-run variation, not a trend. `population` is the PSO knob.
+- Vina honours both: run time scales with `exhaustiveness` (2 → 8: ×3.1)
+  and drops with `cpu` (1 → 4: ×3.1 faster at the same result).
+- In this comparison Vina found clearly better poses (-5.8 vs. about -4.3)
+  at about 40× the per-ligand time with `cpu=1`. One ligand and one target
+  isn't a general verdict. Benchmark your own system before choosing.
+- Because Vina really uses `cpu` cores per ligand, the server clamps
+  parallel workers to `CPU budget // cpu`
+  ([DOCKING_PARAMETERS.md](DOCKING_PARAMETERS.md#docking_algorithm---search-algorithm)).
+
+Both modes write the same `<ligand>_out.pdbqt` and
+`<ligand>_moldina_output.log`. The result dict and `parameters.txt` record
+`docking_algorithm`. `parameters.txt` lists `population`/`search_alg_PSO` only
+for PSO runs.
+
 ## Installation
 
 **Docker users don't need any of this** — a prebuilt binary is already
@@ -35,7 +95,7 @@ source (e.g. to update it, or to run Moldina outside Docker).
 
 ```bash
 # Clone Moldina repository
-git clone https://github.com/psa-lab/Moldina.git
+git clone https://github.com/It4innovations/moldina-multiple-ligand-molecular-docking-over-autodock-vina.git Moldina
 cd Moldina
 
 # Build Moldina
@@ -56,7 +116,7 @@ Moldina is Linux-only, so on Windows we use WSL (Windows Subsystem for Linux):
 wsl --install Ubuntu
 
 # In WSL Ubuntu terminal:
-git clone https://github.com/psa-lab/Moldina.git
+git clone https://github.com/It4innovations/moldina-multiple-ligand-molecular-docking-over-autodock-vina.git Moldina
 cd Moldina
 mkdir -p build/linux/release
 cd build/linux/release
@@ -85,12 +145,14 @@ results = runner.run_moldina_docking(
     population=500,              # PSO population size
     exhaustiveness=8,            # Search exhaustiveness
     num_modes=15,                # Max binding modes
-    energy_range=100.0           # Energy range (kcal/mol)
+    energy_range=100.0,          # Energy range (kcal/mol)
+    docking_algorithm="moldina", # "moldina" (PSO) or "vina" (Monte Carlo)
 )
 
 # Results structure
 {
     "status": "ok",          # "stopped" when a stop was requested mid-run
+    "docking_algorithm": "moldina",  # which search produced these results
     "stopped": False,        # True when the run was stopped (see below)
     "skipped": 0,            # ligands never docked because of the stop
     "receptor": "protein.pdbqt",
@@ -162,7 +224,8 @@ response = requests.post(
                 "population": 500,
                 "exhaustiveness": 8,
                 "num_modes": 15,
-                "energy_range": 100.0
+                "energy_range": 100.0,
+                "docking_algorithm": "moldina"  # or "vina"
             }
         },
         "id": 1
@@ -175,8 +238,9 @@ result = response.json()
 ## Configuration Parameters
 
 `run_docking` takes `receptor_path`, `ligand_paths`, `output_dir`, `center`,
-`box_size` (required) and `cpu`, `population`, `exhaustiveness`, `num_modes`,
-`energy_range`, `parallel`, `max_workers` (optional). For the full parameter
+`box_size` (required) and `docking_algorithm`, `cpu`, `population`,
+`exhaustiveness`, `num_modes`, `energy_range`, `parallel`, `max_workers`
+(optional). For the full parameter
 table — types, defaults, ranges, tuning guidance, and the `cpu` vs.
 `parallel`/`max_workers` distinction — see
 [DOCKING_PARAMETERS.md § Stage 4: Molecular Docking](DOCKING_PARAMETERS.md#stage-4-molecular-docking).
@@ -470,7 +534,7 @@ for result in docking_results["results"]:
 
 ## References
 
-- Moldina GitHub: https://github.com/psa-lab/Moldina
+- Moldina GitHub: https://github.com/It4innovations/moldina-multiple-ligand-molecular-docking-over-autodock-vina
 - PSO Algorithm: Kennedy & Eberhart (1995)
 - AutoDock Vina: Trott & Olson (2010)
 - WSL Documentation: https://docs.microsoft.com/en-us/windows/wsl/

@@ -439,14 +439,13 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
 
 ### Tool: run_docking
 
-Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows or natively on Linux.
+Performs molecular docking with the Moldina binary via WSL on Windows or natively on Linux, using either Moldina's PSO search (`docking_algorithm="moldina"`, default) or the binary's AutoDock Vina Monte Carlo search (`docking_algorithm="vina"`) — see [MOLDINA_DOCKING.md § Vina mode](MOLDINA_DOCKING.md#vina-mode).
 
 **Docking Process:**
-1. Generate Moldina configuration file
-2. Create ligands list file
-3. Execute Moldina with PSO parameters
-4. Parse docking results and affinities
-5. Return sorted results (best affinity first)
+1. Write the search box to `center.txt` and the run's settings to `parameters.txt`
+2. Run one Moldina process per ligand (PSO mode adds `--population N --search_alg_PSO`; Vina mode omits both)
+3. Parse docking results and affinities
+4. Return sorted results (best affinity first)
 
 **Parameters:**
 
@@ -457,11 +456,14 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
 | `output_dir` | string | Yes | Directory for output files |
 | `center` | array | Yes | Search box center coordinates `[x, y, z]` in Angstroms |
 | `box_size` | array | Yes | Search box dimensions `[x, y, z]` in Angstroms |
-| `cpu` | integer | No | Number of CPUs to use (default: 1) |
-| `population` | integer | No | PSO population size (default: 500, min: 5) |
-| `exhaustiveness` | integer | No | Search exhaustiveness (default: 8) |
+| `docking_algorithm` | string | No | `"moldina"` (PSO, default) or `"vina"` (Monte Carlo); aliases such as `"pso"`/`"autodock vina"` are normalised, anything else is an error |
+| `cpu` | integer | No | Number of CPUs per ligand (default: 1; Vina mode only — PSO ignores it) |
+| `population` | integer | No | PSO population size (default: 500, min: 5; Moldina mode only) |
+| `exhaustiveness` | integer | No | Search exhaustiveness (default: 8; Vina mode only — PSO ignores it) |
 | `num_modes` | integer | No | Maximum binding modes to output (default: 15) |
 | `energy_range` | number | No | Max energy difference for modes in kcal/mol (default: 100.0) |
+| `parallel` | boolean | No | Dock up to `max_workers` ligands concurrently (default: false) |
+| `max_workers` | integer | No | Concurrent ligands when `parallel` is true (default: 1); clamped to the ligand count and to the container's CPU budget divided by `cpu` |
 
 **Request Example:**
 ```json
@@ -480,6 +482,7 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
       "output_dir": "/data/jobs/job_001/docking",
       "center": [10.5, 20.3, -5.2],
       "box_size": [25.0, 30.0, 35.0],
+      "docking_algorithm": "moldina",
       "cpu": 1,
       "population": 500,
       "exhaustiveness": 16,
@@ -498,6 +501,7 @@ Performs molecular docking using Moldina (PSO-based docking) via WSL on Windows 
   "result": {
     "status": "ok",
     "stopped": false,
+    "docking_algorithm": "moldina",
     "skipped": 0,
     "receptor": "/data/jobs/job_001/prepared/6lu7.pdbqt",
     "total": 2,

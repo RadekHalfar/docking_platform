@@ -175,3 +175,17 @@ class TestFormatting:
     def test_columns_in_mib(self):
         stats = bench.summarize_samples([(200 * MIB, 1.0)], idle_bytes=0, effective_workers=2)
         assert bench.format_stats_columns(stats).split() == ["200.0", "200.0", "100.0"]
+
+
+class TestRunDockingArguments:
+    """Stage 15.1: --docking-algorithm is sent; population only in PSO mode."""
+
+    @pytest.mark.parametrize("algorithm,has_population", [("moldina", True), ("vina", False)])
+    def test_population_only_for_pso(self, monkeypatch, algorithm, has_population):
+        sent = {}
+        monkeypatch.setattr(bench, "call_mcp_tool",
+                            lambda url, tool, arguments, timeout: sent.update(arguments) or {})
+        bench.run_docking("http://x", "r", ["l"], (0, 0, 0), (20, 20, 20), "/out",
+                          False, 1, 8, 500, 15, 100.0, 60, docking_algorithm=algorithm)
+        assert sent["docking_algorithm"] == algorithm
+        assert ("population" in sent) is has_population

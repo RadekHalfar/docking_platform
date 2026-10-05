@@ -3,13 +3,15 @@ Moldina Runner Service
 
 This service runs Moldina for molecular docking calculations using WSL on Windows.
 Moldina is an advanced molecular docking tool using Particle Swarm Optimization (PSO)
-built on top of AutoDock Vina.
+built on top of AutoDock Vina. The same binary also runs the classic Vina
+(1.1.2-era) Monte Carlo search when the PSO flags are omitted -- selected
+with ``docking_algorithm`` (see ``common/docking_algorithm.py``).
 
 On Windows: Uses WSL (Windows Subsystem for Linux) to run Moldina
 On Linux: Runs Moldina directly
 
 Tool: run_docking
-- Performs molecular docking with Moldina (PSO-based optimization)
+- Performs molecular docking with Moldina (PSO, default) or Vina (Monte Carlo)
 - Requires prepared PDBQT files for receptor and ligands
 - Returns docking results with binding affinities and poses
 """
@@ -31,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Callable, Dict, List, Optional, Any, Tuple
 
+from common.docking_algorithm import DOCKING_ALGORITHMS, normalize_docking_algorithm
 from common.docking_stop import docking_stop_requested
 from common.utils import ensure_directory, compute_file_checksum
 
@@ -131,6 +134,43 @@ def _clamp_docking_params(
             *requested, *clamped,
         )
     return clamped
+
+
+def _build_docking_command(
+    moldina_path: str,
+    receptor: str,
+    ligand: str,
+    config: str,
+    out: str,
+    *,
+    algorithm: str,
+    cpu: int,
+    population: int,
+    exhaustiveness: int,
+    num_modes: int,
+    energy_range: float,
+) -> List[str]:
+    """Build one ligand's Moldina command line.
+
+    ``algorithm`` is a canonical name from ``DOCKING_ALGORITHMS``. PSO
+    ("moldina") adds ``--population`` and ``--search_alg_PSO``; without
+    them the binary runs Vina's Monte Carlo search ("vina"). The remaining
+    flags are shared by both modes.
+    """
+    cmd = [
+        moldina_path,
+        '--receptor', receptor,
+        '--ligand', ligand,
+        '--config', config,
+        '--out', out,
+        '--cpu', str(cpu),
+        '--exhaustiveness', str(exhaustiveness),
+        '--num_modes', str(num_modes),
+        '--energy_range', str(energy_range),
+    ]
+    if algorithm == "moldina":
+        cmd += ['--population', str(population), '--search_alg_PSO']
+    return cmd
 
 
 def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
@@ -430,6 +470,7 @@ class MoldinaRunner:
         energy_range: float,
         progress: "_DockingProgress",
         stop_check: Callable[[], bool] = lambda: False,
+        algorithm: str = "moldina",
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
         """
         Dock a single ligand against the already-prepared receptor/config.
@@ -462,19 +503,11 @@ class MoldinaRunner:
         else:
             output_prefix_wsl = os.path.abspath(output_prefix)
 
-        moldina_cmd = [
-            self.moldina_path,
-            '--receptor', receptor_wsl,
-            '--ligand', ligand_wsl,
-            '--config', config_wsl,
-            '--out', output_prefix_wsl,
-            '--cpu', str(cpu),
-            '--population', str(population),
-            '--exhaustiveness', str(exhaustiveness),
-            '--num_modes', str(num_modes),
-            '--energy_range', str(energy_range),
-            '--search_alg_PSO',
-        ]
+        moldina_cmd = _build_docking_command(
+            self.moldina_path, receptor_wsl, ligand_wsl, config_wsl, output_prefix_wsl,
+            algorithm=algorithm, cpu=cpu, population=population,
+            exhaustiveness=exhaustiveness, num_modes=num_modes, energy_range=energy_range,
+        )
 
         try:
             if self.is_windows:
@@ -532,7 +565,8 @@ class MoldinaRunner:
         num_modes: int = 15,
         energy_range: float = 100.0,
         parallel: bool = False,
-        max_workers: int = 1
+        max_workers: int = 1,
+        docking_algorithm: str = "moldina",
     ) -> Dict[str, Any]:
         """
         Run Moldina docking.
@@ -544,7 +578,7 @@ class MoldinaRunner:
             center: (x, y, z) coordinates of search box center
             box_size: (x, y, z) dimensions of search box in Angstroms
             cpu: Number of CPUs to use per ligand
-            population: Population size for PSO (minimum 5)
+            population: Population size for PSO (minimum 5; unused in Vina mode)
             exhaustiveness: Search exhaustiveness
             num_modes: Maximum number of binding modes
             energy_range: Maximum energy difference for modes (kcal/mol)
@@ -552,10 +586,16 @@ class MoldinaRunner:
                 one at a time (default: False, i.e. sequential)
             max_workers: Maximum number of ligands to dock concurrently when
                 parallel is True — clamped to this process's own CPU count
-                and to the number of ligands, whichever is smaller
+                divided by ``cpu`` (so workers × cpu never oversubscribes
+                it) and to the number of ligands, whichever is smallest
+            docking_algorithm: "moldina" (PSO, default) or "vina" (the
+                binary's classic Monte Carlo search); aliases accepted by
+                ``normalize_docking_algorithm``. Anything else raises
+                ValueError before any file is written.
 
         Returns:
-            Dictionary with docking results. ``stopped`` is True when a stop
+            Dictionary with docking results, including the canonical
+            ``docking_algorithm`` that produced them. ``stopped`` is True when a stop
             was requested mid-run (a ``STOP_REQUESTED`` flag file appeared in
             *output_dir*, see ``common/docking_stop.py``): no further ligands
             were started and running Moldina processes were killed.
@@ -572,6 +612,13 @@ class MoldinaRunner:
         similar-but-smaller memory risk, which is why the worker count is
         opt-in and capped rather than unbounded.
         """
+        algorithm = normalize_docking_algorithm(docking_algorithm)
+        if algorithm is None:
+            raise ValueError(
+                f"Unknown docking_algorithm {docking_algorithm!r}; expected one of "
+                + ", ".join(repr(a) for a in DOCKING_ALGORITHMS)
+            )
+
         ensure_directory(output_dir)
 
         cpu, population, exhaustiveness, num_modes, energy_range = _clamp_docking_params(
@@ -605,17 +652,20 @@ size_z = {box_size[2]}
         # Save parameters summary (informational; one Moldina invocation per ligand below)
         params_path = os.path.join(output_dir, "parameters.txt")
         with open(params_path, 'w') as f:
-            f.write("# Moldina run parameters\n")
+            f.write("# Docking run parameters\n")
+            f.write(f"docking_algorithm = {algorithm}\n")
             f.write(f"receptor = {receptor_wsl}\n")
             for lig in ligand_paths:
                 f.write(f"ligand = {lig}\n")
             f.write(f"config = {config_wsl}\n")
             f.write(f"cpu = {cpu}\n")
-            f.write(f"population = {population}\n")
+            if algorithm == "moldina":
+                f.write(f"population = {population}\n")
             f.write(f"exhaustiveness = {exhaustiveness}\n")
             f.write(f"num_modes = {num_modes}\n")
             f.write(f"energy_range = {energy_range}\n")
-            f.write(f"search_alg_PSO\n")
+            if algorithm == "moldina":
+                f.write("search_alg_PSO\n")
 
         results: List[Dict[str, Any]] = []
         errors: List[str] = []
@@ -638,16 +688,18 @@ size_z = {box_size[2]}
         # Clamped to this container's real, schedulable CPU budget (not
         # whatever the caller guessed, and not os.cpu_count() — see
         # _detect_effective_cpu_count()'s docstring for why that's unsafe)
-        # and to the number of ligands — no point spinning up more workers
-        # than either allows.
+        # divided by the CPUs each worker's process uses, so workers × cpu
+        # never oversubscribes it (Vina's Monte Carlo search really is
+        # multithreaded), and to the number of ligands — no point spinning
+        # up more workers than any of these allows.
         workers = (
-            max(1, min(max_workers, _detect_effective_cpu_count(), len(ligand_paths)))
+            max(1, min(max_workers, _detect_effective_cpu_count() // cpu, len(ligand_paths)))
             if parallel and len(ligand_paths) > 1
             else 1
         )
 
         logger.info(
-            f"Running Moldina docking for {len(ligand_paths)} ligand(s), "
+            f"Running {algorithm} docking for {len(ligand_paths)} ligand(s), "
             + (f"up to {workers} at a time" if workers > 1 else "one at a time")
         )
 
@@ -658,7 +710,7 @@ size_z = {box_size[2]}
                 ligand_result, error, stopped = self._dock_one_ligand(
                     ligand_path, idx, receptor_wsl, config_wsl, output_dir,
                     cpu, population, exhaustiveness, num_modes, energy_range,
-                    progress, _stop_check,
+                    progress, _stop_check, algorithm,
                 )
                 _record(ligand_result, error, stopped)
                 if stopped:
@@ -672,7 +724,7 @@ size_z = {box_size[2]}
                         self._dock_one_ligand,
                         ligand_path, idx, receptor_wsl, config_wsl, output_dir,
                         cpu, population, exhaustiveness, num_modes, energy_range,
-                        progress, _stop_check,
+                        progress, _stop_check, algorithm,
                     )
                     for idx, ligand_path in enumerate(ligand_paths, start=1)
                 ]
@@ -703,6 +755,7 @@ size_z = {box_size[2]}
         return {
             "status": "stopped" if was_stopped else "ok",
             "stopped": was_stopped,
+            "docking_algorithm": algorithm,
             "skipped": skipped,
             "receptor": receptor_path,
             "total": len(ligand_paths),

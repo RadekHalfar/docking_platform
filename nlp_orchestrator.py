@@ -43,6 +43,7 @@ from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS
 from services.llm_orchestrator.interactive_session import resolve_prepared_protein_pdb_path
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
+from common.docking_algorithm import normalize_docking_algorithm
 from common.pdb_geometry import compute_protein_center_and_box
 from common.path_utils import from_container_path
 from common.utils import generate_job_id
@@ -1683,6 +1684,16 @@ def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) ->
                         parser_obj.update_parameters({"box_size": sizes})
                         break
                     print("Box size format is invalid. Please use exactly 3 numbers, for example: 25,30,35")
+
+        elif current_param == "docking_algorithm":
+            while True:
+                value = normalize_docking_algorithm(
+                    input("Which docking algorithm: 'moldina' (PSO) or 'vina' (Monte Carlo)? ").strip()
+                )
+                if value:
+                    parser_obj.update_parameters({"docking_algorithm": value})
+                    break
+                print("Please answer 'moldina' or 'vina'.")
 
         # Re-run validation so missing/invalid fields are always refreshed.
         parser_obj.validate_workflow(

@@ -2,7 +2,8 @@
 Moldina Runner MCP Server
 
 This server provides Moldina molecular docking capabilities through MCP.
-It handles PSO-based docking with WSL support on Windows.
+It runs Moldina's PSO search (default) or the binary's classic Vina Monte
+Carlo search, with WSL support on Windows.
 """
 import os
 import logging
@@ -47,7 +48,8 @@ class MoldinaRunnerServer(MCPServer):
             num_modes: int = 15,
             energy_range: float = 100.0,
             parallel: bool = False,
-            max_workers: int = 1
+            max_workers: int = 1,
+            docking_algorithm: str = "moldina",
         ) -> dict:
             """Handler for run_docking tool."""
             # Initialize runner if needed
@@ -66,7 +68,7 @@ class MoldinaRunnerServer(MCPServer):
             center_tuple = tuple(center)
             box_size_tuple = tuple(box_size)
             
-            logger.info(f"Running Moldina docking: {len(ligand_paths)} ligands")
+            logger.info(f"Running {docking_algorithm} docking: {len(ligand_paths)} ligands")
             
             # Run docking
             results = self.runner.run_moldina_docking(
@@ -81,7 +83,8 @@ class MoldinaRunnerServer(MCPServer):
                 num_modes=num_modes,
                 energy_range=energy_range,
                 parallel=parallel,
-                max_workers=max_workers
+                max_workers=max_workers,
+                docking_algorithm=docking_algorithm,
             )
             
             return results
@@ -90,7 +93,9 @@ class MoldinaRunnerServer(MCPServer):
             self,
             name="run_docking",
             description=(
-                "Run Moldina molecular docking with PSO optimization. Ligands are docked "
+                "Run molecular docking with the Moldina binary, using Moldina's PSO search "
+                "(docking_algorithm='moldina', default) or classic Vina Monte Carlo search "
+                "(docking_algorithm='vina'). Ligands are docked "
                 "one at a time by default; set parallel=true to dock up to max_workers "
                 "ligands concurrently instead."
             ),
@@ -102,12 +107,13 @@ class MoldinaRunnerServer(MCPServer):
                 ("center", "array", "Search box center coordinates [x, y, z]", True),
                 ("box_size", "array", "Search box dimensions [x, y, z] in Angstroms", True),
                 ("cpu", "number", "Number of CPUs to use (default: 1)"),
-                ("population", "number", "Population size for PSO (default: 500, min: 5)"),
+                ("population", "number", "Population size for PSO, ignored in Vina mode (default: 500, min: 5)"),
                 ("exhaustiveness", "number", "Search exhaustiveness (default: 8)"),
                 ("num_modes", "number", "Maximum number of binding modes (default: 15)"),
                 ("energy_range", "number", "Maximum energy difference for modes in kcal/mol (default: 100.0)"),
                 ("parallel", "boolean", "Dock ligands concurrently, up to max_workers at a time, instead of one at a time (default: false)"),
-                ("max_workers", "number", "Maximum number of ligands to dock concurrently when parallel is true (default: 1)"),
+                ("max_workers", "number", "Maximum number of ligands to dock concurrently when parallel is true; clamped to the container's CPU quota divided by cpu (default: 1)"),
+                ("docking_algorithm", "string", "Search algorithm: 'moldina' (PSO, default) or 'vina' (classic Monte Carlo search)"),
             ]),
         )
 

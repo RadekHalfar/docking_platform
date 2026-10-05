@@ -21,7 +21,19 @@ concurrent workers can end up heavily contending for a much smaller real
 CPU budget than they think they have — each one slower than it would be
 running alone, not faster.
 
+With --sample-stats it also samples the container's memory and CPU%
+(`docker stats --no-stream`) on a background thread while each
+configuration runs, and reports peak/mean memory plus peak memory per
+worker: (peak - idle baseline) / min(workers, num_ligands). Each
+`docker stats --no-stream` call itself takes ~1-2 s, so the sampled peak is
+a lower bound of the true peak, not an exact value. ContainerStatsSampler is
+container-agnostic and importable, so other measurements can reuse it.
+
 Prerequisites:
+- Run on the host, from the repo root, with Python 3.8+ and `requests`
+  installed (`common.mcp_client` needs it) — use `python3`, since bare
+  `python` may be Python 2. `docker` must be on PATH for the CPU probe and
+  --sample-stats (both shell out to `docker exec` / `docker stats`).
 - The Docker Compose stack is running (`docker compose up -d`), specifically
   moldina-runner (port 8004 published to the host).
 - An existing job under orchestrator_output/ that completed at least the
@@ -29,9 +41,10 @@ Prerequisites:
   completed docking itself).
 
 Usage:
-    python benchmark_docking.py --job-id job_20260730_071828_e45eb3
-    python benchmark_docking.py --job-id JOB_ID --num-ligands 10 --worker-counts 2,4,8
-    python benchmark_docking.py --job-id JOB_ID --center 10 20 30 --box 25 30 35
+    python3 benchmark_docking.py --job-id job_20260730_071828_e45eb3
+    python3 benchmark_docking.py --job-id JOB_ID --num-ligands 10 --worker-counts 2,4,8
+    python3 benchmark_docking.py --job-id JOB_ID --center 10 20 30 --box 25 30 35
+    python3 benchmark_docking.py --job-id JOB_ID --worker-counts 2,4,8 --sample-stats --json-out bench.json
 
 Every configuration re-docks the SAME ligand set, so total run time is
 roughly (1 sequential baseline + one run per --worker-counts entry) times
@@ -44,11 +57,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from common.mcp_client import call_mcp_tool
 
@@ -57,6 +72,131 @@ OUTPUT_BASE_HOST = REPO_ROOT / "orchestrator_output"
 CONTAINER_OUTPUT_BASE = "/app/orchestrator_output"
 DEFAULT_URL = "http://localhost:8004"
 DEFAULT_CONTAINER_NAME = "mcp-moldina-runner"
+
+MIB = 1024 ** 2
+STATS_FORMAT = "{{.MemUsage}}|{{.CPUPerc}}"
+DOCKER_STATS_TIMEOUT = 15
+
+# docker stats prints binary units (MiB/GiB); some engines print decimal ones (MB/GB).
+_SIZE_UNITS = {
+    "B": 1,
+    "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3, "TiB": 1024 ** 4,
+    "kB": 1000, "KB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4,
+}
+_SIZE_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)\s*$")
+
+
+def parse_size_to_bytes(text: str) -> int:
+    """'35.25MiB' -> bytes. Raises ValueError on an unknown unit or format."""
+    match = _SIZE_RE.match(text)
+    if not match or match.group(2) not in _SIZE_UNITS:
+        raise ValueError(f"Unrecognised size: {text!r}")
+    return int(float(match.group(1)) * _SIZE_UNITS[match.group(2)])
+
+
+def parse_stats_line(line: str) -> Tuple[int, float]:
+    """Parse one `docker stats` line in STATS_FORMAT, e.g.
+    '35.25MiB / 8GiB|0.02%' -> (memory used in bytes, CPU percent).
+
+    Raises ValueError on malformed input, including the '--' docker prints
+    for a container that isn't running."""
+    mem_part, sep, cpu_part = line.strip().partition("|")
+    if not sep:
+        raise ValueError(f"Unrecognised docker stats line: {line!r}")
+    used, slash, _limit = mem_part.partition("/")
+    if not slash:
+        raise ValueError(f"Unrecognised memory usage: {mem_part!r}")
+    cpu_text = cpu_part.strip()
+    if not cpu_text.endswith("%"):
+        raise ValueError(f"Unrecognised CPU percent: {cpu_part!r}")
+    return parse_size_to_bytes(used), float(cpu_text[:-1])
+
+
+def summarize_samples(samples: List[Tuple[int, float]], idle_bytes: int,
+                      effective_workers: int) -> Dict[str, float]:
+    """Peak/mean memory and CPU over (mem_bytes, cpu_percent) samples.
+
+    Per-worker memory subtracts the idle container's baseline before
+    dividing, so the runner's own fixed footprint isn't charged to workers.
+    No samples -> just {"n_samples": 0}; no zeros are made up."""
+    if not samples:
+        return {"n_samples": 0}
+    mems = [m for m, _ in samples]
+    cpus = [c for _, c in samples]
+    peak = max(mems)
+    return {
+        "n_samples": len(samples),
+        "peak_mem_bytes": peak,
+        "mean_mem_bytes": sum(mems) / len(mems),
+        "peak_mem_per_worker_bytes": max(peak - idle_bytes, 0) / effective_workers,
+        "peak_cpu_percent": max(cpus),
+        "mean_cpu_percent": sum(cpus) / len(cpus),
+    }
+
+
+def read_container_stats(container_name: str) -> Tuple[int, float]:
+    """One `docker stats --no-stream` sample -> (memory bytes, CPU percent)."""
+    out = subprocess.run(
+        ["docker", "stats", "--no-stream", "--format", STATS_FORMAT, container_name],
+        capture_output=True, text=True, timeout=DOCKER_STATS_TIMEOUT,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"docker stats failed for '{container_name}': {out.stderr.strip()}")
+    return parse_stats_line(out.stdout)
+
+
+class ContainerStatsSampler:
+    """Sample a container's memory/CPU% on a background thread.
+
+        with ContainerStatsSampler("mcp-moldina-runner", interval=1.0) as s:
+            do_work()
+        s.summary(idle_bytes, effective_workers)
+
+    A failed sample (docker missing, container gone, unparseable output) is
+    counted in `errors` with its reason kept in `last_error`, so callers can
+    report how trustworthy the numbers are instead of silently getting fewer
+    samples."""
+
+    def __init__(self, container_name: str, interval: float = 1.0):
+        self.container_name = container_name
+        self.interval = interval
+        self.samples: List[Tuple[int, float]] = []
+        self.errors = 0
+        self.last_error: Optional[str] = None
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.samples.append(read_container_stats(self.container_name))
+            except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as e:
+                self.errors += 1
+                self.last_error = str(e)
+            self._stop.wait(self.interval)
+
+    def start(self) -> "ContainerStatsSampler":
+        self._thread = threading.Thread(target=self._run, name="container-stats", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+
+    def __enter__(self) -> "ContainerStatsSampler":
+        return self.start()
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+
+    def summary(self, idle_bytes: int, effective_workers: int) -> Dict[str, float]:
+        stats = summarize_samples(self.samples, idle_bytes, effective_workers)
+        stats["sample_errors"] = self.errors
+        if self.last_error:
+            stats["last_sample_error"] = self.last_error
+        return stats
 
 
 def load_job_files(job_id: str, num_ligands: Optional[int]) -> Tuple[str, List[str]]:
@@ -174,6 +314,27 @@ def probe_container_cpu(container_name: str) -> None:
     print("(compare the effective CPU budget above against the worker counts benchmarked below)")
 
 
+def format_stats(stats: Dict[str, float]) -> str:
+    """One-line human summary of a ContainerStatsSampler.summary() dict."""
+    errors = stats.get("sample_errors", 0)
+    error_note = f", {errors} failed sample(s): {stats.get('last_sample_error')}" if errors else ""
+    if not stats["n_samples"]:
+        return f"memory: no samples{error_note}"
+    return (f"memory: peak {stats['peak_mem_bytes'] / MIB:.1f} MiB, "
+            f"mean {stats['mean_mem_bytes'] / MIB:.1f} MiB, "
+            f"peak/worker {stats['peak_mem_per_worker_bytes'] / MIB:.1f} MiB   "
+            f"CPU: peak {stats['peak_cpu_percent']:.0f}%, mean {stats['mean_cpu_percent']:.0f}%   "
+            f"({stats['n_samples']} sample(s){error_note})")
+
+
+def format_stats_columns(stats: Dict[str, float]) -> str:
+    """The summary table's three memory columns ('-' when nothing was sampled)."""
+    if not stats["n_samples"]:
+        return f"{'-':>12}{'-':>12}{'-':>12}"
+    return (f"{stats['peak_mem_bytes'] / MIB:>12.1f}{stats['mean_mem_bytes'] / MIB:>12.1f}"
+            f"{stats['peak_mem_per_worker_bytes'] / MIB:>12.1f}")
+
+
 def run_docking(url, receptor, ligands, center, box_size, output_dir,
                  parallel, max_workers, exhaustiveness, population,
                  num_modes, energy_range, timeout) -> dict:
@@ -222,6 +383,12 @@ def main() -> None:
     parser.add_argument("--timeout-per-ligand", type=int, default=180,
                          help="HTTP timeout budget per ligand, in seconds (default: 180)")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path to also write results as JSON")
+    parser.add_argument("--sample-stats", action="store_true",
+                         help="Sample the container's memory/CPU%% with `docker stats` during each "
+                              "configuration and report peak/mean memory and peak memory per worker")
+    parser.add_argument("--stats-interval", type=float, default=1.0,
+                         help="Seconds between --sample-stats samples, on top of the ~1-2 s each "
+                              "`docker stats` call takes (default: 1.0)")
     args = parser.parse_args()
 
     receptor, ligands = load_job_files(args.job_id, args.num_ligands)
@@ -243,6 +410,15 @@ def main() -> None:
     if not args.skip_cpu_diagnostics:
         probe_container_cpu(args.container_name)
 
+    idle_bytes = None
+    if args.sample_stats:
+        try:
+            idle_bytes, idle_cpu = read_container_stats(args.container_name)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as e:
+            raise SystemExit(f"--sample-stats: could not read the idle baseline from "
+                             f"'{args.container_name}' ({e}). Is 'docker' on PATH and the container running?")
+        print(f"\nIdle baseline of {args.container_name}: {idle_bytes / MIB:.1f} MiB, {idle_cpu:.2f}% CPU")
+
     worker_counts = [int(w.strip()) for w in args.worker_counts.split(",") if w.strip()]
     configs = [("sequential", False, 1)] + [(f"parallel_{w}", True, w) for w in worker_counts]
 
@@ -257,6 +433,9 @@ def main() -> None:
     for label, parallel, workers in configs:
         output_dir = f"{CONTAINER_OUTPUT_BASE}/_benchmark_{run_id}/{label}"
         print(f"--- {label} (parallel={parallel}, max_workers={workers}) ---")
+        sampler = ContainerStatsSampler(args.container_name, args.stats_interval) if args.sample_stats else None
+        if sampler:
+            sampler.start()
         start = time.monotonic()
         try:
             result = run_docking(
@@ -264,11 +443,25 @@ def main() -> None:
                 parallel, workers, args.exhaustiveness, args.population,
                 args.num_modes, args.energy_range, timeout,
             )
+            error = None
         except Exception as e:  # noqa: BLE001 - report and continue to the next configuration
-            print(f"  FAILED: {e}\n")
-            rows.append({"label": label, "workers": workers, "error": str(e)})
-            continue
+            error = str(e)
+        finally:
+            if sampler:
+                sampler.stop()
         elapsed = time.monotonic() - start
+
+        # Sampled for failed runs too: a memory-pressure failure is exactly when the numbers matter.
+        stats = sampler.summary(idle_bytes, max(1, min(workers, len(ligands)))) if sampler else None
+        if stats is not None:
+            print(f"  {format_stats(stats)}")
+        if error is not None:
+            print(f"  FAILED: {error}\n")
+            row = {"label": label, "workers": workers, "error": error}
+            if stats is not None:
+                row["stats"] = stats
+            rows.append(row)
+            continue
 
         successful = result.get("successful", 0)
         failed = result.get("failed", 0)
@@ -280,30 +473,46 @@ def main() -> None:
         print(f"  wall time: {elapsed:.1f}s   ({per_ligand:.1f}s/ligand)   "
               f"successful={successful} failed={failed}   speedup vs sequential: {speedup:.2f}x\n")
 
-        rows.append({
+        row = {
             "label": label, "workers": workers, "elapsed_seconds": elapsed,
             "seconds_per_ligand": per_ligand, "speedup_vs_sequential": speedup,
             "successful": successful, "failed": failed,
-        })
+        }
+        if stats is not None:
+            row["stats"] = stats
+        rows.append(row)
 
-    print("=" * 78)
-    print(f"{'config':<16}{'workers':>8}{'wall (s)':>12}{'s/ligand':>12}{'speedup':>10}")
-    print("-" * 78)
+    width = 114 if args.sample_stats else 78
+    stats_header = f"{'peak MiB':>12}{'mean MiB':>12}{'MiB/worker':>12}" if args.sample_stats else ""
+    print("=" * width)
+    print(f"{'config':<16}{'workers':>8}{'wall (s)':>12}{'s/ligand':>12}{'speedup':>10}{stats_header}")
+    print("-" * width)
     for row in rows:
         if "error" in row:
             print(f"{row['label']:<16}{row['workers']:>8}   ERROR: {row['error']}")
         else:
+            stats_cols = format_stats_columns(row["stats"]) if args.sample_stats else ""
             print(f"{row['label']:<16}{row['workers']:>8}{row['elapsed_seconds']:>12.1f}"
-                  f"{row['seconds_per_ligand']:>12.1f}{row['speedup_vs_sequential']:>9.2f}x")
-    print("=" * 78)
+                  f"{row['seconds_per_ligand']:>12.1f}{row['speedup_vs_sequential']:>9.2f}x{stats_cols}")
+    print("=" * width)
+    if args.sample_stats:
+        print("Memory is sampled (each `docker stats` call takes ~1-2 s), so peaks are lower bounds. "
+              "MiB/worker = (peak - idle) / min(workers, ligands).")
     print(f"\nOutput written under orchestrator_output/_benchmark_{run_id}/ (safe to delete afterward).")
 
     if args.json_out:
-        args.json_out.write_text(json.dumps({
+        payload = {
             "job_id": args.job_id, "num_ligands": len(ligands),
             "center": center, "box_size": box, "run_id": run_id,
             "results": rows,
-        }, indent=2))
+        }
+        if args.sample_stats:
+            payload.update({
+                "container_name": args.container_name,
+                "stats_interval": args.stats_interval,
+                "idle_mem_bytes": idle_bytes,
+            })
+        args.json_out.write_text(json.dumps(payload, indent=2))
         print(f"Wrote JSON results to {args.json_out}")
 
 

@@ -183,11 +183,26 @@ meaningfully outnumber the real quota (severe scheduling contention), so this cl
 exists to prevent exactly that, not just to avoid overshoot. A dedicated benchmark script
 (`benchmark_docking.py`, repo root) measures sequential vs. parallel wall-clock time
 across worker counts against a previously-completed job's already-prepared files, and
-also prints this same cgroup-quota-vs-`os.cpu_count()` diagnostic.
+also prints this same cgroup-quota-vs-`os.cpu_count()` diagnostic. Run it on the host
+with `python3` (it needs `requests` and `docker` on PATH):
 
-Memory is the residual risk, not CPU: no numeric per-ligand memory budget is known, so a
-high worker count on a large batch can still exhaust `limits.memory`. Start with a modest
-worker count, re-run `benchmark_docking.py` after changing `cpus`/`memory`, and reduce the
-worker count if docking jobs start failing unexpectedly. This setting is available via the
+```bash
+python3 benchmark_docking.py --job-id <prepared job> --worker-counts 2,4,6,8,10 \
+    --sample-stats --json-out bench.json
+```
+
+Memory is the residual risk, not CPU: no numeric per-ligand memory budget is recorded yet,
+so a high worker count on a large batch can still exhaust `limits.memory`. Use
+`--sample-stats` to measure it. It polls `docker stats --no-stream` against
+`moldina-runner` on a background thread while each configuration runs, failed ones
+included, and adds peak memory, mean memory and peak memory per worker to the table and
+the JSON. Peak memory per worker is `(peak − idle baseline) / min(workers, ligands)`. The
+idle baseline is one sample taken before the first configuration. If the server clamps the
+worker count further to the CPU quota printed above, the real per-worker figure is higher.
+Each `docker stats` call takes about 1–2 s, so the peaks are sampled lower bounds rather
+than exact values, and very short runs get only a few samples. Failed samples are counted
+and reported, not hidden. Start with a modest worker count, re-run the benchmark with
+`--sample-stats` after changing `cpus`/`memory`, and reduce the worker count if docking
+jobs start failing unexpectedly. This setting is available via the
 `parallel`/`max_workers` parameters on the `run_docking` MCP tool for CLI/direct callers
 too — both default to off/1 (sequential) if omitted.

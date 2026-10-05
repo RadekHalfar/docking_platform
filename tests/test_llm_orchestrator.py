@@ -472,23 +472,23 @@ class TestWorkflowParser:
 class TestWorkflowOrchestrator:
     """Test workflow orchestrator."""
     
-    def test_init(self):
+    def test_init(self, tmp_path):
         """Test orchestrator initialization."""
-        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         
-        assert orchestrator.output_base == Path("./test_output").resolve()
+        assert orchestrator.output_base == tmp_path.resolve()
         assert "rcsb_downloader" in orchestrator.services
         assert "moldina_runner" in orchestrator.services
 
-    def test_orchestrator_default_service_urls_match_workflow_definition(self):
+    def test_orchestrator_default_service_urls_match_workflow_definition(self, tmp_path):
         """Orchestrator should source service URLs from centralized metadata."""
-        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         assert orchestrator.services == get_service_urls_from_env()
 
-    def test_orchestrator_service_urls_allow_env_override(self, monkeypatch):
+    def test_orchestrator_service_urls_allow_env_override(self, monkeypatch, tmp_path):
         """Service URL env variables should override centralized defaults."""
         monkeypatch.setenv("MCP_RCSB_DOWNLOADER_URL", "http://example.local:9001")
-        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         assert orchestrator.services["rcsb_downloader"] == "http://example.local:9001"
     
     @patch('services.llm_orchestrator.orchestrator.requests.Session.get')
@@ -1082,7 +1082,7 @@ class TestIntegration:
     """Integration tests for full workflow."""
     
     @patch('services.llm_orchestrator.orchestrator.requests.Session.post')
-    def test_full_workflow_mock(self, mock_mcp_post, make_mcp_response):
+    def test_full_workflow_mock(self, mock_mcp_post, make_mcp_response, tmp_path):
         """Test full workflow with mocked services."""
         workflow_json = {
             "services": ["get_input_files"],
@@ -1114,7 +1114,7 @@ class TestIntegration:
         assert not parser.has_missing_parameters()
         
         # Execute (mocked)
-        orchestrator = WorkflowOrchestrator(output_base="./test_output")
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         results = orchestrator.execute_workflow(workflow, job_id="test_integration")
         
         assert results["job_id"] == "test_integration"

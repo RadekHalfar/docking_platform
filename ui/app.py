@@ -39,7 +39,7 @@ from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
 from ui.results import build_comparison_html, make_affinity_chart_figure
 from ui.session_state import (
-    DETECTED_CPU_COUNT,
+    WORKER_CAP,
     apply_parsed_params,
     apply_settings,
     clear_box_picker_state,
@@ -48,6 +48,7 @@ from ui.session_state import (
     load_session_params,
     start_new_session,
 )
+from ui.worker_cap import describe_worker_cap
 
 st.set_page_config(
     layout="wide",
@@ -1315,14 +1316,13 @@ def render_parameters_panel() -> None:
             "Max parallel workers",
             key="param_max_workers",
             min_value=1,
-            max_value=DETECTED_CPU_COUNT,
+            max_value=WORKER_CAP.cap,
             disabled=not st.session_state.get("param_parallel", False),
         )
-        st.caption(
-            f"{DETECTED_CPU_COUNT} CPU core(s) detected on this machine. Running many "
-            "ligands in parallel increases memory usage — lower this if docking sessions "
-            "start failing unexpectedly."
-        )
+        cap_warning, cap_caption = describe_worker_cap(WORKER_CAP)
+        if cap_warning:
+            st.warning(cap_warning)
+        st.caption(cap_caption)
 
     st.divider()
     st.text_input(

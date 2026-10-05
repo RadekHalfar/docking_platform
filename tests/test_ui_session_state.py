@@ -165,10 +165,10 @@ def test_load_session_params_resets_widgets_the_loaded_params_lack():
 def test_load_session_params_sets_parallel_widgets_clamped():
     session_state.init()
     session_state.load_session_params(
-        {"protein_id": "6lu7", "parallel": True, "max_workers": session_state.DETECTED_CPU_COUNT + 50}
+        {"protein_id": "6lu7", "parallel": True, "max_workers": session_state.WORKER_CAP.cap + 50}
     )
     assert st.session_state.param_parallel is True
-    assert st.session_state.param_max_workers == session_state.DETECTED_CPU_COUNT
+    assert st.session_state.param_max_workers == session_state.WORKER_CAP.cap
 
 
 # ---------------------------------------------------------------------------

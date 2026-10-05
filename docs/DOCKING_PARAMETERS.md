@@ -257,10 +257,11 @@ Complete overview of all parameters used in the molecular docking workflow acros
 - **GUI:** "Parallel ligand docking" checkbox + "Max parallel workers" number
   input in the Advanced expander, pre-filled/capped from `moldina-runner`'s
   configured `deploy.resources.limits.cpus` in `docker-compose.yml` (parsed
-  directly by `ui/session_state.py:_detect_moldina_worker_cap()`, since it's
+  directly by `ui/worker_cap.py::detect_moldina_worker_cap()`, since it's
   bind-mounted into the `ui` container) — falls back to the `ui` container's
-  own `os.cpu_count()` only if the compose file can't be found/parsed. Either
-  way this is a convenience suggestion only, not authoritative (see below)
+  own `os.cpu_count()` only if the compose file can't be found/parsed, and
+  then shows a warning with the reason. Either way this is a convenience
+  suggestion only, not authoritative (see below)
 - **Server-side safety clamp:** `max_workers` is capped to the number of
   ligands in the batch and to `moldina-runner`'s real, schedulable CPU
   budget — `min(cgroup CPU quota, os.cpu_count())`, via

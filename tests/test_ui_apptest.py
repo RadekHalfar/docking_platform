@@ -32,7 +32,9 @@ import pytest
 st = pytest.importorskip("streamlit")
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
+import ui.session_state as session_state
 from common.pdb_geometry import compute_protein_center_and_box
+from ui.worker_cap import WorkerCap
 
 APP_PATH = Path(__file__).resolve().parents[1] / "ui" / "app.py"
 FIXTURE_PDB = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
@@ -156,6 +158,41 @@ def test_fresh_page_renders_without_exception(app):
     assert "Input & Parameters" in subheaders
     assert "Results" in subheaders
     assert any("No completed sessions yet" in c.value for c in at.sidebar.caption)
+
+
+# ---------------------------------------------------------------------------
+# Worker cap (Stage 14.1)
+# ---------------------------------------------------------------------------
+
+def test_worker_cap_from_compose_shows_limit_caption(app, monkeypatch):
+    monkeypatch.setattr("ui.session_state.WORKER_CAP", WorkerCap(10, "compose"))
+
+    at = app.run()
+
+    assert not at.exception
+    assert any(
+        "Docking service is limited to 10 CPUs (docker-compose.yml)" in c.value
+        for c in at.caption
+    )
+    assert not any("CPU limit" in w.value for w in at.warning)
+
+
+def test_worker_cap_fallback_shows_warning_with_reason(app, monkeypatch):
+    reason = "docker-compose.yml not found at /nowhere/docker-compose.yml"
+    monkeypatch.setattr("ui.session_state.WORKER_CAP", WorkerCap(3, "fallback", reason))
+    # The widget default is frozen from the real cap at import time; a
+    # default above the patched max would make st.number_input raise.
+    monkeypatch.setitem(session_state._WIDGET_DEFAULTS, "param_max_workers", 3)
+
+    at = app.run()
+
+    assert not at.exception
+    warnings = [w.value for w in at.warning]
+    assert any(
+        "Couldn't read the docking service's CPU limit" in w and reason in w
+        for w in warnings
+    )
+    assert at.number_input(key="param_max_workers").max == 3
 
 
 # ---------------------------------------------------------------------------

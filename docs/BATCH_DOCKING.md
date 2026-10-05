@@ -144,11 +144,14 @@ These are also the values the GUI reads to size its parallel-worker control — 
 
 The GUI's Advanced expander has a **"Parallel ligand docking"** checkbox and a **"Max
 parallel workers"** number input, pre-filled/capped from `moldina-runner`'s configured
-`limits.cpus` above (`ui/session_state.py:_detect_moldina_worker_cap()`, which parses
+`limits.cpus` above (`ui/worker_cap.py::detect_moldina_worker_cap()`, which parses
 `docker-compose.yml` directly — bind-mounted into the `ui` container alongside the rest
-of the repo). It falls back to the `ui` container's own `os.cpu_count()` only if the
-compose file can't be found or parsed, so a parsing failure never blocks GUI startup —
-but note this is still just a **UX suggestion**, not the authoritative limit; the real
+of the repo). The caption under the control says so: "Docking service is limited to N
+CPUs (docker-compose.yml)". It falls back to the `ui` container's own `os.cpu_count()`
+only if the compose file can't be found or parsed, or has no positive `limits.cpus`, so
+a parsing failure never blocks GUI startup. The fallback is not silent: the expander
+shows a warning that the CPU limit couldn't be read (with the reason) and that the real
+limit may be lower. Note this is still just a **UX suggestion**, not the authoritative limit; the real
 enforcement happens server-side (below). When enabled, up to that many ligands are docked
 concurrently — each is still a fully independent, separately-timed-out Moldina process
 (never batched), so this is running several single-ligand invocations at once rather than

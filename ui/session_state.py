@@ -7,9 +7,10 @@ from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.settings import load_settings, save_settings
 from ui.worker_cap import detect_moldina_worker_cap
 
-# Detected once at import time — used to pre-fill/cap the "max parallel
-# workers" control with a reasonable, machine-appropriate default.
-DETECTED_CPU_COUNT = detect_moldina_worker_cap()
+# Detected once at import time — the docking service's worker ceiling (and
+# where it came from), used to pre-fill/cap the "max parallel workers"
+# control and to explain that number in the GUI.
+WORKER_CAP = detect_moldina_worker_cap()
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
 _WIDGET_DEFAULTS = {
@@ -27,7 +28,7 @@ _WIDGET_DEFAULTS = {
     "param_exhaustiveness": "8",
     "param_cpu": "1",
     "param_parallel": False,
-    "param_max_workers": DETECTED_CPU_COUNT,
+    "param_max_workers": WORKER_CAP.cap,
 }
 
 # Keyed widgets whose values must survive a run that stops (st.rerun())
@@ -231,5 +232,5 @@ def load_session_params(loaded_params: dict) -> None:
         # Clamped to the widget's own bounds (a checkpoint may come from a
         # machine with more cores than this one).
         st.session_state["param_max_workers"] = min(
-            max(1, int(loaded_params["max_workers"])), DETECTED_CPU_COUNT
+            max(1, int(loaded_params["max_workers"])), WORKER_CAP.cap
         )

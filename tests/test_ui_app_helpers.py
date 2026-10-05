@@ -112,31 +112,50 @@ def test_apply_viewer_click_fills_in_the_shown_size_when_unset():
     assert [st.session_state[k] for k in app._BOX_WIDGET_KEYS[3:]] == ["20.000"] * 3
 
 
+def _set_box_size(x, y, z):
+    st.session_state.param_box_x, st.session_state.param_box_y, st.session_state.param_box_z = x, y, z
+
+
+def _box_size_fields():
+    return [st.session_state[k] for k in app._BOX_WIDGET_KEYS[3:]]
+
+
+def test_apply_viewer_click_replaces_an_undrawable_size_with_the_placeholder():
+    # The viewer draws the placeholder for "0, 20, 20" -- so that is what a
+    # click must dock (Phase 14 R1), not the 0 it kept before.
+    _set_box_size("0", "20", "20")
+
+    app._apply_viewer_click([1.0, 2.0, 3.0])
+
+    assert _box_size_fields() == ["20.000"] * 3
+
+
 def test_step_box_size_changes_one_axis():
-    st.session_state.param_box_x = "25"
-    st.session_state.param_box_y = "25"
+    _set_box_size("25", "25", "25")
 
     app._step_box_size(1, 1.0)
 
-    assert st.session_state["param_box_x"] == "25"
-    assert st.session_state["param_box_y"] == "26.000"
+    assert _box_size_fields() == ["25", "26.000", "25"]
 
 
 def test_step_box_size_stops_at_the_minimum():
-    st.session_state.param_box_z = "1.5"
+    _set_box_size("20", "20", "1.5")
 
     app._step_box_size(2, -1.0)
 
     assert st.session_state["param_box_z"] == "1.000"
 
 
-@pytest.mark.parametrize("value", ["", "abc"])
-def test_step_box_size_steps_from_the_placeholder_when_unset(value):
-    st.session_state.param_box_x = value
+@pytest.mark.parametrize("sizes", [("", "", ""), ("abc", "20", "20"), ("0", "20", "20"), ("25", "", "")])
+def test_step_box_size_steps_from_the_placeholder_when_undrawable(sizes):
+    # Stepping one axis of a size the viewer can't draw left it undrawable
+    # (the button seemed dead); the step now fills in the placeholder it
+    # was showing on all three axes (Phase 14 R1).
+    _set_box_size(*sizes)
 
     app._step_box_size(0, 1.0)
 
-    assert st.session_state["param_box_x"] == "21.000"
+    assert _box_size_fields() == ["21.000", "20.000", "20.000"]
 
 
 # ---------------------------------------------------------------------------

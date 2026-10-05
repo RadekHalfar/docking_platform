@@ -129,6 +129,45 @@ class TestContainerStatsSampler:
         sampler.stop()
 
 
+class _SlowStopSampler:
+    """Stands in for ContainerStatsSampler whose stop() waits out an
+    in-flight `docker stats` call."""
+
+    def __init__(self, stop_seconds):
+        self.stop_seconds = stop_seconds
+        self.entered = self.exited = False
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, *exc):
+        time.sleep(self.stop_seconds)
+        self.exited = True
+
+
+class TestRunTimed:
+    def test_wall_time_excludes_sampler_shutdown(self):
+        # Phase 14 R1: the wall time used to be taken after sampler.stop(),
+        # so up to one docker-stats call (~1-2 s) was counted as docking time.
+        sampler = _SlowStopSampler(0.5)
+        result, error, elapsed = bench.run_timed(lambda: {"successful": 1}, sampler)
+        assert (result, error) == ({"successful": 1}, None)
+        assert sampler.entered and sampler.exited
+        assert elapsed < 0.25
+
+    def test_failure_is_reported_not_raised(self):
+        def boom():
+            raise RuntimeError("MCP call failed")
+
+        result, error, elapsed = bench.run_timed(boom, _SlowStopSampler(0))
+        assert (result, error) == (None, "MCP call failed")
+        assert elapsed >= 0
+
+    def test_without_sampler(self):
+        assert bench.run_timed(lambda: {"x": 1})[:2] == ({"x": 1}, None)
+
+
 class TestFormatting:
     def test_columns_dash_without_samples(self):
         assert bench.format_stats_columns({"n_samples": 0}).split() == ["-", "-", "-"]

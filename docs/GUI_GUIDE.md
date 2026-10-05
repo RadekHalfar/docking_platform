@@ -399,8 +399,9 @@ no separate step.
 
 While the Box size fields are empty (or hold something that isn't a
 positive number), the viewer draws a 20 Å placeholder and says so under
-the viewer; a click or a − / + step fills that 20 Å size in, so the box
-you saw is the box that gets docked.
+the viewer; a click or a − / + step fills that 20 Å size into all three
+fields (a step then changes its own axis, e.g. **X +** gives 21 / 20 / 20),
+so the box you saw is the box that gets docked.
 
 This is a lighter, purely in-browser alternative to the CLI's
 `pymol-interactive`-based box selection (see

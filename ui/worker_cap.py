@@ -20,12 +20,17 @@ _CPUS_KEY_PATH = ("services", "moldina-runner", "deploy", "resources", "limits",
 # docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json, table in
 # docs/BATCH_DOCKING.md ("Benchmark baseline"). Rule: the smallest worker
 # count within 5% of the fastest wall clock (8 -> 24.3 s vs 10 -> 23.4 s).
-# Re-run benchmark_docking.py --sample-stats and update both numbers after
-# changing moldina-runner's resource limits.
+# Re-run benchmark_docking.py --sample-stats and update all three numbers after
+# changing moldina-runner's resource limits; describe_worker_cap() says so in
+# the GUI when the detected cap no longer matches MEASURED_AT_CPUS.
+# tests/test_worker_cap.py re-derives the two measurements from the JSON (and
+# from its Review Stage R1 re-run, ..._r1_rerun.json, which gave the same).
 MEASURED_BEST_WORKERS = 8
 # Worst idle-subtracted peak memory per worker seen across all configurations
 # (611.5 MiB at 2 workers), rounded up — a sampled lower bound, not a hard limit.
 MEASURED_PEAK_MIB_PER_WORKER = 612
+# moldina-runner's limits.cpus when the two numbers above were measured.
+MEASURED_AT_CPUS = 10
 
 _MEMORY_NOTE = (
     "Running many ligands in parallel increases memory usage — lower this if "
@@ -58,24 +63,41 @@ def detect_moldina_worker_cap(compose_path: Optional[Path] = None) -> WorkerCap:
     container's own core count, so the GUI doesn't invite worker counts that
     just get silently clamped down server-side anyway.
 
+    Mirrors the server's own rule: a fractional quota is floored, never
+    below 1, and the result is never above this machine's core count (the
+    ui and moldina-runner containers share the host, and the server takes
+    min(quota, os.cpu_count()) too).
+
     Falls back to os.cpu_count() if the compose file can't be read or parsed,
     or has no usable limit — never blocks startup. The fallback is returned
     explicitly (``source="fallback"`` plus a ``reason``) rather than
     swallowed, so the GUI can tell the user the number may be too high.
+
+    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): this reads the
+    *configured* limit, a copy of what the server computes. It can only
+    drift from the server's real ceiling if moldina-runner stops running on
+    this host with this compose file (a remote/HPC runner, a renamed
+    service). If that happens, have moldina-runner report its effective
+    worker count (MoldinaRunner._detect_effective_cpu_count()) over MCP and
+    query it here instead, keeping this file read only as the fallback.
     """
     if compose_path is None:
         compose_path = Path(__file__).resolve().parent.parent / "docker-compose.yml"
 
+    machine_cpus = os.cpu_count() or 1
+
     def fallback(reason: str) -> WorkerCap:
-        return WorkerCap(os.cpu_count() or 1, "fallback", reason)
+        return WorkerCap(machine_cpus, "fallback", reason)
 
     try:
-        with open(compose_path) as f:
+        with open(compose_path, encoding="utf-8") as f:
             compose = yaml.safe_load(f)
     except FileNotFoundError:
         return fallback(f"docker-compose.yml not found at {compose_path}")
     except OSError as e:
         return fallback(f"couldn't read {compose_path}: {e}")
+    except UnicodeDecodeError:
+        return fallback(f"{compose_path} is not UTF-8 text")
     except yaml.YAMLError:
         return fallback(f"{compose_path} is not valid YAML")
 
@@ -87,12 +109,12 @@ def detect_moldina_worker_cap(compose_path: Optional[Path] = None) -> WorkerCap:
         return fallback(f"no {'.'.join(_CPUS_KEY_PATH)} in docker-compose.yml")
 
     try:
-        limit = int(float(cpus))
+        quota = float(cpus)
     except (TypeError, ValueError):
         return fallback(f"limits.cpus value {cpus!r} is not a number")
-    if limit <= 0:
+    if not 0 < quota < float("inf"):  # also rejects nan
         return fallback(f"limits.cpus is {cpus!r}, not a positive number")
-    return WorkerCap(limit, "compose")
+    return WorkerCap(min(max(1, int(quota)), machine_cpus), "compose")
 
 
 def default_worker_count(worker_cap: WorkerCap) -> int:
@@ -103,15 +125,21 @@ def default_worker_count(worker_cap: WorkerCap) -> int:
 def describe_worker_cap(worker_cap: WorkerCap) -> tuple[Optional[str], str]:
     """Return the GUI's (warning, caption) text for *worker_cap*.
 
-    The warning is None unless the cap came from the fallback path.
+    The warning is None unless the cap came from the fallback path. The
+    benchmark sentence names the CPU limit it was measured at whenever the
+    detected cap differs from it, since the numbers may not hold there.
     """
+    if worker_cap.source == "compose" and worker_cap.cap == MEASURED_AT_CPUS:
+        conditions = ""
+    else:
+        conditions = f" at a {MEASURED_AT_CPUS}-CPU limit, which may not hold here"
     measured = (
-        f"Benchmarked best: {MEASURED_BEST_WORKERS} workers (up to "
+        f"Benchmarked best{conditions}: {MEASURED_BEST_WORKERS} workers (sampled peak "
         f"~{MEASURED_PEAK_MIB_PER_WORKER} MiB memory each; see docs/BATCH_DOCKING.md)."
     )
     if worker_cap.source == "compose":
         return None, (
-            f"Docking service is limited to {worker_cap.cap} CPUs "
+            f"Docking service is limited to {worker_cap.cap} CPU{'' if worker_cap.cap == 1 else 's'} "
             f"(docker-compose.yml). {measured} {_MEMORY_NOTE}"
         )
     warning = (

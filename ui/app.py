@@ -127,6 +127,13 @@ def _collect_form_params() -> dict:
     return params
 
 
+def _sync_form_into_params() -> dict:
+    """Fold the form into ``st.session_state.params`` (which also holds
+    upload paths and chat-parsed values the form doesn't) and return a copy."""
+    st.session_state.params.update(_collect_form_params())
+    return st.session_state.params.copy()
+
+
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
 def _find_receptor_pdb_for_geometry() -> Path | None:
@@ -289,9 +296,7 @@ def _on_chat_submit(user_message: str) -> None:
 # ── Run / Reset ───────────────────────────────────────────────────────────────
 
 def _handle_run_docking() -> None:
-    form_params = _collect_form_params()
-    st.session_state.params.update(form_params)
-    params = st.session_state.params.copy()
+    params = _sync_form_into_params()
 
     session = st.session_state.interactive_session
     if session.has_active_job():
@@ -360,6 +365,14 @@ def _params_as_checkpointed(params: dict) -> dict:
     "changes" them to None -- a bogus redock plan and a checkpoint that
     silently drops them (2026-10-01), and a Save Session that could never
     say "no changes" (Stage 13.4 finding).
+
+    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): every GUI path
+    that diffs or stores params must remember to call this (today: redock
+    and Save Session). The root fix is to normalize inside the shared diff
+    (compute_changed_params) or in WorkflowStateManager on save -- which
+    also changes the CLI. Do that when a third GUI caller of
+    compute_changed_params / save_draft_parameters is added, or when a
+    "changed to None" diff turns up on the CLI side.
     """
     return {**get_default_parameters(), **params}
 
@@ -375,8 +388,7 @@ def _handle_save_session() -> None:
     session = st.session_state.interactive_session
     if not session.has_active_job():
         return
-    st.session_state.params.update(_collect_form_params())
-    params = _params_as_checkpointed(st.session_state.params)
+    params = _params_as_checkpointed(_sync_form_into_params())
     checkpointed = session.state_manager.load_latest_parameters() or {}
     if not compute_changed_params(checkpointed, params):
         session.state_manager.clear_draft_parameters()
@@ -437,7 +449,7 @@ def _handle_redock_request(session, params: dict) -> None:
         return
 
     # The checkpoint above now runs ahead of the results on disk until a
-    # run completes (render_chat() clears this) -- Cancel or the error
+    # run completes (_process_docking_bridge() clears this) -- Cancel or the error
     # return below must not lose that.
     session.pending_changed_params |= changed
 
@@ -849,9 +861,9 @@ def _resume_session(job: dict) -> None:
         session.pending_changed_params |= CORE_PARAMS
     st.session_state.job_id = job["job_id"]
     st.session_state.job_name = job.get("job_name", "")
-    # Prevents render_chat()'s completion-sync block from immediately
-    # overwriting session.last_results on the next rerun (that block only
-    # runs while _job_done is False, i.e. for a run it's actively tracking).
+    # Prevents _process_docking_bridge()'s completion sync from immediately
+    # overwriting session.last_results on the next rerun (it only runs
+    # while _job_done is False, i.e. for a run it's actively tracking).
     st.session_state["_job_done"] = True
     # A redock staged for the *previous* active session is no longer valid
     # once the active session switches to a different job_id -- discard it
@@ -1052,33 +1064,25 @@ def _process_docking_bridge() -> None:
     if result is not None and session.has_active_job() and session.job_id == st.session_state.job_id:
         session.last_results = result
 
-    if result and result.get("status") == "completed":
-        st.session_state["_job_done"] = True
+    status = (result or {}).get("status")
+    if status == "completed":
         # The checkpointed parameters have now actually been run. Only a
         # *completed* run clears them (stricter than the CLI): after a
         # stop/failure the results on disk still predate them, so the next
         # redock must still include them.
         if session.job_id == st.session_state.job_id:
             session.pending_changed_params = set()
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "Workflow completed successfully!"}
-        )
+        reply = "Workflow completed successfully!"
     elif error:
-        st.session_state["_job_done"] = True
-        st.session_state.messages.append(
-            {"role": "assistant", "content": f"Workflow failed: {error}"}
-        )
-    elif result and result.get("status") == "cancelled":
-        st.session_state["_job_done"] = True
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "Session stopped."}
-        )
-    elif result and result.get("status") == "failed":
-        st.session_state["_job_done"] = True
-        failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
-        st.session_state.messages.append(
-            {"role": "assistant", "content": f"Workflow failed: {failure_detail}"}
-        )
+        reply = f"Workflow failed: {error}"
+    elif status == "cancelled":
+        reply = "Session stopped."
+    elif status == "failed":
+        reply = "Workflow failed: " + ("; ".join(result.get("errors", [])) or "unknown error")
+    else:
+        return
+    st.session_state["_job_done"] = True
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
 def _process_box_picker_bridge() -> None:
@@ -1123,15 +1127,29 @@ def _process_box_picker_bridge() -> None:
     st.session_state.box_picker_bridge = None
 
 
-def _process_bridges() -> None:
+def _any_bridge_running() -> bool:
+    bridges = (st.session_state.bridge, st.session_state.get("box_picker_bridge"))
+    return any(b is not None and b.is_running() for b in bridges)
+
+
+def _process_bridges() -> bool:
     """Fold both background bridges' progress/outcome into session state
     before anything is drawn. Called ahead of the layout -- even ahead of
     the sidebar, whose buttons can cut a run short with st.rerun() -- so a
     finished job is handled in the same run that first sees it, and the
     replies it posts are in ``messages`` before the chat history is drawn
-    (at the end of the script, see ``_render_chat_history``)."""
+    (at the end of the script, see ``_render_chat_history``).
+
+    Returns whether a bridge was still running at this point. The page
+    must then poll once more even if the job has finished by the bottom of
+    the script: this is the only place a finished job is handled, so a job
+    that ends mid-run would otherwise sit unhandled (no reply, no results)
+    until the user's next click.
+    """
+    running = _any_bridge_running()
     _process_docking_bridge()
     _process_box_picker_bridge()
+    return running
 
 
 def render_chat():
@@ -1537,34 +1555,46 @@ def _read_box_fields() -> tuple[list[float] | None, list[float] | None]:
     return triple(_BOX_WIDGET_KEYS[:3]), triple(_BOX_WIDGET_KEYS[3:])
 
 
+def _drawable_box_size() -> list[float] | None:
+    """The Docking Box size if the picker's viewer can draw it -- all three
+    fields parse and are positive -- else None. With None the viewer shows
+    a ``_PICKER_DEFAULT_BOX_SIZE`` placeholder, and a click or − / + writes
+    that placeholder into the fields first, so the box shown is the box
+    docked."""
+    _, box_size = _read_box_fields()
+    return box_size if box_size is not None and min(box_size) > 0 else None
+
+
 def _apply_viewer_click(center: list) -> None:
     """Write a center clicked in the box picker's viewer into the Docking
     Box fields -- the picker keeps no box of its own, so "Run Docking" and
-    the viewer both read these. If the Box size fields are unset, fill in
-    the size the viewer was showing, so the box picked is the box docked.
+    the viewer both read these. If the viewer was showing its placeholder
+    (``_drawable_box_size()`` is None), fill that in, so the box picked is
+    the box docked.
     Must run before _render_docking_box() instantiates those widgets.
     """
     for key, value in zip(_BOX_WIDGET_KEYS[:3], center):
         st.session_state[key] = f"{value:.3f}"
-    _, box_size = _read_box_fields()
-    if box_size is None:
+    if _drawable_box_size() is None:
         for key in _BOX_WIDGET_KEYS[3:]:
             st.session_state[key] = f"{_PICKER_DEFAULT_BOX_SIZE:.3f}"
 
 
 def _step_box_size(axis: int, delta: float) -> None:
     """on_click for the picker's − / + buttons: change one Box size field by
-    *delta* Å, never below ``_PICKER_MIN_BOX_SIZE``. An unset or unparsable
-    field steps from ``_PICKER_DEFAULT_BOX_SIZE`` (what the viewer shows
-    then). A callback runs before the next script run, i.e. before the
-    Docking Box widgets exist, so writing their keys is allowed.
+    *delta* Å, never below ``_PICKER_MIN_BOX_SIZE``. While the viewer shows
+    its placeholder (``_drawable_box_size()`` is None) the step starts from
+    that placeholder and writes all three fields -- stepping one axis alone
+    would leave a size the viewer still can't draw, so the button would
+    seem to do nothing. A callback runs before the next script run, i.e.
+    before the Docking Box widgets exist, so writing their keys is allowed.
     """
-    key = _BOX_WIDGET_KEYS[3 + axis]
-    try:
-        current = float(st.session_state.get(key, ""))
-    except (ValueError, TypeError):
-        current = _PICKER_DEFAULT_BOX_SIZE
-    st.session_state[key] = f"{max(_PICKER_MIN_BOX_SIZE, current + delta):.3f}"
+    size = _drawable_box_size()
+    axes = (axis,) if size else range(3)
+    size = size or [_PICKER_DEFAULT_BOX_SIZE] * 3
+    size[axis] = max(_PICKER_MIN_BOX_SIZE, size[axis] + delta)
+    for a in axes:
+        st.session_state[_BOX_WIDGET_KEYS[3 + a]] = f"{size[a]:.3f}"
 
 
 def _start_box_picker_prep() -> tuple[bool, str | None, str]:
@@ -1577,9 +1607,7 @@ def _start_box_picker_prep() -> tuple[bool, str | None, str]:
     caller to surface however fits its UI (an inline st.error/st.warning
     for the button, a chat reply for the geometry auto-fetch below).
     """
-    form_params = _collect_form_params()
-    st.session_state.params.update(form_params)
-    params = st.session_state.params.copy()
+    params = _sync_form_into_params()
 
     prep_services = ["get_input_files", "prepare_protein"]
     try:
@@ -1647,9 +1675,8 @@ def _render_box_picker() -> None:
 
     # The viewer draws the Docking Box fields -- the only box state; a click
     # or a − / + step writes them. Nothing here keeps a copy to drift from.
-    center, box_size = _read_box_fields()
-    if box_size is not None and min(box_size) <= 0:
-        box_size = None  # not drawable; the viewer falls back to its default
+    center, _ = _read_box_fields()
+    box_size = _drawable_box_size()
 
     # One row of six (not three columns of two): Streamlit advises against
     # nesting columns more than once, and this panel is already a column.
@@ -1667,7 +1694,10 @@ def _render_box_picker() -> None:
         receptor_pdb,
         mode="box_picker",
         center=center,
-        box_size=box_size,
+        # The placeholder is passed explicitly rather than left to the
+        # component's own default, so it is the same constant a click or
+        # − / + writes into the fields.
+        box_size=box_size or [_PICKER_DEFAULT_BOX_SIZE] * 3,
         height=450,
         key=viewer_key,
     )
@@ -2169,7 +2199,7 @@ def _render_comparison_table(comparison: dict) -> None:
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
-_process_bridges()
+bridge_was_running = _process_bridges()
 
 render_sidebar()
 
@@ -2192,10 +2222,10 @@ with results_col:
 _render_chat_history(chat_history)
 
 # Keep polling while a docking job or the box-picker's receptor prep is in
-# progress — 2 s delay avoids spinning the CPU.
-box_picker_bridge = st.session_state.get("box_picker_bridge")
-if (st.session_state.bridge and st.session_state.bridge.is_running()) or \
-        (box_picker_bridge and box_picker_bridge.is_running()):
+# progress — 2 s delay avoids spinning the CPU. One more poll after a job
+# that was running at the top of this run has finished, so
+# _process_bridges() handles it (see there).
+if bridge_was_running or _any_bridge_running():
     import time
     time.sleep(2)
     st.rerun()

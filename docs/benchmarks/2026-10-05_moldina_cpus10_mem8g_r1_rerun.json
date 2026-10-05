@@ -1,0 +1,128 @@
+{
+  "job_id": "job_20261001_071808_ee7e7d",
+  "num_ligands": 50,
+  "center": [
+    28.279,
+    16.43,
+    -3.557
+  ],
+  "box_size": [
+    20.0,
+    20.0,
+    20.0
+  ],
+  "run_id": "9e436f97",
+  "results": [
+    {
+      "label": "sequential",
+      "workers": 1,
+      "elapsed_seconds": 115.04599999997299,
+      "seconds_per_ligand": 2.3009199999994596,
+      "speedup_vs_sequential": 1.0,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 49,
+        "peak_mem_bytes": 688285286,
+        "mean_mem_bytes": 444998534.4285714,
+        "peak_mem_per_worker_bytes": 640763822.0,
+        "peak_cpu_percent": 100.88,
+        "mean_cpu_percent": 90.68448979591837,
+        "sample_errors": 0
+      }
+    },
+    {
+      "label": "parallel_2",
+      "workers": 2,
+      "elapsed_seconds": 56.92200000002049,
+      "seconds_per_ligand": 1.1384400000004098,
+      "speedup_vs_sequential": 2.021116615718555,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 25,
+        "peak_mem_bytes": 1228360646,
+        "mean_mem_bytes": 896003577.8,
+        "peak_mem_per_worker_bytes": 590419591.0,
+        "peak_cpu_percent": 203.46,
+        "mean_cpu_percent": 190.37,
+        "sample_errors": 0
+      }
+    },
+    {
+      "label": "parallel_4",
+      "workers": 4,
+      "elapsed_seconds": 30.51600000000326,
+      "seconds_per_ligand": 0.6103200000000651,
+      "speedup_vs_sequential": 3.770022283391031,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 14,
+        "peak_mem_bytes": 2317134856,
+        "mean_mem_bytes": 1660069721.357143,
+        "peak_mem_per_worker_bytes": 567403348.0,
+        "peak_cpu_percent": 400.37,
+        "mean_cpu_percent": 346.62071428571426,
+        "sample_errors": 0
+      }
+    },
+    {
+      "label": "parallel_6",
+      "workers": 6,
+      "elapsed_seconds": 24.79700000002049,
+      "seconds_per_ligand": 0.4959400000004098,
+      "speedup_vs_sequential": 4.639512844290758,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 11,
+        "peak_mem_bytes": 3419867709,
+        "mean_mem_bytes": 2589292375.181818,
+        "peak_mem_per_worker_bytes": 562057707.5,
+        "peak_cpu_percent": 597.44,
+        "mean_cpu_percent": 530.9236363636363,
+        "sample_errors": 0
+      }
+    },
+    {
+      "label": "parallel_8",
+      "workers": 8,
+      "elapsed_seconds": 22.75,
+      "seconds_per_ligand": 0.455,
+      "speedup_vs_sequential": 5.056967032965845,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 10,
+        "peak_mem_bytes": 4418447605,
+        "mean_mem_bytes": 3323317347.5,
+        "peak_mem_per_worker_bytes": 546365767.625,
+        "peak_cpu_percent": 796.35,
+        "mean_cpu_percent": 681.891,
+        "sample_errors": 0
+      }
+    },
+    {
+      "label": "parallel_10",
+      "workers": 10,
+      "elapsed_seconds": 23.07800000003772,
+      "seconds_per_ligand": 0.46156000000075437,
+      "speedup_vs_sequential": 4.985094028935998,
+      "successful": 50,
+      "failed": 0,
+      "stats": {
+        "n_samples": 10,
+        "peak_mem_bytes": 5458903433,
+        "mean_mem_bytes": 4531942116.1,
+        "peak_mem_per_worker_bytes": 541138196.9,
+        "peak_cpu_percent": 996.65,
+        "mean_cpu_percent": 920.134,
+        "sample_errors": 0
+      }
+    }
+  ],
+  "container_name": "mcp-moldina-runner",
+  "stats_interval": 1.0,
+  "idle_mem_bytes": 47521464
+}

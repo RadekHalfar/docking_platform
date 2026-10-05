@@ -71,6 +71,16 @@ class FakeBridge:
         return self._error
 
 
+def _prep_done_bridge():
+    """A finished "Load receptor for box picking" job that prepared FIXTURE_PDB."""
+    return FakeBridge(
+        result={
+            "status": "completed",
+            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
+        }
+    )
+
+
 class ViewerRecorder:
     """Replaces ui.mol_viewer.render_mol_viewer; records each call."""
 
@@ -232,20 +242,13 @@ def test_box_picker_without_receptor_offers_load_button(app, viewer):
     assert viewer.last("box_picker") is None
 
 
-def test_deferred_geometry_command_applies_and_shows_reply(app, viewer):
+def test_deferred_geometry_command_applies_and_shows_reply(app, viewer, page_reruns):
     # A chat geometry command started a fetch/prepare job (no receptor was
     # loaded yet); that job has now finished. The page must apply the
     # pending target, reset the bridge, and show the chat reply (the
-    # 2026-09-30 fix; since Stage 13.4 in the same run, see below).
+    # 2026-09-30 fix) -- since Stage 13.4 in the same run, with no rerun.
     expected_center, _ = compute_protein_center_and_box(FIXTURE_PDB.read_text())
-    app.session_state["box_picker_bridge"] = FakeBridge(
-        result={
-            "status": "completed",
-            "results": {
-                "prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}
-            },
-        }
-    )
+    app.session_state["box_picker_bridge"] = _prep_done_bridge()
     app.session_state["_pending_geometry_target"] = "center"
 
     at = app.run()
@@ -253,12 +256,13 @@ def test_deferred_geometry_command_applies_and_shows_reply(app, viewer):
     assert not at.exception
     assert at.session_state["box_picker_bridge"] is None
     assert "_pending_geometry_target" not in at.session_state
-    assert any(t.startswith("Protein center set to") for t in _chat_texts(at))
+    assert _chat_texts(at)[-1].startswith("Protein center set to")
     assert float(at.session_state["param_center_x"]) == expected_center[0]
-    assert viewer.last("box_picker")["center"] == expected_center
+    assert viewer.last("box_picker")["center"] == expected_center  # drawn this run
+    assert page_reruns == []
 
 
-def test_deferred_geometry_command_reports_failed_fetch(app):
+def test_deferred_geometry_command_reports_failed_fetch(app, page_reruns):
     app.session_state["box_picker_bridge"] = FakeBridge(
         result={"status": "failed", "errors": ["RCSB download failed"]}
     )
@@ -267,9 +271,12 @@ def test_deferred_geometry_command_reports_failed_fetch(app):
     at = app.run()
 
     assert not at.exception
-    assert any(
-        "Could not fetch the protein: RCSB download failed" in t for t in _chat_texts(at)
-    )
+    assert "Could not prepare receptor: RCSB download failed" in [e.value for e in at.error]
+    assert _chat_texts(at)[-1] == "Could not fetch the protein: RCSB download failed"
+    assert page_reruns == []
+    # Shown once, like the inline st.error it replaces.
+    at.run()
+    assert not [e for e in at.error if "Could not prepare receptor" in e.value]
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +352,7 @@ def test_summary_updates_after_visual_center_pick(app, viewer):
 # Typing in the Docking Box fields moves the box picker too (2026-10-01 fix)
 # ---------------------------------------------------------------------------
 
-def _picker_with_matching_fields(app):
+def _picker_with_box_set(app):
     _load_picker_receptor(app, ("1.0", "2.0", "3.0"), ("20.0", "20.0", "20.0"))
     at = app.run()
     assert not at.exception
@@ -356,7 +363,7 @@ _BOX_KEYS = ("param_center_x", "param_center_y", "param_center_z", "param_box_x"
 
 
 def test_typing_center_in_docking_box_moves_picker_box(app, viewer):
-    at = _picker_with_matching_fields(app)
+    at = _picker_with_box_set(app)
 
     at.text_input(key="param_center_x").set_value("7.5").run()
 
@@ -367,7 +374,7 @@ def test_typing_center_in_docking_box_moves_picker_box(app, viewer):
 
 
 def test_typing_box_size_in_docking_box_resizes_picker_box(app, viewer):
-    at = _picker_with_matching_fields(app)
+    at = _picker_with_box_set(app)
 
     at.text_input(key="param_box_x").set_value("30").run()
 
@@ -378,18 +385,18 @@ def test_typing_box_size_in_docking_box_resizes_picker_box(app, viewer):
 
 @pytest.mark.parametrize("typed", ["-1", "0", "abc", ""])
 def test_undrawable_box_size_shows_placeholder_without_crash(app, viewer, typed):
-    at = _picker_with_matching_fields(app)
+    at = _picker_with_box_set(app)
 
     at.text_input(key="param_box_x").set_value(typed).run()
 
     assert not at.exception
-    assert viewer.last("box_picker")["box_size"] is None
+    assert viewer.last("box_picker")["box_size"] == [20.0, 20.0, 20.0]  # the placeholder
     assert any("20 Å placeholder" in c.value for c in at.caption)
     assert at.text_input(key="param_box_x").value == typed
 
 
 def test_small_positive_box_size_is_drawn_as_typed(app, viewer):
-    at = _picker_with_matching_fields(app)
+    at = _picker_with_box_set(app)
 
     at.text_input(key="param_box_x").set_value("0.5").run()
 
@@ -994,20 +1001,14 @@ def session_state_warnings(monkeypatch):
 
 
 def test_receptor_load_with_box_fields_set_logs_no_session_state_warning(app, viewer, session_state_warnings):
-    for key, value in zip(_BOX_KEYS, ("1.0", "2.0", "3.0", "30.0", "31.0", "32.0")):
-        app.session_state[key] = value
-    app.session_state["box_picker_bridge"] = FakeBridge(
-        result={
-            "status": "completed",
-            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
-        }
-    )
+    _receptor_loaded_with_box(app, size=("30.0", "31.0", "32.0"))
 
-    at = app.run()
-
-    assert not at.exception
     assert viewer.last("box_picker")["box_size"] == [30.0, 31.0, 32.0]
     assert not [w for w in session_state_warnings if "Session State" in w]
+
+
+def _load_history_job(at):
+    return next(b for b in at.sidebar.button if b.key == f"job_load_{_HISTORY_JOB_ID}").click().run()
 
 
 def test_redock_after_load_of_never_run_restore_plans_full_rerun(app, output_base):
@@ -1020,7 +1021,7 @@ def test_redock_after_load_of_never_run_restore_plans_full_rerun(app, output_bas
     at = _restore_rev1(app.run())
     assert not state_manager.parameters_ran()
 
-    at = next(b for b in at.sidebar.button if b.key == f"job_load_{_HISTORY_JOB_ID}").click().run()
+    at = _load_history_job(at)
     assert not at.exception
     assert at.session_state["param_center_x"] == "1.0"  # the restored revision is what loaded
     at = _click(at, "Run Docking")
@@ -1126,40 +1127,6 @@ def test_finished_run_reply_shows_without_rerun(app, page_reruns, result, error,
     assert page_reruns == []
 
 
-def test_deferred_geometry_reply_shows_without_rerun(app, viewer, page_reruns):
-    app.session_state["box_picker_bridge"] = FakeBridge(
-        result={
-            "status": "completed",
-            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
-        }
-    )
-    app.session_state["_pending_geometry_target"] = "center"
-
-    at = app.run()
-
-    assert not at.exception
-    assert _chat_texts(at)[-1].startswith("Protein center set to")
-    assert viewer.last("box_picker") is not None  # the picker shows the receptor this run
-    assert page_reruns == []
-
-
-def test_failed_receptor_prep_shows_error_in_picker_and_chat_without_rerun(app, page_reruns):
-    app.session_state["box_picker_bridge"] = FakeBridge(
-        result={"status": "failed", "errors": ["RCSB download failed"]}
-    )
-    app.session_state["_pending_geometry_target"] = "box_size"
-
-    at = app.run()
-
-    assert not at.exception
-    assert "Could not prepare receptor: RCSB download failed" in [e.value for e in at.error]
-    assert _chat_texts(at)[-1] == "Could not fetch the protein: RCSB download failed"
-    assert page_reruns == []
-    # Shown once, like the inline st.error it replaces.
-    at.run()
-    assert not [e for e in at.error if "Could not prepare receptor" in e.value]
-
-
 def test_chat_command_reply_shows_without_rerun(app, page_reruns):
     at = app.run()
 
@@ -1203,10 +1170,6 @@ def test_save_session_replies_without_rerun(app, output_base, page_reruns):
     assert _chat_texts(at)[-1] == "No parameter changes to save."
     assert state_manager.load_draft_parameters() is None
     assert page_reruns == []
-
-
-def _load_history_job(at):
-    return next(b for b in at.sidebar.button if b.key == f"job_load_{_HISTORY_JOB_ID}").click().run()
 
 
 def test_save_session_saves_a_real_change_with_defaults(app, output_base):
@@ -1256,12 +1219,7 @@ def _receptor_loaded_with_box(app, center=("1.0", "2.0", "3.0"), size=("20.0", "
     """Docking Box fields set, then "Load receptor for box picking" finishes."""
     for key, value in zip(_BOX_KEYS, (*center, *size)):
         app.session_state[key] = value
-    app.session_state["box_picker_bridge"] = FakeBridge(
-        result={
-            "status": "completed",
-            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
-        }
-    )
+    app.session_state["box_picker_bridge"] = _prep_done_bridge()
     at = app.run()
     assert not at.exception
     return at
@@ -1316,3 +1274,75 @@ def test_chat_parsed_box_moves_the_picker_box(app, viewer, monkeypatch):
     call = viewer.last("box_picker")
     assert call["center"] == [9.0, 9.0, 9.0]
     assert call["box_size"] == [25.0, 26.0, 27.0]
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R1 (Phase 14) regressions
+# ---------------------------------------------------------------------------
+
+def test_size_step_with_size_unset_draws_the_stepped_box(app, viewer):
+    # X + on empty Box size fields wrote X only; the viewer still couldn't
+    # draw the box, so it kept the placeholder and the button seemed dead.
+    _load_picker_receptor(app, ("1.0", "2.0", "3.0"), ("", "", ""))
+    at = app.run()
+
+    at.button(key="box_step_x_up").click().run()
+
+    assert not at.exception
+    assert viewer.last("box_picker")["box_size"] == [21.0, 20.0, 20.0]
+    assert [at.text_input(key=k).value for k in _BOX_KEYS[3:]] == ["21.000", "20.000", "20.000"]
+
+
+def test_click_on_undrawable_box_docks_the_box_shown(app, viewer):
+    # Fields "0, 20, 20": the viewer drew the 20 Å placeholder, but a click
+    # kept the 0 -- the box docked wasn't the box shown.
+    _load_picker_receptor(app, ("", "", ""), ("0", "20", "20"))
+    viewer.box_picker_return = {"center": [4.0, 5.0, 6.0], "clickId": 1}
+
+    at = app.run()
+
+    assert not at.exception
+    assert [at.session_state[k] for k in _BOX_KEYS[3:]] == ["20.000"] * 3
+    assert viewer.last("box_picker")["box_size"] == [20.0, 20.0, 20.0]
+
+
+class _FinishesWhileStreaming(FakeBridge):
+    """Running when the page first looks, finished by the time it reads the
+    log -- i.e. the job ends in the middle of a script run."""
+
+    def __init__(self, result):
+        super().__init__(result=result)
+        self._finished = False
+
+    def is_running(self):
+        return not self._finished
+
+    def get_log_lines(self):
+        self._finished = True
+        return []
+
+
+def test_job_finishing_mid_run_is_handled_by_one_more_poll(app, monkeypatch):
+    # The bottom-of-page poll only reran while a bridge was *still* running,
+    # but a finished job is only handled at the top of the script -- a job
+    # that ended mid-run sat there with no reply until the next click.
+    import sys
+    import time
+
+    real_sleep = time.sleep
+
+    def _no_wait_in_app(seconds):
+        if not sys._getframe(1).f_code.co_filename.endswith("app.py"):
+            real_sleep(seconds)
+
+    monkeypatch.setattr(time, "sleep", _no_wait_in_app)
+    app.session_state["messages"] = [{"role": "assistant", "content": "Running..."}]
+    app.session_state["job_id"] = "job_20260930_000000_abcdef"
+    app.session_state["_job_done"] = False
+    app.session_state["bridge"] = _FinishesWhileStreaming({"status": "completed", "results": {}})
+
+    at = app.run()
+
+    assert not at.exception
+    assert at.session_state["_job_done"] is True
+    assert _chat_texts(at)[-1] == "Workflow completed successfully!"

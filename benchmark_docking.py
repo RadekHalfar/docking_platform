@@ -56,6 +56,7 @@ parallel run as a sanity check against the sequential baseline) — reduce
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import subprocess
@@ -63,7 +64,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from common.mcp_client import call_mcp_tool
 
@@ -76,6 +77,9 @@ DEFAULT_CONTAINER_NAME = "mcp-moldina-runner"
 MIB = 1024 ** 2
 STATS_FORMAT = "{{.MemUsage}}|{{.CPUPerc}}"
 DOCKER_STATS_TIMEOUT = 15
+# What read_container_stats() raises when a sample can't be taken: docker
+# missing, a hung call, a non-zero exit, unparseable output.
+STATS_ERRORS = (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError)
 
 # docker stats prints binary units (MiB/GiB); some engines print decimal ones (MB/GB).
 _SIZE_UNITS = {
@@ -155,7 +159,16 @@ class ContainerStatsSampler:
     A failed sample (docker missing, container gone, unparseable output) is
     counted in `errors` with its reason kept in `last_error`, so callers can
     report how trustworthy the numbers are instead of silently getting fewer
-    samples."""
+    samples.
+
+    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): polled peaks
+    are lower bounds. The kernel records the exact one (cgroup v2
+    memory.peak, readable in moldina-runner), but only per container
+    lifetime unless reset per open file (kernel 6.12+), so it can't be
+    attributed to one configuration by a plain read. If the per-worker
+    figure ever decides a limit (e.g. a memory-based worker cap) rather
+    than a caption, hold memory.peak open in a `docker exec` per
+    configuration, reset it at the start and read it at the end."""
 
     def __init__(self, container_name: str, interval: float = 1.0):
         self.container_name = container_name
@@ -170,7 +183,7 @@ class ContainerStatsSampler:
         while not self._stop.is_set():
             try:
                 self.samples.append(read_container_stats(self.container_name))
-            except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as e:
+            except STATS_ERRORS as e:
                 self.errors += 1
                 self.last_error = str(e)
             self._stop.wait(self.interval)
@@ -358,6 +371,25 @@ def run_docking(url, receptor, ligands, center, box_size, output_dir,
     )
 
 
+def run_timed(call: Callable[[], dict],
+              sampler: Optional[ContainerStatsSampler] = None) -> Tuple[Optional[dict], Optional[str], float]:
+    """Run one configuration, sampled by *sampler* if given.
+
+    Returns (result, error, wall seconds); a failed call gives (None, its
+    message, ...) so the benchmark reports it and moves on. The wall time
+    is taken before the sampler stops: stopping joins its thread, which can
+    wait out an in-flight `docker stats` call (~1-2 s), and that is not
+    docking time."""
+    with sampler or contextlib.nullcontext():
+        start = time.monotonic()
+        try:
+            result, error = call(), None
+        except Exception as e:  # noqa: BLE001 - report and continue to the next configuration
+            result, error = None, str(e)
+        elapsed = time.monotonic() - start
+    return result, error, elapsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark sequential vs. parallel Moldina docking using "
@@ -414,7 +446,7 @@ def main() -> None:
     if args.sample_stats:
         try:
             idle_bytes, idle_cpu = read_container_stats(args.container_name)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as e:
+        except STATS_ERRORS as e:
             raise SystemExit(f"--sample-stats: could not read the idle baseline from "
                              f"'{args.container_name}' ({e}). Is 'docker' on PATH and the container running?")
         print(f"\nIdle baseline of {args.container_name}: {idle_bytes / MIB:.1f} MiB, {idle_cpu:.2f}% CPU")
@@ -434,52 +466,36 @@ def main() -> None:
         output_dir = f"{CONTAINER_OUTPUT_BASE}/_benchmark_{run_id}/{label}"
         print(f"--- {label} (parallel={parallel}, max_workers={workers}) ---")
         sampler = ContainerStatsSampler(args.container_name, args.stats_interval) if args.sample_stats else None
-        if sampler:
-            sampler.start()
-        start = time.monotonic()
-        try:
-            result = run_docking(
+        result, error, elapsed = run_timed(
+            lambda: run_docking(
                 args.url, receptor, ligands, center, box, output_dir,
                 parallel, workers, args.exhaustiveness, args.population,
                 args.num_modes, args.energy_range, timeout,
-            )
-            error = None
-        except Exception as e:  # noqa: BLE001 - report and continue to the next configuration
-            error = str(e)
-        finally:
-            if sampler:
-                sampler.stop()
-        elapsed = time.monotonic() - start
+            ),
+            sampler,
+        )
 
+        if error is not None:
+            row = {"label": label, "workers": workers, "error": error}
+        else:
+            if baseline_seconds is None:
+                baseline_seconds = elapsed
+            row = {
+                "label": label, "workers": workers, "elapsed_seconds": elapsed,
+                "seconds_per_ligand": elapsed / len(ligands) if ligands else 0.0,
+                "speedup_vs_sequential": baseline_seconds / elapsed if elapsed else 0.0,
+                "successful": result.get("successful", 0), "failed": result.get("failed", 0),
+            }
         # Sampled for failed runs too: a memory-pressure failure is exactly when the numbers matter.
-        stats = sampler.summary(idle_bytes, max(1, min(workers, len(ligands)))) if sampler else None
-        if stats is not None:
-            print(f"  {format_stats(stats)}")
+        if sampler:
+            row["stats"] = sampler.summary(idle_bytes, max(1, min(workers, len(ligands))))
+            print(f"  {format_stats(row['stats'])}")
         if error is not None:
             print(f"  FAILED: {error}\n")
-            row = {"label": label, "workers": workers, "error": error}
-            if stats is not None:
-                row["stats"] = stats
-            rows.append(row)
-            continue
-
-        successful = result.get("successful", 0)
-        failed = result.get("failed", 0)
-        per_ligand = elapsed / len(ligands) if ligands else 0.0
-        if baseline_seconds is None:
-            baseline_seconds = elapsed
-        speedup = baseline_seconds / elapsed if elapsed else 0.0
-
-        print(f"  wall time: {elapsed:.1f}s   ({per_ligand:.1f}s/ligand)   "
-              f"successful={successful} failed={failed}   speedup vs sequential: {speedup:.2f}x\n")
-
-        row = {
-            "label": label, "workers": workers, "elapsed_seconds": elapsed,
-            "seconds_per_ligand": per_ligand, "speedup_vs_sequential": speedup,
-            "successful": successful, "failed": failed,
-        }
-        if stats is not None:
-            row["stats"] = stats
+        else:
+            print(f"  wall time: {elapsed:.1f}s   ({row['seconds_per_ligand']:.1f}s/ligand)   "
+                  f"successful={row['successful']} failed={row['failed']}   "
+                  f"speedup vs sequential: {row['speedup_vs_sequential']:.2f}x\n")
         rows.append(row)
 
     width = 114 if args.sample_stats else 78

@@ -146,3 +146,18 @@ class TestCompareJobs:
         comparison = compare_jobs([str(job_a), str(job_b)])
 
         assert comparison["jobs"] == ["Wide box", "job_def"]
+
+    def test_compare_jobs_records_each_jobs_docking_algorithm(self, tmp_path):
+        # Stage 15.3: the comparison names which search produced each column;
+        # results written before Phase 15 have no key and were Moldina (PSO).
+        job_a = tmp_path / "job_abc"
+        job_b = tmp_path / "job_def"
+        _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -5.8}])
+        data = json.loads((job_a / "workflow_results.json").read_text())
+        data["results"]["dock"]["docking_algorithm"] = "vina"
+        (job_a / "workflow_results.json").write_text(json.dumps(data))
+        _write_workflow_results(job_b, [{"ligand_id": "ATP", "best_affinity": -4.3}])
+
+        comparison = compare_jobs([str(job_a), str(job_b)])
+
+        assert comparison["algorithms"] == ["vina", "moldina"]

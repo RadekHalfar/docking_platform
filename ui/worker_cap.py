@@ -9,27 +9,36 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
 import yaml
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, DOCKING_ALGORITHM_LABELS
+
 _CPUS_KEY_PATH = ("services", "moldina-runner", "deploy", "resources", "limits", "cpus")
 
-# Measured default for "Max parallel workers" (Stage 14.3). Benchmarked
-# 2026-10-05 with moldina-runner limits cpus '10' / memory 8G, 50 ligands:
-# docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json, table in
-# docs/BATCH_DOCKING.md ("Benchmark baseline"). Rule: the smallest worker
-# count within 5% of the fastest wall clock (8 -> 24.3 s vs 10 -> 23.4 s).
-# Re-run benchmark_docking.py --sample-stats and update all three numbers after
+# Measured defaults for "Max parallel workers", per docking algorithm, all
+# benchmarked with moldina-runner limits cpus '10' / memory 8G at 1 CPU per
+# ligand; tables in docs/BATCH_DOCKING.md ("Benchmark baseline"). Rule: the
+# smallest worker count within 5% of the fastest wall clock.
+# - moldina (Stage 14.3, 2026-10-05, 50 ligands):
+#   docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json (8 -> 24.3 s vs
+#   10 -> 23.4 s).
+# - vina (Stage 15.3, 2026-10-06, 10 ligands):
+#   docs/benchmarks/2026-10-06_vina_cpus10_mem8g.json (6 -> 134.6 s; 8 ->
+#   141.5 s just misses the 141.3 s threshold). Only 10 ligands (~62 s each
+#   alone), so the 6/8/10 rows are shaped by how ligands fall into waves;
+#   re-benchmark on a larger batch before reading much into 6 vs 8.
+# Re-run benchmark_docking.py --sample-stats and update these numbers after
 # changing moldina-runner's resource limits; describe_worker_cap() says so in
 # the GUI when the detected cap no longer matches MEASURED_AT_CPUS.
-# tests/test_worker_cap.py re-derives the two measurements from the JSON (and
-# from its Review Stage R1 re-run, ..._r1_rerun.json, which gave the same).
-MEASURED_BEST_WORKERS = 8
-# Worst idle-subtracted peak memory per worker seen across all configurations
-# (611.5 MiB at 2 workers), rounded up — a sampled lower bound, not a hard limit.
-MEASURED_PEAK_MIB_PER_WORKER = 612
-# moldina-runner's limits.cpus when the two numbers above were measured.
+# tests/test_worker_cap.py re-derives the measurements from the JSONs (and
+# from Phase 14 Review Stage R1's re-run, ..._r1_rerun.json, which gave the same).
+MEASURED_BEST_WORKERS: Dict[str, int] = {"moldina": 8, "vina": 6}
+# Worst idle-subtracted peak memory per worker seen across each run's
+# configurations, rounded up — a sampled lower bound, not a hard limit.
+MEASURED_PEAK_MIB_PER_WORKER: Dict[str, int] = {"moldina": 612, "vina": 587}
+# moldina-runner's limits.cpus when the numbers above were measured.
 MEASURED_AT_CPUS = 10
 
 _MEMORY_NOTE = (
@@ -117,25 +126,42 @@ def detect_moldina_worker_cap(compose_path: Optional[Path] = None) -> WorkerCap:
     return WorkerCap(min(max(1, int(quota)), machine_cpus), "compose")
 
 
-def default_worker_count(worker_cap: WorkerCap) -> int:
-    """The GUI's default worker count: the measured best, never above the cap."""
-    return min(MEASURED_BEST_WORKERS, worker_cap.cap)
+def max_workers_for(worker_cap: WorkerCap, cpu: int = 1) -> int:
+    """The most workers worth asking for at *cpu* CPUs per ligand.
+
+    Mirrors moldina-runner's own clamp (workers <= CPU quota // cpu, see
+    run_moldina_docking()), so the GUI doesn't offer worker counts the
+    server would silently cut down.
+    """
+    return max(1, worker_cap.cap // max(1, cpu))
 
 
-def describe_worker_cap(worker_cap: WorkerCap) -> tuple[Optional[str], str]:
+def default_worker_count(
+    worker_cap: WorkerCap, algorithm: str = DEFAULT_DOCKING_ALGORITHM, cpu: int = 1
+) -> int:
+    """The GUI's default worker count: *algorithm*'s measured best, never
+    above what the cap allows at *cpu* CPUs per ligand."""
+    return min(MEASURED_BEST_WORKERS[algorithm], max_workers_for(worker_cap, cpu))
+
+
+def describe_worker_cap(
+    worker_cap: WorkerCap, algorithm: str = DEFAULT_DOCKING_ALGORITHM
+) -> tuple[Optional[str], str]:
     """Return the GUI's (warning, caption) text for *worker_cap*.
 
     The warning is None unless the cap came from the fallback path. The
-    benchmark sentence names the CPU limit it was measured at whenever the
-    detected cap differs from it, since the numbers may not hold there.
+    benchmark sentence is *algorithm*'s, and names the CPU limit it was
+    measured at whenever the detected cap differs from it, since the
+    numbers may not hold there.
     """
     if worker_cap.source == "compose" and worker_cap.cap == MEASURED_AT_CPUS:
         conditions = ""
     else:
         conditions = f" at a {MEASURED_AT_CPUS}-CPU limit, which may not hold here"
     measured = (
-        f"Benchmarked best{conditions}: {MEASURED_BEST_WORKERS} workers (sampled peak "
-        f"~{MEASURED_PEAK_MIB_PER_WORKER} MiB memory each; see docs/BATCH_DOCKING.md)."
+        f"Benchmarked best for {DOCKING_ALGORITHM_LABELS[algorithm]}{conditions}: "
+        f"{MEASURED_BEST_WORKERS[algorithm]} workers at 1 CPU each (sampled peak "
+        f"~{MEASURED_PEAK_MIB_PER_WORKER[algorithm]} MiB memory each; see docs/BATCH_DOCKING.md)."
     )
     if worker_cap.source == "compose":
         return None, (

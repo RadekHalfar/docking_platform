@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
+
 
 def load_job_affinities(job_dir: str) -> Dict[str, Optional[float]]:
     """Read workflow_results.json from a job directory; return {ligand_id: best_affinity}.
@@ -46,6 +48,21 @@ def _load_job_name(job_dir: str) -> Optional[str]:
     return data.get("job_name") or None
 
 
+def _load_docking_algorithm(job_dir: str) -> str:
+    """Read which docking algorithm produced a job's dock results.
+
+    Results written before Phase 15 (no ``docking_algorithm`` key) were all
+    Moldina (PSO), so they read as the default.
+    """
+    results_file = Path(job_dir) / "workflow_results.json"
+    try:
+        data = json.loads(results_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_DOCKING_ALGORITHM
+    dock = data.get("results", {}).get("dock") or {}
+    return dock.get("docking_algorithm") or DEFAULT_DOCKING_ALGORITHM
+
+
 def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     """
     Compare binding affinities across multiple completed job runs.
@@ -55,6 +72,7 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
           "ligands": sorted list of all ligand IDs across all jobs,
           "jobs": list of job display names (user-supplied job_name, falling
                    back to the job directory basename when unnamed),
+          "algorithms": docking_algorithm per job, aligned with "jobs",
           "affinities": list-of-lists [ligand_idx][job_idx] = float|None,
           "best_per_ligand": {ligand_id: (job_name, affinity)}
         }
@@ -63,6 +81,7 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
         raise ValueError("At least one job directory is required")
 
     job_names = [_load_job_name(d) or Path(d).name for d in job_dirs]
+    algorithms = [_load_docking_algorithm(d) for d in job_dirs]
     per_job_affinities = [load_job_affinities(d) for d in job_dirs]
 
     ligands = sorted({ligand_id for affinities in per_job_affinities for ligand_id in affinities})
@@ -82,6 +101,7 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     return {
         "ligands": ligands,
         "jobs": job_names,
+        "algorithms": algorithms,
         "affinities": affinity_table,
         "best_per_ligand": best_per_ligand,
     }

@@ -187,12 +187,12 @@ def test_worker_cap_from_compose_shows_limit_caption(app, monkeypatch):
     assert not at.exception
     assert any(
         "Docking service is limited to 10 CPUs (docker-compose.yml)" in c.value
-        and f"Benchmarked best: {MEASURED_BEST_WORKERS} workers" in c.value
+        and f"Benchmarked best for Moldina (PSO): {MEASURED_BEST_WORKERS['moldina']} workers" in c.value
         for c in at.caption
     )
     assert not any("CPU limit" in w.value for w in at.warning)
     # Stage 14.3: a fresh session defaults to the measured best, not the cap.
-    assert at.number_input(key="param_max_workers").value == min(MEASURED_BEST_WORKERS, 10)
+    assert at.number_input(key="param_max_workers").value == min(MEASURED_BEST_WORKERS["moldina"], 10)
 
 
 def test_worker_cap_fallback_shows_warning_with_reason(app, monkeypatch):
@@ -1346,3 +1346,151 @@ def test_job_finishing_mid_run_is_handled_by_one_more_poll(app, monkeypatch):
     assert not at.exception
     assert at.session_state["_job_done"] is True
     assert _chat_texts(at)[-1] == "Workflow completed successfully!"
+
+
+# ---------------------------------------------------------------------------
+# Stage 15.3: docking algorithm selector, CPUs per ligand, worker max
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cap10(monkeypatch):
+    """Pin the worker cap at the benchmark's 10 CPUs, whatever the real
+    compose says; the widget default is frozen from the real cap at import."""
+    monkeypatch.setattr("ui.session_state.WORKER_CAP", WorkerCap(10, "compose"))
+    monkeypatch.setitem(
+        session_state._WIDGET_DEFAULTS, "param_max_workers", default_worker_count(WorkerCap(10, "compose")),
+    )
+
+
+def _set_algorithm(at, algorithm):
+    return at.radio(key="param_docking_algorithm").set_value(algorithm).run()
+
+
+def test_cpu_field_shows_only_for_vina_and_bounds_workers(app, cap10):
+    at = app.run()
+    assert at.radio(key="param_docking_algorithm").value == "moldina"
+    assert not [t for t in at.text_input if t.key == "param_cpu"]
+    assert any("Moldina (PSO) uses 1 CPU per ligand" in c.value for c in at.caption)
+
+    at = _set_algorithm(at, "vina")
+    assert not at.exception
+    # Switching resets workers to Vina's benchmarked best.
+    assert at.number_input(key="param_max_workers").value == min(MEASURED_BEST_WORKERS["vina"], 10)
+    assert any(f"Benchmarked best for Vina (Monte Carlo): {MEASURED_BEST_WORKERS['vina']} workers" in c.value
+               for c in at.caption)
+
+    at = at.text_input(key="param_cpu").set_value("4").run()
+    assert not at.exception
+    workers = at.number_input(key="param_max_workers")
+    assert workers.max == 10 // 4
+    assert workers.value == 10 // 4  # clamped, so workers x cpu stays within the quota
+
+
+def test_switching_algorithm_redocks_dock_and_visualize_only(app, output_base, cap10):
+    _, state_manager = _active_session_with_two_revisions(app, output_base)
+    at = _set_algorithm(app.run(), "vina")
+
+    at = _click(at, "Run Docking")
+
+    assert not at.exception
+    assert at.session_state["_pending_rerun"]["steps"] == ["dock", "visualize"]
+    latest = state_manager.load_latest_parameters()
+    assert latest["docking_algorithm"] == "vina"
+    assert latest["cpu"] == 1
+
+
+def test_pso_mode_sends_one_cpu_whatever_the_cpu_field_holds(app, output_base):
+    _active_session_with_two_revisions(app, output_base)
+    app.session_state["param_max_workers"] = _validated(_REV2_PARAMS)["max_workers"]
+    app.session_state["param_cpu"] = "4"  # left over from Vina mode
+
+    at = _click(app.run(), "Run Docking")
+
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "No parameter changes detected — nothing to redock."
+
+
+def test_loaded_pre_phase15_session_reads_as_moldina_with_nothing_to_redock(app, output_base):
+    # Its checkpoint has no docking_algorithm key while the form sends
+    # "moldina": a key on one side only counted as changed, so every old
+    # session planned a bogus dock/visualize redock (and Save Session always
+    # found a change).
+    _, state_manager, _ = _completed_session_with_artifacts(app, output_base)
+    old_params = _validated(_REV2_PARAMS)
+    old_params.pop("docking_algorithm")
+    state_manager.save_parameters_checkpoint(old_params, source="interactive_update")
+    state_manager.save_execution_state_checkpoint({"protein_file": "/x/6lu7.pdbqt"}, step="visualize")
+    app.session_state["param_docking_algorithm"] = "vina"
+
+    at = _load_history_job(app.run())
+    assert not at.exception
+    assert at.radio(key="param_docking_algorithm").value == "moldina"
+
+    at = _click(at, "Save Session")
+    assert _chat_texts(at)[-1] == "No parameter changes to save."
+    at = _click(at, "Run Docking")
+    assert not at.exception
+    assert _chat_texts(at)[-1] == "No parameter changes detected — nothing to redock."
+
+
+def test_chat_parse_without_algorithm_keeps_the_selector(app, monkeypatch):
+    monkeypatch.setattr(
+        "services.llm_orchestrator.workflow_llm_parser.parse_workflow_with_llm",
+        lambda client, message: {"services": ["dock"], "parameters": {"protein_id": "6lu7"}},
+    )
+    at = _set_algorithm(app.run(), "vina")
+
+    at.chat_input[0].set_value("dock 6lu7").run()
+
+    assert not at.exception
+    assert at.radio(key="param_docking_algorithm").value == "vina"
+
+
+def test_chat_parse_naming_an_unknown_algorithm_renders_without_crash(app, monkeypatch):
+    monkeypatch.setattr(
+        "services.llm_orchestrator.workflow_llm_parser.parse_workflow_with_llm",
+        lambda client, message: {
+            "services": ["dock"], "parameters": {"protein_id": "6lu7", "docking_algorithm": "gnina"},
+        },
+    )
+    at = app.run()
+
+    at.chat_input[0].set_value("dock 6lu7 with gnina").run()
+
+    assert not at.exception
+    assert at.radio(key="param_docking_algorithm").value == "moldina"
+    assert any("docking_algorithm" in t and "Still needed" in t for t in _chat_texts(at))
+
+
+def test_chat_algorithm_command_moves_the_selector_and_resets_workers(app, cap10):
+    at = _set_algorithm(app.run(), "vina")
+    at = at.number_input(key="param_max_workers").set_value(3).run()
+
+    at.chat_input[0].set_value("use moldina").run()
+
+    assert not at.exception
+    assert at.radio(key="param_docking_algorithm").value == "moldina"
+    assert at.number_input(key="param_max_workers").value == min(MEASURED_BEST_WORKERS["moldina"], 10)
+    assert any("Docking algorithm set to **Moldina (PSO)**" in t for t in _chat_texts(at))
+
+
+def test_summary_shows_the_selected_algorithm(app):
+    app.session_state["params"] = {"protein_id": "6lu7"}
+    at = _set_algorithm(app.run(), "vina")
+
+    assert any("**Algorithm:** Vina (Monte Carlo)" in m.value for m in at.markdown)
+
+
+@pytest.mark.parametrize("algorithm, label", [("vina", "Vina (Monte Carlo)"), (None, "Moldina (PSO)")])
+def test_results_name_the_algorithm_that_docked(app, output_base, algorithm, label):
+    job_id = "job_20261006_000001_abcdef"
+    data = _completed_job_data(Path("/nonexistent.pdb"))
+    if algorithm:  # None: a result written before Phase 15
+        data["results"]["dock"]["docking_algorithm"] = algorithm
+    _write_job(output_base, job_id, data)
+    app.session_state["viewed_job_id"] = job_id
+
+    at = app.run()
+
+    assert not at.exception
+    assert f"Docked with {label}" in [c.value for c in at.caption]

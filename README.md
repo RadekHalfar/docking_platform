@@ -361,7 +361,7 @@ docking_platform/
 ├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
 │   ├── session_state.py        # Session state init/parameter sync
-│   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + benchmarked default workers
+│   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution
 │   ├── job_history.py          # Sidebar job history scan, job naming/rename
 │   ├── ollama_models.py        # Ollama model listing

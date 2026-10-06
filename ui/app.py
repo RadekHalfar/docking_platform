@@ -8,7 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from common.docking_algorithm import DOCKING_ALGORITHM_LABELS
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, DOCKING_ALGORITHM_LABELS, DOCKING_ALGORITHMS
 from common.path_utils import from_container_path
 from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
@@ -45,12 +45,14 @@ from ui.session_state import (
     apply_parsed_params,
     apply_settings,
     clear_box_picker_state,
+    effective_cpu,
     get_params,
     init,
     load_session_params,
+    reset_workers_to_algorithm_default,
     start_new_session,
 )
-from ui.worker_cap import describe_worker_cap
+from ui.worker_cap import describe_worker_cap, max_workers_for
 
 st.set_page_config(
     layout="wide",
@@ -113,12 +115,15 @@ def _collect_form_params() -> dict:
     for key, default, cast in [
         ("ph", "7.4", float),
         ("exhaustiveness", "8", int),
-        ("cpu", "1", int),
     ]:
         try:
             params[key] = cast(st.session_state.get(f"param_{key}", default))
         except (ValueError, TypeError):
             pass
+    params["docking_algorithm"] = st.session_state.get(
+        "param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM
+    )
+    params["cpu"] = effective_cpu()
 
     params["parallel"] = bool(st.session_state.get("param_parallel", False))
     try:
@@ -411,6 +416,19 @@ def _params_as_checkpointed(params: dict) -> dict:
     return {**get_default_parameters(), **params}
 
 
+def _latest_checkpoint_params(session) -> dict:
+    """The active session's latest parameters checkpoint, with the same
+    defaults filled in as :func:`_params_as_checkpointed`.
+
+    A checkpoint written before a parameter existed (docking_algorithm,
+    before Phase 15) lacks its key, while the form side has the default; a
+    key present on only one side counts as changed, so every old session
+    looked like it had switched algorithm (Stage 15.3 finding). What it
+    lacks is what ran, the default.
+    """
+    return _params_as_checkpointed(session.state_manager.load_latest_parameters() or {})
+
+
 def _handle_save_session() -> None:
     """Persist the current form's parameter edits as a draft, without
     running/redocking anything. Lets edits (e.g. a box-size tweak) survive
@@ -423,7 +441,7 @@ def _handle_save_session() -> None:
     if not session.has_active_job():
         return
     params = _params_as_checkpointed(_sync_form_into_params())
-    checkpointed = session.state_manager.load_latest_parameters() or {}
+    checkpointed = _latest_checkpoint_params(session)
     if not compute_changed_params(checkpointed, params):
         session.state_manager.clear_draft_parameters()
         st.session_state.messages.append(
@@ -445,7 +463,7 @@ def _handle_redock_request(session, params: dict) -> None:
     pair, since Streamlit has no blocking ``input()``.
     """
     params = _params_as_checkpointed(params)
-    old_params = session.state_manager.load_latest_parameters() or {}
+    old_params = _latest_checkpoint_params(session)
     changed = compute_changed_params(old_params, params)
     # pending_changed_params holds changes already checkpointed but not yet
     # run to completion: a restored revision (all CORE_PARAMS), or an
@@ -1263,12 +1281,16 @@ def _render_params_summary() -> None:
     center = _coord(_BOX_WIDGET_KEYS[:3])
     box = _coord(_BOX_WIDGET_KEYS[3:])
 
+    # The selector, not params: like the box fields, it is what docks.
+    algorithm = st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+
     with st.expander("Current parameters", expanded=True):
         st.markdown(
             f"**Protein:** {protein}  \n"
             f"**Ligands:** {ligands}  \n"
             f"**Center:** {center}  \n"
-            f"**Box:** {box}"
+            f"**Box:** {box}  \n"
+            f"**Algorithm:** {DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}"
         )
 
 
@@ -1357,21 +1379,50 @@ def render_parameters_panel() -> None:
         _render_revision_history()
 
     with st.expander("Advanced"):
+        algorithm = st.radio(
+            "Docking algorithm",
+            options=DOCKING_ALGORITHMS,
+            format_func=DOCKING_ALGORITHM_LABELS.get,
+            key="param_docking_algorithm",
+            horizontal=True,
+            on_change=reset_workers_to_algorithm_default,
+        )
         col1, col2 = st.columns(2)
         with col1:
             st.text_input("pH", key="param_ph")
         with col2:
-            st.text_input("Exhaustiveness", key="param_exhaustiveness")
+            st.text_input(
+                "Exhaustiveness",
+                key="param_exhaustiveness",
+                help="Vina (Monte Carlo) only — Moldina (PSO) ignores it.",
+            )
+        if algorithm == "vina":
+            st.text_input("CPUs per ligand", key="param_cpu")
+            st.caption(
+                "Vina's search is multithreaded: more CPUs per ligand or a lower "
+                "exhaustiveness make each ligand finish sooner. Workers × CPUs per "
+                "ligand never exceeds the docking service's CPU limit."
+            )
+        else:
+            st.caption(
+                "Moldina (PSO) uses 1 CPU per ligand and ignores Exhaustiveness."
+            )
 
         st.checkbox("Parallel ligand docking", key="param_parallel")
+        # The server clamps workers to its CPU quota // CPUs per ligand; a
+        # value above the widget's max would make st.number_input raise, so
+        # clamp it first (e.g. after raising CPUs per ligand).
+        max_workers = max_workers_for(WORKER_CAP, effective_cpu())
+        if st.session_state.get("param_max_workers", 1) > max_workers:
+            st.session_state["param_max_workers"] = max_workers
         st.number_input(
             "Max parallel workers",
             key="param_max_workers",
             min_value=1,
-            max_value=WORKER_CAP.cap,
+            max_value=max_workers,
             disabled=not st.session_state.get("param_parallel", False),
         )
-        cap_warning, cap_caption = describe_worker_cap(WORKER_CAP)
+        cap_warning, cap_caption = describe_worker_cap(WORKER_CAP, algorithm)
         if cap_warning:
             st.warning(cap_warning)
         st.caption(cap_caption)
@@ -1892,6 +1943,7 @@ def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, li
             st.success(f"Session {job_label} completed")
         else:
             st.info(f"Viewing session {job_label}")
+        _render_docking_algorithm_caption(result)
         _render_affinity_chart(result)
         _render_visualization(result, job_id)
         _render_file_downloads(result, job_id)
@@ -2023,6 +2075,15 @@ def _render_job_results() -> None:
             return
 
     st.caption("No results found for this session.")
+
+
+def _render_docking_algorithm_caption(result: dict) -> None:
+    dock = result.get("results", {}).get("dock")
+    if not dock:
+        return
+    # Results from before Phase 15 have no key; they were all Moldina (PSO).
+    algorithm = dock.get("docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+    st.caption(f"Docked with {DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}")
 
 
 def _render_affinity_chart(result: dict) -> None:

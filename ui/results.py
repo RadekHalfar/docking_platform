@@ -4,6 +4,8 @@ from __future__ import annotations
 import html as _html
 from typing import Any, Dict
 
+from common.docking_algorithm import DOCKING_ALGORITHM_LABELS
+
 
 def prepare_affinity_data(dock_results: list) -> list[tuple[str, float]] | None:
     """Extract and sort (ligand_id, affinity) pairs from dock results.
@@ -88,6 +90,18 @@ def build_comparison_html(comparison: Dict[str, Any]) -> str:
     rows = [
         f"<tr><th style='text-align:left;padding:4px 10px;{border}'>Ligand</th>{header_cells}</tr>"
     ]
+    # One algorithm per job column, so a row rather than a column; absent
+    # from comparison dicts built before Phase 15.
+    algorithms = comparison.get("algorithms")
+    if algorithms:
+        algorithm_cells = "".join(
+            f"<td style='padding:4px 10px;font-style:italic;{border}'>"
+            f"{_html.escape(DOCKING_ALGORITHM_LABELS.get(alg, str(alg)))}</td>"
+            for alg in algorithms
+        )
+        rows.append(
+            f"<tr><th style='text-align:left;padding:4px 10px;{border}'>Algorithm</th>{algorithm_cells}</tr>"
+        )
 
     for ligand in df.index:
         best_job = best_per_ligand.get(ligand, (None, None))[0]

@@ -1,11 +1,12 @@
 """Session state initialization and parameter helpers."""
 import streamlit as st
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, normalize_docking_algorithm
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.settings import load_settings, save_settings
-from ui.worker_cap import default_worker_count, detect_moldina_worker_cap
+from ui.worker_cap import default_worker_count, detect_moldina_worker_cap, max_workers_for
 
 # Detected once at import time — the docking service's worker ceiling (and
 # where it came from), used to cap the "max parallel workers" control, to
@@ -29,6 +30,7 @@ _WIDGET_DEFAULTS = {
     "param_cpu": "1",
     "param_parallel": False,
     "param_max_workers": default_worker_count(WORKER_CAP),
+    "param_docking_algorithm": DEFAULT_DOCKING_ALGORITHM,
 }
 
 # Keyed widgets whose values must survive a run that stops (st.rerun())
@@ -170,6 +172,38 @@ def get_params() -> dict:
     return st.session_state.get("params", {})
 
 
+def effective_cpu() -> int:
+    """CPUs per ligand the form docks with: the "CPUs per ligand" field in
+    Vina mode, always 1 for Moldina (PSO), which ignores --cpu -- a cpu left
+    over from Vina mode would otherwise still cut its workers to
+    quota // cpu on the server."""
+    if st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM) != "vina":
+        return 1
+    try:
+        return max(1, int(st.session_state.get("param_cpu", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
+def reset_workers_to_algorithm_default() -> None:
+    """Set "Max parallel workers" to the selected algorithm's benchmarked
+    best at the current CPUs per ligand. Called whenever the algorithm is
+    switched (the selector's on_change, a chat command), never on a session
+    load, whose saved worker count wins."""
+    st.session_state["param_max_workers"] = default_worker_count(
+        WORKER_CAP, st.session_state["param_docking_algorithm"], effective_cpu()
+    )
+
+
+def set_docking_algorithm_widget(algorithm: str) -> None:
+    """Select *algorithm* in the GUI's selector, resetting the worker count
+    to its benchmarked best if that is a real switch."""
+    if st.session_state.get("param_docking_algorithm") == algorithm:
+        return
+    st.session_state["param_docking_algorithm"] = algorithm
+    reset_workers_to_algorithm_default()
+
+
 def apply_parsed_params(parsed_params: dict) -> None:
     """Sync LLM-extracted parameters into both params dict and widget pre-fill keys."""
     params = st.session_state.params
@@ -207,6 +241,15 @@ def apply_parsed_params(parsed_params: dict) -> None:
     if parsed_params.get("cpu") is not None:
         st.session_state["param_cpu"] = str(parsed_params["cpu"])
 
+    # Callers pass docking_algorithm only when it was explicitly chosen
+    # (a chat command, an LLM parse that named it): the validator's default
+    # would otherwise reset the selector every message (Phase 15 finding 8).
+    # An unrecognised name (the validator reports it as missing) is not
+    # applied: a value outside the selector's options makes st.radio raise.
+    algorithm = normalize_docking_algorithm(parsed_params.get("docking_algorithm"))
+    if algorithm is not None:
+        set_docking_algorithm_widget(algorithm)
+
 
 def load_session_params(loaded_params: dict) -> None:
     """Replace current params with a loaded session's (or restored
@@ -220,6 +263,10 @@ def load_session_params(loaded_params: dict) -> None:
     parallel/max_workers are applied here rather than in
     apply_parsed_params(), whose chat-parse callers carry the validator's
     default ``parallel: False`` and would reset the checkbox every message.
+    A session without docking_algorithm (saved before Phase 15) reads as
+    the default, Moldina; switching to its algorithm here doesn't reset the
+    worker count -- the saved max_workers (or, without one, the default
+    for that algorithm) applies.
     """
     for key, default in _WIDGET_DEFAULTS.items():
         if key != "param_job_name":
@@ -230,7 +277,7 @@ def load_session_params(loaded_params: dict) -> None:
         st.session_state["param_parallel"] = bool(loaded_params["parallel"])
     if loaded_params.get("max_workers") is not None:
         # Clamped to the widget's own bounds (a checkpoint may come from a
-        # machine with more cores than this one).
+        # machine with more cores than this one, or ran more CPUs per ligand).
         st.session_state["param_max_workers"] = min(
-            max(1, int(loaded_params["max_workers"])), WORKER_CAP.cap
+            max(1, int(loaded_params["max_workers"])), max_workers_for(WORKER_CAP, effective_cpu())
         )

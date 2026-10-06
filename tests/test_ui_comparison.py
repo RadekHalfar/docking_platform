@@ -123,3 +123,22 @@ class TestBuildComparisonHtml:
         assert "job_abc" in out
         assert "job_def" in out
         assert "<table" in out and "</table>" in out
+
+    def test_algorithm_row_names_each_jobs_search(self):
+        # Stage 15.3: one algorithm per job column, so a row under the headers.
+        comparison = {
+            "ligands": ["ATP"], "jobs": ["a", "b"], "algorithms": ["vina", "moldina"],
+            "affinities": [[-5.8, -4.3]], "best_per_ligand": {"ATP": ("a", -5.8)},
+        }
+
+        html = build_comparison_html(comparison)
+
+        assert ">Algorithm</th>" in html
+        assert html.index("Vina (Monte Carlo)") < html.index("Moldina (PSO)")
+        assert html.index(">Algorithm</th>") < html.index(">ATP</td>")
+
+    def test_comparison_without_algorithms_has_no_algorithm_row(self):
+        comparison = {
+            "ligands": ["ATP"], "jobs": ["a"], "affinities": [[-5.8]], "best_per_ligand": {},
+        }
+        assert "Algorithm" not in build_comparison_html(comparison)

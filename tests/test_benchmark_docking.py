@@ -189,3 +189,13 @@ class TestRunDockingArguments:
                           False, 1, 8, 500, 15, 100.0, 60, docking_algorithm=algorithm)
         assert sent["docking_algorithm"] == algorithm
         assert ("population" in sent) is has_population
+
+    @pytest.mark.parametrize("cpu", [1, 4])
+    def test_cpu_is_sent(self, monkeypatch, cpu):
+        # Stage 15.3: --cpu, for Vina's multithreaded search (was pinned to 1).
+        sent = {}
+        monkeypatch.setattr(bench, "call_mcp_tool",
+                            lambda url, tool, arguments, timeout: sent.update(arguments) or {})
+        bench.run_docking("http://x", "r", ["l"], (0, 0, 0), (20, 20, 20), "/out",
+                          False, 1, 8, 500, 15, 100.0, 60, docking_algorithm="vina", cpu=cpu)
+        assert sent["cpu"] == cpu

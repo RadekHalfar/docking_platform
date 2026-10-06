@@ -148,13 +148,19 @@ parallel workers"** number input. Its maximum is `moldina-runner`'s configured
 `docker-compose.yml` directly — bind-mounted into the `ui` container alongside the rest
 of the repo). It follows the server's own rule: a fractional limit is rounded down but
 never below 1 (`'0.5'` → 1), and the result is never above the machine's core count
-(`cpus: '10'` on a 4-core host → 4). Its default is the measured best from the
-[benchmark baseline](#benchmark-baseline-2026-10-05) below, never above that maximum
-(`ui/worker_cap.py::default_worker_count()`, `min(MEASURED_BEST_WORKERS, cap)`). The
-caption under the control states both: "Docking service is limited to N CPUs
-(docker-compose.yml). Benchmarked best: 8 workers (sampled peak ~612 MiB memory each; …)".
+(`cpus: '10'` on a 4-core host → 4). In Vina mode the maximum is that limit divided by
+**CPUs per ligand** (`ui/worker_cap.py::max_workers_for()`, the server's own clamp below),
+so workers × CPUs never exceeds it; Moldina (PSO) always docks with 1 CPU per ligand, and
+the GUI sends `cpu=1` for it whatever the hidden field holds. The default is the selected
+algorithm's measured best from the [benchmark baselines](#benchmark-baseline-2026-10-05)
+below, never above that maximum (`ui/worker_cap.py::default_worker_count()`,
+`min(MEASURED_BEST_WORKERS[algorithm], cap // cpu)`); switching the **Docking algorithm**
+selector (or "use vina" in chat) resets the worker count to the new algorithm's default,
+while loading a session keeps the count it was saved with. The caption under the control
+states both: "Docking service is limited to N CPUs (docker-compose.yml). Benchmarked best
+for Moldina (PSO): 8 workers at 1 CPU each (sampled peak ~612 MiB memory each; …)".
 When the detected limit isn't the one the benchmark ran at (`MEASURED_AT_CPUS`, 10), the
-caption says so ("Benchmarked best at a 10-CPU limit, which may not hold here: …") —
+caption says so ("Benchmarked best for … at a 10-CPU limit, which may not hold here: …") —
 re-run the benchmark for your limits. It falls back to the `ui` container's own `os.cpu_count()`
 only if the compose file can't be found or parsed, or has no positive `limits.cpus`, so
 a parsing failure never blocks GUI startup. The fallback is not silent: the expander
@@ -163,9 +169,9 @@ limit may be lower. Note this is still just a **UX suggestion**, not the authori
 enforcement happens server-side (below). When enabled, up to that many ligands are docked
 concurrently — each is still a fully independent, separately-timed-out Moldina process
 (never batched), so this is running several single-ligand invocations at once rather than
-reintroducing the original OOM-prone batching. Each worker requests only 1 CPU core
-(Moldina's own `--cpu` parallelism is fixed and not user-configurable), so `N` workers
-request `N` cores total.
+reintroducing the original OOM-prone batching. Each worker runs with `cpu` cores (1 for
+Moldina PSO, which ignores `--cpu`; the "CPUs per ligand" field for Vina), so `N` workers
+use `N × cpu` cores.
 
 #### Why the CPU limit didn't do what I expected
 
@@ -202,7 +208,8 @@ python3 benchmark_docking.py --job-id <prepared job> --worker-counts 2,4,6,8,10 
 ```
 
 `--docking-algorithm vina` benchmarks Vina's Monte Carlo search instead of PSO (the
-default); `--population` is then not sent.
+default); `--population` is then not sent. `--cpu N` (default 1) sets the CPUs per ligand,
+which only Vina uses; the server then runs at most `quota // N` workers.
 
 Memory is the residual risk, not CPU: a high worker count on a large batch can still
 exhaust `limits.memory`. The measured figure is in the baseline below. Use
@@ -270,3 +277,56 @@ idle 45.3 MiB, 300/300 succeeded): 1 / 2 / 4 / 6 / 8 / 10 workers took 115.0 / 5
 the default stays 8. The worst per-worker memory was 611.1 MiB (sequential), so 612 MiB
 stays too. The table above is kept as the original record; both runs give the same
 constants, and `tests/test_worker_cap.py` checks them against both.
+
+#### Vina benchmark baseline (2026-10-06)
+
+The same probe and limits (`cpus: '10'`, `memory: 8G`, cgroup budget 10.00 cores),
+measured for `--docking-algorithm vina` (Stage 15.3). This sets
+`MEASURED_BEST_WORKERS["vina"]` and `MEASURED_PEAK_MIB_PER_WORKER["vina"]`, and
+`tests/test_worker_cap.py` re-derives both from the JSON.
+
+- **Workload:** 10 ligands from `job_20261001_071808_ee7e7d` (box 20 × 20 × 20 Å), Vina
+  defaults (`--exhaustiveness 8`, `--num-modes 15`, `--energy-range 100`), `cpu=1` per
+  ligand. All 60 dockings succeeded. Vina takes about 62 s per ligand here, against about
+  2.3 s for PSO, so 10 ligands rather than 50 keeps the run to about 25 minutes.
+- **Command:** `python3 benchmark_docking.py --job-id job_20261001_071808_ee7e7d --num-ligands 10 --worker-counts 2,4,6,8,10 --docking-algorithm vina --cpu 1 --sample-stats --json-out docs/benchmarks/2026-10-06_vina_cpus10_mem8g.json`
+- **Raw data:** [`docs/benchmarks/2026-10-06_vina_cpus10_mem8g.json`](benchmarks/2026-10-06_vina_cpus10_mem8g.json).
+  The idle baseline was 34.1 MiB, and no memory samples failed.
+
+| Workers | Wall clock (s) | s/ligand | Speed-up | Peak memory (MiB) | Mean memory (MiB) | Peak memory/worker (MiB) |
+|---|---|---|---|---|---|---|
+| 1 (sequential) | 615.2 | 61.5 | 1.00× | 620.6 | 570.0 | 586.5 |
+| 2 | 313.0 | 31.3 | 1.97× | 1206.3 | 1097.6 | 586.1 |
+| 4 | 178.3 | 17.8 | 3.45× | 2280.4 | 1957.0 | 561.6 |
+| **6** | **134.6** | 13.5 | **4.57×** | 3402.8 | 2785.8 | 561.4 |
+| 8 | 141.5 | 14.1 | 4.35× | 4351.0 | 3539.4 | 539.6 |
+| 10 | 144.3 | 14.4 | 4.26× | 5166.1 | 3714.1 | 513.2 |
+
+**How the default was chosen.** The same rule as for PSO, fixed before the run. The
+fastest was 6 workers (134.6 s), so the threshold was 141.3 s. 8 workers (141.5 s) misses
+it by 0.2 s, so the GUI's Vina default is **6**. The memory check passes:
+34.1 MiB idle + 6 × 587 MiB ≈ 3.5 GiB, under 8 GiB.
+
+**Reading the numbers.**
+- Scaling is near-linear up to 4 workers (3.45×) and stops after 6. With only 10 ligands,
+  the 6, 8 and 10 rows mostly differ in how the ligands fall into waves: 6 workers run 6 then
+  4, 8 run 8 then 2, and 10 run them all at once, waiting for the slowest. They are within
+  about 7% of each other. 6 versus 8 is not a robust difference, so re-benchmark on a larger
+  batch before relying on it.
+- Memory per worker (~0.5–0.6 GiB) is about the same as PSO's.
+
+**CPUs per ligand.** Two more runs split the same 10 cores differently (each also has its
+own sequential row at that `cpu`):
+
+| Split | Wall clock (s) | Sequential at that `cpu` (s) | Raw data |
+|---|---|---|---|
+| 6 workers × 1 CPU (from the table) | 134.6 | 615.2 | above |
+| 5 workers × 2 CPUs | 128.4 | 312.7 | [`…_cpu2.json`](benchmarks/2026-10-06_vina_cpus10_mem8g_cpu2.json) |
+| 2 workers × 4 CPUs | 122.4 | 179.5 | [`…_cpu4.json`](benchmarks/2026-10-06_vina_cpus10_mem8g_cpu4.json) |
+
+A single ligand gets about 2.0× faster at 2 CPUs and 3.4× at 4 CPUs. On this 10-ligand
+batch, the multi-CPU splits finished 5–9% sooner than 6 × 1, because fewer, faster
+ligands leave a shorter tail. On large batches, single-CPU workers should catch up,
+because Vina's own threading scales less than linearly. The GUI default stays at 1 CPU
+per ligand. For a handful of Vina ligands, raising **CPUs per ligand** is a reasonable
+choice.

@@ -166,7 +166,7 @@ def test_load_session_params_resets_widgets_the_loaded_params_lack():
 def test_max_workers_default_is_measured_best_clamped_to_cap():
     session_state.init()
     assert st.session_state.param_max_workers == min(
-        MEASURED_BEST_WORKERS, session_state.WORKER_CAP.cap
+        MEASURED_BEST_WORKERS["moldina"], session_state.WORKER_CAP.cap
     )
 
 
@@ -177,6 +177,126 @@ def test_load_session_params_sets_parallel_widgets_clamped():
     )
     assert st.session_state.param_parallel is True
     assert st.session_state.param_max_workers == session_state.WORKER_CAP.cap
+
+
+# ---------------------------------------------------------------------------
+# Docking algorithm selector (Stage 15.3)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cap10(monkeypatch):
+    from ui.worker_cap import WorkerCap
+    monkeypatch.setattr(session_state, "WORKER_CAP", WorkerCap(10, "compose"))
+
+
+def test_init_selects_moldina():
+    session_state.init()
+    assert st.session_state.param_docking_algorithm == "moldina"
+
+
+@pytest.mark.parametrize("algorithm, cpu, expected", [
+    ("moldina", "4", 1),  # PSO ignores --cpu: always 1
+    ("vina", "4", 4),
+    ("vina", "", 1),
+    ("vina", "abc", 1),
+    ("vina", "0", 1),
+])
+def test_effective_cpu(algorithm, cpu, expected):
+    st.session_state["param_docking_algorithm"] = algorithm
+    st.session_state["param_cpu"] = cpu
+    assert session_state.effective_cpu() == expected
+
+
+def test_switching_algorithm_resets_workers_to_its_best(cap10):
+    session_state.init()
+    st.session_state.param_max_workers = 3
+
+    session_state.set_docking_algorithm_widget("vina")
+
+    assert st.session_state.param_docking_algorithm == "vina"
+    assert st.session_state.param_max_workers == min(MEASURED_BEST_WORKERS["vina"], 10)
+
+
+def test_switch_at_several_cpus_per_ligand_stays_within_quota(cap10):
+    session_state.init()
+    st.session_state.param_cpu = "4"
+
+    session_state.set_docking_algorithm_widget("vina")
+
+    assert st.session_state.param_max_workers == min(MEASURED_BEST_WORKERS["vina"], 10 // 4)
+
+
+def test_selecting_the_current_algorithm_keeps_workers(cap10):
+    session_state.init()
+    st.session_state.param_max_workers = 3
+
+    session_state.set_docking_algorithm_widget("moldina")
+
+    assert st.session_state.param_max_workers == 3
+
+
+def test_apply_parsed_params_without_algorithm_keeps_the_selector():
+    # Phase 15 finding 8: a chat parse that didn't name the algorithm must
+    # not reset a chosen one.
+    session_state.init()
+    st.session_state.param_docking_algorithm = "vina"
+
+    session_state.apply_parsed_params({"protein_id": "6lu7", "center": [1, 2, 3]})
+
+    assert st.session_state.param_docking_algorithm == "vina"
+
+
+def test_apply_parsed_params_with_algorithm_moves_the_selector():
+    session_state.init()
+    session_state.apply_parsed_params({"docking_algorithm": "vina"})
+    assert st.session_state.param_docking_algorithm == "vina"
+    assert st.session_state.params["docking_algorithm"] == "vina"
+
+
+@pytest.mark.parametrize("value", ["gnina", "", None, 3])
+def test_apply_parsed_params_ignores_an_unrecognised_algorithm(value):
+    # The LLM path passes an explicit-but-invalid name through (the
+    # validator lists it as missing); st.radio raises on a value outside
+    # its options.
+    session_state.init()
+    st.session_state.param_docking_algorithm = "vina"
+
+    session_state.apply_parsed_params({"docking_algorithm": value})
+
+    assert st.session_state.param_docking_algorithm == "vina"
+
+
+def test_load_of_session_without_algorithm_reads_as_moldina():
+    # Phase 15 finding 9: sessions saved before Phase 15 have no key.
+    session_state.init()
+    st.session_state.param_docking_algorithm = "vina"
+
+    session_state.load_session_params({"protein_id": "6lu7", "parallel": True, "max_workers": 3})
+
+    assert st.session_state.param_docking_algorithm == "moldina"
+    assert st.session_state.param_max_workers == 3
+
+
+def test_load_of_vina_session_keeps_its_saved_workers(cap10):
+    session_state.init()
+
+    session_state.load_session_params(
+        {"protein_id": "6lu7", "docking_algorithm": "vina", "cpu": 2, "parallel": True, "max_workers": 3}
+    )
+
+    assert st.session_state.param_docking_algorithm == "vina"
+    assert st.session_state.param_cpu == "2"
+    assert st.session_state.param_max_workers == 3
+
+
+def test_load_clamps_workers_to_cap_divided_by_cpu(cap10):
+    session_state.init()
+
+    session_state.load_session_params(
+        {"protein_id": "6lu7", "docking_algorithm": "vina", "cpu": 4, "parallel": True, "max_workers": 10}
+    )
+
+    assert st.session_state.param_max_workers == 2
 
 
 # ---------------------------------------------------------------------------

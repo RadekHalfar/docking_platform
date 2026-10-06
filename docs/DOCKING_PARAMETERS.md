@@ -258,6 +258,13 @@ Complete overview of all parameters used in the molecular docking workflow acros
   search are unaffected by them (see the same section).
 - **Recorded:** in the dock result (`docking_algorithm` key) and in
   `parameters.txt`. Changing it reruns dock and visualize only.
+- **GUI:** the **Docking algorithm** selector at the top of the Advanced
+  expander ("Moldina (PSO)" / "Vina (Monte Carlo)"); "use vina" / "switch to
+  PSO" in chat moves it too. Switching resets "Max parallel workers" to the
+  new algorithm's benchmarked best. The Current parameters summary, the
+  results panel ("Docked with …") and the Compare Sessions table (an
+  Algorithm row) show which algorithm applies; results written before
+  Phase 15 read as Moldina (PSO).
 - **Choosing:** PSO is far faster per ligand (seconds vs. ~1.5 minutes for
   6lu7/ATP at the defaults) but in that comparison scored worse
   (-4.3 vs. -5.8 kcal/mol); Vina's search is the more thorough one here.
@@ -265,8 +272,11 @@ Complete overview of all parameters used in the molecular docking workflow acros
 ### Performance Parameters
 
 #### `cpu` - CPU Cores
-- **Default/fixed via GUI:** `1` — not currently exposed as a GUI-tunable
-  setting; only direct/CLI callers of `run_docking` can override it.
+- **Default:** `1`.
+- **GUI:** the **CPUs per ligand** field in the Advanced expander, shown only
+  in Vina mode. In Moldina (PSO) mode the GUI always sends `cpu=1`, whatever
+  the hidden field holds, so a value left over from Vina mode can't cut the
+  worker count.
 - **Range:** 1 - number of available cores
 - **Impact:** Vina mode only — more cores speed up a single ligand's own
   Monte Carlo search. PSO ignores it.
@@ -286,10 +296,12 @@ Complete overview of all parameters used in the molecular docking workflow acros
   bind-mounted into the `ui` container) — falls back to the `ui` container's
   own `os.cpu_count()` only if the compose file can't be found/parsed, and
   then shows a warning with the reason. Either way this is a convenience
-  suggestion only, not authoritative (see below). Its default is the
-  benchmarked best worker count (`ui/worker_cap.py::MEASURED_BEST_WORKERS`,
-  8 at `cpus: '10'`/`8G`), never above the cap — see
-  [BATCH_DOCKING.md's benchmark baseline](BATCH_DOCKING.md#benchmark-baseline-2026-10-05)
+  suggestion only, not authoritative (see below). In Vina mode the cap is
+  divided by CPUs per ligand, matching the server's clamp below. Its default
+  is the selected algorithm's benchmarked best worker count
+  (`ui/worker_cap.py::MEASURED_BEST_WORKERS`, measured at `cpus: '10'`/`8G`),
+  never above that cap — see
+  [BATCH_DOCKING.md's benchmark baselines](BATCH_DOCKING.md#benchmark-baseline-2026-10-05)
 - **Server-side safety clamp:** `max_workers` is capped to the number of
   ligands in the batch and to `moldina-runner`'s real, schedulable CPU
   budget — `min(cgroup CPU quota, os.cpu_count())`, via
@@ -489,9 +501,9 @@ longer part of the default workflow.
 
 ### Performance Optimization
 
-The `cpu` values below apply to direct/CLI callers of `run_docking` — the GUI itself
-fixes `cpu=1` and no longer exposes it, offering `parallel`/`max_workers` (dock several
-ligands concurrently) instead of a per-ligand core count. See
+The `cpu` values below only matter in Vina mode (PSO ignores them). The GUI offers them
+as **CPUs per ligand** in Vina mode, next to `parallel`/`max_workers` (dock several
+ligands concurrently); workers × `cpu` never exceeds the docking service's CPU limit. See
 [Optional parallel docking](BATCH_DOCKING.md#optional-parallel-docking).
 
 **Fast (testing):**

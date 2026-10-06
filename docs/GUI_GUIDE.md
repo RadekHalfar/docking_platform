@@ -104,6 +104,37 @@ replaces the system-generated job ID, which remains the actual unique
 identifier on disk and everywhere else in the app. Leave it blank and the
 session just shows up under its job ID, exactly as before this field existed.
 
+## Choosing the Docking Algorithm
+
+The **Advanced** expander under the Docking Box starts with a **Docking
+algorithm** selector:
+
+- **Moldina (PSO)** (default) — Particle Swarm Optimization. Fast (seconds per
+  ligand), always 1 CPU per ligand, and ignores **Exhaustiveness**.
+- **Vina (Monte Carlo)** — AutoDock Vina's own search in the same binary.
+  Much slower per ligand (about 1.5 minutes for 6lu7/ATP at the defaults),
+  but its search is more thorough. A **CPUs per ligand** field appears, and
+  both it and Exhaustiveness change how long each ligand takes.
+
+The chat commands "use vina", "switch to PSO" and "set algorithm to vina" move
+the selector too, without an LLM call (see
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). A chat message that doesn't name
+an algorithm never resets it.
+
+**Max parallel workers** goes up to the docking service's CPU limit divided by
+CPUs per ligand, so workers × CPUs never oversubscribe it. Switching algorithm
+resets it to that algorithm's benchmarked best
+([BATCH_DOCKING.md](BATCH_DOCKING.md#benchmark-baseline-2026-10-05)); the
+caption under it says which. Loading a session keeps the worker count it was
+saved with.
+
+The **Current parameters** summary shows the selected algorithm, the results
+panel says which one produced a session's results ("Docked with …"), and the
+Compare Sessions table has an **Algorithm** row. Sessions from before the
+selector existed read as Moldina (PSO), which is what they ran. Switching
+algorithm in an active session and clicking **Run Docking** redocks only
+docking and visualization.
+
 ## Redocking After a Parameter Change
 
 The GUI keeps a continuing **session** for the job you just ran, the same way
@@ -428,7 +459,9 @@ Check two or more sessions in the sidebar's Session History and click
 panel shows a table with ligands as rows and sessions as columns — column
 headers use each session's name when it has one, falling back to the job ID
 otherwise; cells are the best binding affinity (kcal/mol) for that ligand in
-that session, or "N/A" if the ligand wasn't docked in that session. The
+that session, or "N/A" if the ligand wasn't docked in that session. An
+**Algorithm** row under the headers names the docking algorithm each session
+used. The
 strongest predicted binder per ligand (most negative kcal/mol) is
 highlighted green — rendered as a plain HTML table (not `st.dataframe`) so
 the highlight stays readable in both light and dark theme.

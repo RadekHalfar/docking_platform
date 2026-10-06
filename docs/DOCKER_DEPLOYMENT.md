@@ -621,8 +621,8 @@ is only a soft scheduling hint that isn't strongly enforced outside Swarm mode. 
 quota assumes (both sides account for this, see the linked section for why). After
 changing `limits.cpus` or `limits.memory`, re-run the
 [benchmark](BATCH_DOCKING.md#benchmark-baseline-2026-10-05): the GUI's default worker
-count (`MEASURED_BEST_WORKERS` in `ui/worker_cap.py`) was measured under the current
-limits and doesn't follow them automatically.
+counts (`MEASURED_BEST_WORKERS` in `ui/worker_cap.py`, one per docking algorithm) were measured under the current
+limits and don't follow them automatically; re-run with `--docking-algorithm vina` too.
 
 ### Multi-Stage Builds
 

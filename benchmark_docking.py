@@ -351,14 +351,14 @@ def format_stats_columns(stats: Dict[str, float]) -> str:
 
 def run_docking(url, receptor, ligands, center, box_size, output_dir,
                  parallel, max_workers, exhaustiveness, population,
-                 num_modes, energy_range, timeout, docking_algorithm="moldina") -> dict:
+                 num_modes, energy_range, timeout, docking_algorithm="moldina", cpu=1) -> dict:
     arguments = {
         "receptor_path": receptor,
         "ligand_paths": ligands,
         "output_dir": output_dir,
         "center": list(center),
         "box_size": list(box_size),
-        "cpu": 1,
+        "cpu": cpu,
         "exhaustiveness": exhaustiveness,
         "num_modes": num_modes,
         "energy_range": energy_range,
@@ -406,6 +406,9 @@ def main() -> None:
                          help="Comma-separated worker counts to benchmark in parallel mode (default: 2,4,5,8,10)")
     parser.add_argument("--exhaustiveness", type=int, default=8)
     parser.add_argument("--population", type=int, default=500, help="PSO population (Moldina mode only)")
+    parser.add_argument("--cpu", type=int, default=1,
+                         help="CPUs per ligand (default: 1). Vina mode's Monte Carlo search is multithreaded; "
+                              "PSO ignores it. The server clamps workers to its CPU quota // cpu")
     parser.add_argument("--docking-algorithm", choices=DOCKING_ALGORITHMS, default=DEFAULT_DOCKING_ALGORITHM,
                          help="Search to benchmark: 'moldina' (PSO) or 'vina' (Monte Carlo) (default: moldina)")
     parser.add_argument("--num-modes", type=int, default=15)
@@ -459,7 +462,7 @@ def main() -> None:
     run_id = uuid.uuid4().hex[:8]
     timeout = max(300, args.timeout_per_ligand * len(ligands))
 
-    print(f"\nBenchmarking {len(ligands)} ligand(s) with docking_algorithm={args.docking_algorithm} "
+    print(f"\nBenchmarking {len(ligands)} ligand(s) with docking_algorithm={args.docking_algorithm} cpu={args.cpu} "
           f"across {len(configs)} configuration(s): "
           f"{', '.join(label for label, *_ in configs)}\n")
 
@@ -473,7 +476,7 @@ def main() -> None:
             lambda: run_docking(
                 args.url, receptor, ligands, center, box, output_dir,
                 parallel, workers, args.exhaustiveness, args.population,
-                args.num_modes, args.energy_range, timeout, args.docking_algorithm,
+                args.num_modes, args.energy_range, timeout, args.docking_algorithm, args.cpu,
             ),
             sampler,
         )
@@ -524,6 +527,7 @@ def main() -> None:
             "job_id": args.job_id, "num_ligands": len(ligands),
             "center": center, "box_size": box, "run_id": run_id,
             "docking_algorithm": args.docking_algorithm,
+            "cpu": args.cpu,
             "results": rows,
         }
         if args.sample_stats:

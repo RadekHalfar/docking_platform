@@ -16,7 +16,11 @@ from ui.worker_cap import (
     default_worker_count,
     describe_worker_cap,
     detect_moldina_worker_cap,
+    max_workers_for,
 )
+
+_PSO_BEST = MEASURED_BEST_WORKERS["moldina"]
+_PSO_MIB = MEASURED_PEAK_MIB_PER_WORKER["moldina"]
 
 
 def _write_compose(tmp_path, cpus):
@@ -174,8 +178,13 @@ class TestDescribeWorkerCap:
             f"Docking service is limited to {MEASURED_AT_CPUS} CPUs (docker-compose.yml)."
         )
         assert "memory usage" in caption
-        assert _MEASURED_TEXT in caption
+        assert _measured_text("moldina", "Moldina (PSO)") in caption
         assert "may not hold here" not in caption
+
+    def test_caption_is_the_selected_algorithms(self):
+        _, caption = describe_worker_cap(WorkerCap(MEASURED_AT_CPUS, "compose"), "vina")
+        assert _measured_text("vina", "Vina (Monte Carlo)") in caption
+        assert "Moldina" not in caption
 
     @pytest.mark.parametrize("cap, cpus_text", [(1, "1 CPU "), (4, "4 CPUs"), (MEASURED_AT_CPUS + 6, "16 CPUs")])
     def test_compose_cap_other_than_benchmarked_names_the_conditions(self, cap, cpus_text):
@@ -183,8 +192,8 @@ class TestDescribeWorkerCap:
         # caption must not present 10-CPU numbers as if they applied here.
         _, caption = describe_worker_cap(WorkerCap(cap, "compose"))
         assert f"limited to {cpus_text}" in caption
-        assert (f"Benchmarked best at a {MEASURED_AT_CPUS}-CPU limit, which may not hold here: "
-                f"{MEASURED_BEST_WORKERS} workers") in caption
+        assert (f"Benchmarked best for Moldina (PSO) at a {MEASURED_AT_CPUS}-CPU limit, "
+                f"which may not hold here: {_PSO_BEST} workers") in caption
 
     def test_fallback_source_warns_with_reason(self):
         warning, caption = describe_worker_cap(WorkerCap(16, "fallback", "some reason"))
@@ -192,59 +201,91 @@ class TestDescribeWorkerCap:
         assert "The real limit may be lower." in warning
         assert "(some reason)" in warning
         assert "memory usage" in caption
-        assert f"{MEASURED_BEST_WORKERS} workers (sampled peak ~{MEASURED_PEAK_MIB_PER_WORKER}" in caption
+        assert f"{_PSO_BEST} workers at 1 CPU each (sampled peak ~{_PSO_MIB}" in caption
         assert "may not hold here" in caption
 
 
-_MEASURED_TEXT = (
-    f"Benchmarked best: {MEASURED_BEST_WORKERS} workers "
-    f"(sampled peak ~{MEASURED_PEAK_MIB_PER_WORKER} MiB memory each"
-)
+def _measured_text(algorithm: str, label: str) -> str:
+    return (
+        f"Benchmarked best for {label}: {MEASURED_BEST_WORKERS[algorithm]} workers at 1 CPU each "
+        f"(sampled peak ~{MEASURED_PEAK_MIB_PER_WORKER[algorithm]} MiB memory each"
+    )
+
+
+class TestMaxWorkersFor:
+    @pytest.mark.parametrize("cap, cpu, expected", [
+        (10, 1, 10), (10, 2, 5), (10, 3, 3), (10, 4, 2), (10, 10, 1), (10, 16, 1), (10, 0, 10),
+    ])
+    def test_is_cap_divided_by_cpu_never_below_one(self, cap, cpu, expected):
+        # Same rule as moldina-runner's clamp: workers <= quota // cpu.
+        assert max_workers_for(WorkerCap(cap, "compose"), cpu) == expected
 
 
 class TestDefaultWorkerCount:
-    @pytest.mark.parametrize("cap", [1, MEASURED_BEST_WORKERS - 1, MEASURED_BEST_WORKERS,
-                                     MEASURED_BEST_WORKERS + 1, 64])
+    @pytest.mark.parametrize("cap", [1, _PSO_BEST - 1, _PSO_BEST, _PSO_BEST + 1, 64])
     def test_is_measured_best_clamped_to_cap(self, cap):
-        assert default_worker_count(WorkerCap(cap, "compose")) == min(MEASURED_BEST_WORKERS, cap)
+        assert default_worker_count(WorkerCap(cap, "compose")) == min(_PSO_BEST, cap)
 
     def test_fallback_cap_is_clamped_too(self):
         assert default_worker_count(WorkerCap(2, "fallback", "r")) == 2
 
+    @pytest.mark.parametrize("algorithm", ["moldina", "vina"])
+    def test_is_per_algorithm(self, algorithm):
+        assert default_worker_count(WorkerCap(64, "compose"), algorithm) == MEASURED_BEST_WORKERS[algorithm]
+
+    @pytest.mark.parametrize("cpu", [1, 2, 4, 8])
+    def test_never_above_cap_divided_by_cpu(self, cpu):
+        cap = WorkerCap(10, "compose")
+        assert default_worker_count(cap, "vina", cpu) == min(MEASURED_BEST_WORKERS["vina"], 10 // cpu)
+
+
+_BENCHMARKS_DIR = Path(__file__).resolve().parents[1] / "docs" / "benchmarks"
+
 
 class TestMeasuredConstantsMatchBenchmark:
-    """The MEASURED_* constants are copied from a checked-in benchmark run;
-    re-derive them from that JSON with the documented rule so the two can't
-    drift apart (Phase 14 Review Stage R1)."""
+    """The MEASURED_* constants are copied from checked-in benchmark runs;
+    re-derive them from those JSONs with the documented rule so the two
+    can't drift apart (Phase 14 Review Stage R1)."""
 
-    # The 14.3 run, and its Review Stage R1 re-run with the wall-clock bias
-    # fixed (docs/BATCH_DOCKING.md, "Benchmark baseline"). Both must agree.
+    # Per algorithm, at 1 CPU per ligand: moldina's 14.3 run and its Review
+    # Stage R1 re-run with the wall-clock bias fixed (both must agree), and
+    # vina's Stage 15.3 run (docs/BATCH_DOCKING.md, "Benchmark baseline").
     BENCHMARKS = [
-        Path(__file__).resolve().parents[1] / "docs" / "benchmarks" / name
-        for name in ("2026-10-05_moldina_cpus10_mem8g.json",
-                     "2026-10-05_moldina_cpus10_mem8g_r1_rerun.json")
+        ("moldina", "2026-10-05_moldina_cpus10_mem8g.json"),
+        ("moldina", "2026-10-05_moldina_cpus10_mem8g_r1_rerun.json"),
+        ("vina", "2026-10-06_vina_cpus10_mem8g.json"),
     ]
 
-    @pytest.fixture(params=BENCHMARKS, ids=lambda p: p.stem)
+    @pytest.fixture(params=BENCHMARKS, ids=lambda b: b[1].removesuffix(".json"))
     def benchmark(self, request):
-        return request.param
+        algorithm, name = request.param
+        return algorithm, _BENCHMARKS_DIR / name
 
     @pytest.fixture
-    def rows(self, benchmark):
-        data = json.loads(benchmark.read_text(encoding="utf-8"))
-        rows = data["results"]
-        assert all("error" not in r and r["failed"] == 0 for r in rows)
-        return rows
+    def data(self, benchmark):
+        data = json.loads(benchmark[1].read_text(encoding="utf-8"))
+        assert all("error" not in r and r["failed"] == 0 for r in data["results"])
+        return data
 
-    def test_best_workers_is_smallest_within_5_percent_of_fastest(self, rows):
+    def test_benchmark_is_for_its_algorithm_at_one_cpu(self, benchmark, data):
+        # The 14.3 JSONs predate both keys; they were PSO at cpu 1.
+        assert data.get("docking_algorithm", "moldina") == benchmark[0]
+        assert data.get("cpu", 1) == 1
+
+    def test_best_workers_is_smallest_within_5_percent_of_fastest(self, benchmark, data):
+        rows = data["results"]
         fastest = min(r["elapsed_seconds"] for r in rows)
         within = [r["workers"] for r in rows if r["elapsed_seconds"] <= fastest * 1.05]
-        assert MEASURED_BEST_WORKERS == min(within)
+        assert MEASURED_BEST_WORKERS[benchmark[0]] == min(within)
 
-    def test_peak_per_worker_is_worst_sampled_value_rounded_up(self, rows):
-        worst = max(r["stats"]["peak_mem_per_worker_bytes"] for r in rows) / 1024 ** 2
-        assert MEASURED_PEAK_MIB_PER_WORKER == math.ceil(worst)
+    def test_peak_per_worker_is_worst_sampled_value_rounded_up(self, benchmark, data):
+        worst = max(r["stats"]["peak_mem_per_worker_bytes"] for r in data["results"]) / 1024 ** 2
+        assert MEASURED_PEAK_MIB_PER_WORKER[benchmark[0]] == math.ceil(worst)
 
-    def test_benchmark_ran_at_the_cpu_limit_it_is_labelled_with(self, benchmark, rows):
-        assert f"cpus{MEASURED_AT_CPUS}_" in benchmark.name
-        assert max(r["workers"] for r in rows) == MEASURED_AT_CPUS
+    def test_benchmark_ran_at_the_cpu_limit_it_is_labelled_with(self, benchmark, data):
+        assert f"cpus{MEASURED_AT_CPUS}_" in benchmark[1].name
+        assert max(r["workers"] for r in data["results"]) == MEASURED_AT_CPUS
+
+    def test_every_algorithm_has_a_benchmark(self):
+        from common.docking_algorithm import DOCKING_ALGORITHMS
+        assert {a for a, _ in self.BENCHMARKS} == set(DOCKING_ALGORITHMS) == set(MEASURED_BEST_WORKERS)

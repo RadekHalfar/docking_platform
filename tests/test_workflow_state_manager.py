@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from services.llm_orchestrator.workflow_definition import with_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 
 
@@ -79,7 +80,7 @@ def test_load_checkpoint_parameters(mgr):
     data = mgr.load_checkpoint(1)
 
     assert data["revision"] == 1
-    assert data["parameters"] == PARAMS_A
+    assert data["parameters"] == with_default_parameters(PARAMS_A)
     assert data["runtime_state"] is None
 
 
@@ -107,7 +108,7 @@ def test_load_checkpoint_both(mgr):
     )
 
     data = mgr.load_checkpoint(rev)
-    assert data["parameters"] == PARAMS_A
+    assert data["parameters"] == with_default_parameters(PARAMS_A)
     assert data["runtime_state"] == STATE_A
 
 
@@ -128,7 +129,7 @@ def test_restore_revision_updates_latest_parameters(mgr):
     mgr.restore_revision(r1)
 
     restored = mgr.load_latest_parameters()
-    assert restored == PARAMS_A
+    assert restored == with_default_parameters(PARAMS_A)
 
 
 def test_restore_revision_records_undo_event(mgr):
@@ -179,7 +180,7 @@ def test_restore_revision_does_not_resurrect_stale_values(mgr):
 
     restored = mgr.load_latest_parameters()
     # Must be PARAMS_B exactly, not a merge of A and B.
-    assert restored == PARAMS_B
+    assert restored == with_default_parameters(PARAMS_B)
     assert restored["ligand_ids"] == ["HEM"]
 
 
@@ -268,13 +269,13 @@ def test_load_draft_parameters_returns_none_when_none_saved(mgr):
 
 def test_save_and_load_draft_parameters_round_trips(mgr):
     mgr.save_draft_parameters(PARAMS_A)
-    assert mgr.load_draft_parameters() == PARAMS_A
+    assert mgr.load_draft_parameters() == with_default_parameters(PARAMS_A)
 
 
 def test_save_draft_parameters_overwrites_in_place(mgr):
     mgr.save_draft_parameters(PARAMS_A)
     mgr.save_draft_parameters(PARAMS_B)
-    assert mgr.load_draft_parameters() == PARAMS_B
+    assert mgr.load_draft_parameters() == with_default_parameters(PARAMS_B)
 
 
 def test_clear_draft_parameters_removes_it(mgr):
@@ -302,8 +303,8 @@ def test_draft_parameters_do_not_bump_revision_or_appear_in_history(mgr):
     assert mgr.get_current_revision() == before_revision
     assert len(mgr.list_revisions()) == before_history_len
     # The real checkpoint (used for the redock diff) is untouched by the draft.
-    assert mgr.load_latest_parameters() == PARAMS_A
-    assert mgr.load_draft_parameters() == PARAMS_B
+    assert mgr.load_latest_parameters() == with_default_parameters(PARAMS_A)
+    assert mgr.load_draft_parameters() == with_default_parameters(PARAMS_B)
 
 
 # ---------------------------------------------------------------------------
@@ -415,3 +416,40 @@ def test_parameters_ran_false_after_a_restore_and_survives_a_new_manager(mgr):
 
     assert mgr.parameters_ran() is False
     assert WorkflowStateManager(mgr.job_dir).parameters_ran() is False
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R1, Phase 15: parameters stored and read with defaults filled
+# ---------------------------------------------------------------------------
+
+def _write_pre_phase15_checkpoint(mgr):
+    """What an old session has on disk: no docking_algorithm key."""
+    import json
+    payload = {"revision": 1, "timestamp": "2026-09-01T00:00:00+00:00", "source": "initial_parse",
+               "parameters": dict(PARAMS_A)}
+    mgr.parameters_file.write_text(json.dumps(payload))
+    mgr._checkpoint_path(1, "parameters").write_text(json.dumps(payload))
+
+
+def test_old_checkpoint_reads_with_the_defaults_it_ran_with(mgr):
+    _write_pre_phase15_checkpoint(mgr)
+    assert mgr.load_latest_parameters()["docking_algorithm"] == "moldina"
+    assert mgr.load_checkpoint(1)["parameters"]["docking_algorithm"] == "moldina"
+
+
+def test_restating_a_default_on_an_old_checkpoint_logs_no_change(mgr):
+    """job.log said "docking_algorithm: None -> 'moldina'" on the first save
+    of an old session, although nothing changed."""
+    _write_pre_phase15_checkpoint(mgr)
+    mgr.save_parameters_checkpoint({**PARAMS_A, "docking_algorithm": "moldina"}, source="interactive_update")
+    log = (mgr.job_dir / "job.log").read_text()
+    assert "no changes" in log
+    assert "None ->" not in log
+
+
+def test_saved_parameters_are_stored_full(mgr):
+    import json
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    mgr.save_draft_parameters(PARAMS_B)
+    assert json.loads(mgr.parameters_file.read_text())["parameters"] == with_default_parameters(PARAMS_A)
+    assert json.loads(mgr.draft_parameters_file.read_text())["parameters"] == with_default_parameters(PARAMS_B)

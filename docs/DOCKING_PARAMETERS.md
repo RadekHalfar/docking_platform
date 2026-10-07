@@ -281,8 +281,9 @@ Complete overview of all parameters used in the molecular docking workflow acros
 - **Impact:** Vina mode only — more cores speed up a single ligand's own
   Monte Carlo search. PSO ignores it.
 - **Interaction with `max_workers`:** each parallel worker runs a process
-  using `cpu` cores, so the server clamps workers to
-  `CPU budget // cpu` (see below).
+  using `cpu` cores, so in Vina mode the server clamps workers to
+  `CPU budget // cpu` (see below). PSO uses one core per ligand whatever
+  `cpu` says, so `cpu` doesn't cut its workers.
 
 #### `parallel` / `max_workers` - Concurrent Ligands
 - **Default:** `parallel=false` (sequential — one ligand docked at a time)
@@ -305,8 +306,11 @@ Complete overview of all parameters used in the molecular docking workflow acros
 - **Server-side safety clamp:** `max_workers` is capped to the number of
   ligands in the batch and to `moldina-runner`'s real, schedulable CPU
   budget — `min(cgroup CPU quota, os.cpu_count())`, via
-  `_detect_effective_cpu_count()` — divided by `cpu`, so workers × `cpu`
-  never exceeds it (e.g. a 10-CPU budget with `cpu=4` allows 2 workers). Neither number is trusted alone: Docker
+  `_detect_effective_cpu_count()` — divided by the CPUs each ligand really
+  uses (`cpu` in Vina mode, 1 in PSO mode; `common/docking_algorithm.py::cpus_per_ligand()`),
+  so workers × CPUs never exceeds it (e.g. a 10-CPU budget with Vina and
+  `cpu=4` allows 2 workers; PSO with `cpu=4` still allows 10). The result's
+  `workers` key reports the count actually used. Neither number is trusted alone: Docker
   Compose's `deploy.resources.limits.cpus` is a scheduling quota, not a CPU
   mask, so `os.cpu_count()` doesn't reflect it and can report far more
   cores than are actually schedulable — but the configured quota isn't

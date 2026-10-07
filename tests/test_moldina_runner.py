@@ -1226,20 +1226,27 @@ class TestDockingAlgorithm:
         assert not mock_subprocess.run.called
         assert not os.path.exists(output_dir)
 
-    @pytest.mark.parametrize("cpu,expected_workers", [(1, 8), (2, 4), (4, 2), (8, 1)])
-    def test_workers_clamped_to_quota_divided_by_cpu(self, runner, temp_dir, mock_subprocess,
-                                                     cpu, expected_workers):
-        """workers × cpu never exceeds the container's CPU budget (finding 3)."""
+    @pytest.mark.parametrize("algorithm,cpu,expected_workers", [
+        ("vina", 1, 8), ("vina", 2, 4), ("vina", 4, 2), ("vina", 8, 1),
+        # PSO ignores --cpu (Stage 15.1 finding 2), so cpu must not cut its
+        # workers (Review Stage R1, Phase 15, correctness #2).
+        ("moldina", 4, 8), ("moldina", 8, 8),
+    ])
+    def test_workers_clamped_to_quota_divided_by_cpus_per_ligand(self, runner, temp_dir, mock_subprocess,
+                                                                 algorithm, cpu, expected_workers):
+        """workers × CPUs per ligand never exceeds the container's CPU budget (finding 3)."""
         receptor, ligands, output_dir = self._files(temp_dir, n_ligands=10)
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
 
         with patch('services.moldina_runner.ThreadPoolExecutor', wraps=ThreadPoolExecutor) as mock_pool, \
                 patch('services.moldina_runner._detect_effective_cpu_count', return_value=8):
-            runner.run_moldina_docking(
+            result = runner.run_moldina_docking(
                 receptor, ligands, output_dir, (0, 0, 0), (20, 20, 20),
-                cpu=cpu, parallel=True, max_workers=8, docking_algorithm="vina",
+                cpu=cpu, parallel=True, max_workers=8, docking_algorithm=algorithm,
             )
 
+        # Reported, so the benchmark labels its rows with what ran (correctness #7).
+        assert result["workers"] == expected_workers
         if expected_workers > 1:
             mock_pool.assert_called_once_with(max_workers=expected_workers)
         else:

@@ -178,24 +178,56 @@ class TestFormatting:
 
 
 class TestRunDockingArguments:
-    """Stage 15.1: --docking-algorithm is sent; population only in PSO mode."""
+    """--docking-algorithm (Stage 15.1) and --cpu (Stage 15.3) are sent."""
 
-    @pytest.mark.parametrize("algorithm,has_population", [("moldina", True), ("vina", False)])
-    def test_population_only_for_pso(self, monkeypatch, algorithm, has_population):
+    @staticmethod
+    def _sent(monkeypatch, **kwargs) -> dict:
         sent = {}
         monkeypatch.setattr(bench, "call_mcp_tool",
                             lambda url, tool, arguments, timeout: sent.update(arguments) or {})
         bench.run_docking("http://x", "r", ["l"], (0, 0, 0), (20, 20, 20), "/out",
-                          False, 1, 8, 500, 15, 100.0, 60, docking_algorithm=algorithm)
-        assert sent["docking_algorithm"] == algorithm
-        assert ("population" in sent) is has_population
+                          False, 1, 8, 500, 15, 100.0, 60, **kwargs)
+        return sent
 
-    @pytest.mark.parametrize("cpu", [1, 4])
-    def test_cpu_is_sent(self, monkeypatch, cpu):
-        # Stage 15.3: --cpu, for Vina's multithreaded search (was pinned to 1).
-        sent = {}
-        monkeypatch.setattr(bench, "call_mcp_tool",
-                            lambda url, tool, arguments, timeout: sent.update(arguments) or {})
-        bench.run_docking("http://x", "r", ["l"], (0, 0, 0), (20, 20, 20), "/out",
-                          False, 1, 8, 500, 15, 100.0, 60, docking_algorithm="vina", cpu=cpu)
-        assert sent["cpu"] == cpu
+    @pytest.mark.parametrize("algorithm,cpu", [("moldina", 1), ("vina", 1), ("vina", 4)])
+    def test_algorithm_and_cpu_are_sent(self, monkeypatch, algorithm, cpu):
+        # population is sent in both modes: the server leaves it out of a
+        # Vina command itself (Review Stage R1, Phase 15).
+        sent = self._sent(monkeypatch, docking_algorithm=algorithm, cpu=cpu)
+        assert (sent["docking_algorithm"], sent["cpu"], sent["population"]) == (algorithm, cpu, 500)
+
+
+class TestWorkersRan:
+    """Review Stage R1, Phase 15: rows record the workers the server ran."""
+
+    def test_reported_workers_win_and_are_noted(self, capsys):
+        assert bench.workers_ran(8, {"workers": 2}) == 2
+        assert "server ran 2 worker(s), not 8" in capsys.readouterr().out
+
+    def test_matching_count_prints_nothing(self, capsys):
+        assert bench.workers_ran(4, {"workers": 4}) == 4
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.parametrize("result", [None, {"successful": 1}])
+    def test_failed_call_or_old_server_falls_back_to_request(self, result):
+        assert bench.workers_ran(6, result) == 6
+
+
+class TestTimeoutPerLigand:
+    """Review Stage R1, Phase 15: the default budget follows Vina's exhaustiveness."""
+
+    @staticmethod
+    def _args(**kw):
+        import argparse
+        base = {"timeout_per_ligand": None, "docking_algorithm": "moldina", "exhaustiveness": 8}
+        return argparse.Namespace(**{**base, **kw})
+
+    def test_pso_default_unchanged(self):
+        assert bench.timeout_per_ligand(self._args(exhaustiveness=32)) == 180
+
+    def test_vina_default_scales_with_exhaustiveness(self):
+        assert bench.timeout_per_ligand(self._args(docking_algorithm="vina")) == 240
+        assert bench.timeout_per_ligand(self._args(docking_algorithm="vina", exhaustiveness=32)) == 960
+
+    def test_explicit_flag_wins(self):
+        assert bench.timeout_per_ligand(self._args(docking_algorithm="vina", timeout_per_ligand=50)) == 50

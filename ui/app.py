@@ -8,7 +8,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, DOCKING_ALGORITHM_LABELS, DOCKING_ALGORITHMS
+from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label, docking_algorithm_of
 from common.path_utils import from_container_path
 from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
@@ -33,7 +33,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
-from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS, get_default_parameters
+from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS, with_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
 from ui.mol_viewer import render_mol_viewer
@@ -50,6 +50,7 @@ from ui.session_state import (
     init,
     load_session_params,
     reset_workers_to_algorithm_default,
+    selected_docking_algorithm,
     start_new_session,
 )
 from ui.worker_cap import describe_worker_cap, max_workers_for
@@ -120,9 +121,7 @@ def _collect_form_params() -> dict:
             params[key] = cast(st.session_state.get(f"param_{key}", default))
         except (ValueError, TypeError):
             pass
-    params["docking_algorithm"] = st.session_state.get(
-        "param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM
-    )
+    params["docking_algorithm"] = selected_docking_algorithm()
     params["cpu"] = effective_cpu()
 
     params["parallel"] = bool(st.session_state.get("param_parallel", False))
@@ -237,7 +236,7 @@ def _handle_docking_algorithm_command(algorithm: str) -> None:
     switches -- docking always starts from Run Docking, so the CLI's
     "dock with ..." redock is not mirrored here."""
     apply_parsed_params({"docking_algorithm": algorithm})
-    label = DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)
+    label = docking_algorithm_label(algorithm)
     session = st.session_state.get("interactive_session")
     if session is not None and session.has_active_job():
         hint = "Click **Run Docking** to redock with it (docking and visualization only)."
@@ -287,22 +286,30 @@ def _on_chat_submit(user_message: str) -> None:
                 ))
                 parameters = {**prior["parameters"], **delta.get("parameters", {})}
                 parsed = {"services": services, "parameters": parameters}
-                algorithm_explicit = "docking_algorithm" in delta.get("parameters", {})
+                named = set(delta.get("parameters", {}))
             else:
                 parsed = parse_workflow_with_llm(st.session_state.llm_client, user_message)
-                algorithm_explicit = "docking_algorithm" in (parsed.get("parameters") or {})
+                named = set(parsed.get("parameters") or {})
 
             validated = st.session_state.parser.validate_workflow(parsed)
-            # validate_workflow() fills the default "moldina" (and the prior
-            # turn's value rides along in a follow-up merge); applying that
-            # would reset an algorithm the user chose (Phase 15 finding 8).
-            to_apply = dict(validated["parameters"])
-            if not algorithm_explicit:
-                to_apply.pop("docking_algorithm", None)
-            apply_parsed_params(to_apply)
-
+            # Only what this message named reaches the form. validate_workflow()
+            # fills every default (and the prior turn's values ride along in a
+            # follow-up merge): applying those would reset the user's own
+            # edits -- algorithm, CPUs per ligand, Exhaustiveness, pH -- on
+            # every message (Phase 15 finding 8; Review Stage R1).
             p = validated["parameters"]
             missing = validated.get("missing_required", [])
+            unknown_algorithm = None
+            if "docking_algorithm" in missing:
+                # Unrecognised (the LLM's own word for it): the selector keeps
+                # its choice, and the parser does too, or the bad name would
+                # ride along into every later follow-up merge and be asked
+                # about again on each one.
+                unknown_algorithm = p["docking_algorithm"]
+                p["docking_algorithm"] = selected_docking_algorithm()
+                missing.remove("docking_algorithm")
+                named.discard("docking_algorithm")
+            apply_parsed_params({k: v for k, v in p.items() if k in named})
 
             lines = ["Got it! Here's what I extracted:"]
             if p.get("protein_id"):
@@ -317,9 +324,14 @@ def _on_chat_submit(user_message: str) -> None:
             if p.get("box_size"):
                 b = p["box_size"]
                 lines.append(f"- Box size: ({b[0]}, {b[1]}, {b[2]})")
-            if algorithm_explicit and "docking_algorithm" not in missing:
-                algorithm = p.get("docking_algorithm")
-                lines.append(f"- Algorithm: **{DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}**")
+            if "docking_algorithm" in named:
+                lines.append(f"- Algorithm: **{docking_algorithm_label(p['docking_algorithm'])}**")
+            if unknown_algorithm is not None:
+                lines.append(
+                    f"- Docking algorithm '{unknown_algorithm}' is not recognised, so "
+                    f"{docking_algorithm_label(p['docking_algorithm'])} stays selected. "
+                    "Use Moldina (PSO) or Vina (Monte Carlo)."
+                )
             if missing:
                 lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
 
@@ -394,41 +406,6 @@ def _handle_run_docking() -> None:
     st.rerun()
 
 
-def _params_as_checkpointed(params: dict) -> dict:
-    """*params* (the form-updated ``st.session_state.params``) the way a
-    checkpoint holds them, for diffing against one.
-
-    The first run checkpoints WorkflowParser.validate_workflow()'s output,
-    which fills in defaults (energy_range, num_modes, population, ...); the
-    form doesn't carry those. Without the same defaults every diff
-    "changes" them to None -- a bogus redock plan and a checkpoint that
-    silently drops them (2026-10-01), and a Save Session that could never
-    say "no changes" (Stage 13.4 finding).
-
-    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): every GUI path
-    that diffs or stores params must remember to call this (today: redock
-    and Save Session). The root fix is to normalize inside the shared diff
-    (compute_changed_params) or in WorkflowStateManager on save -- which
-    also changes the CLI. Do that when a third GUI caller of
-    compute_changed_params / save_draft_parameters is added, or when a
-    "changed to None" diff turns up on the CLI side.
-    """
-    return {**get_default_parameters(), **params}
-
-
-def _latest_checkpoint_params(session) -> dict:
-    """The active session's latest parameters checkpoint, with the same
-    defaults filled in as :func:`_params_as_checkpointed`.
-
-    A checkpoint written before a parameter existed (docking_algorithm,
-    before Phase 15) lacks its key, while the form side has the default; a
-    key present on only one side counts as changed, so every old session
-    looked like it had switched algorithm (Stage 15.3 finding). What it
-    lacks is what ran, the default.
-    """
-    return _params_as_checkpointed(session.state_manager.load_latest_parameters() or {})
-
-
 def _handle_save_session() -> None:
     """Persist the current form's parameter edits as a draft, without
     running/redocking anything. Lets edits (e.g. a box-size tweak) survive
@@ -440,8 +417,8 @@ def _handle_save_session() -> None:
     session = st.session_state.interactive_session
     if not session.has_active_job():
         return
-    params = _params_as_checkpointed(_sync_form_into_params())
-    checkpointed = _latest_checkpoint_params(session)
+    params = _sync_form_into_params()
+    checkpointed = session.state_manager.load_latest_parameters() or {}
     if not compute_changed_params(checkpointed, params):
         session.state_manager.clear_draft_parameters()
         st.session_state.messages.append(
@@ -462,8 +439,11 @@ def _handle_redock_request(session, params: dict) -> None:
     ``[Y/n]`` prompt) via a two-step "Run Docking" → "Confirm redock" button
     pair, since Streamlit has no blocking ``input()``.
     """
-    params = _params_as_checkpointed(params)
-    old_params = _latest_checkpoint_params(session)
+    # The form doesn't carry every parameter (energy_range, num_modes,
+    # population, ...): with the defaults filled in, params is what the
+    # checkpoint below holds and what the redock runs with.
+    params = with_default_parameters(params)
+    old_params = session.state_manager.load_latest_parameters() or {}
     changed = compute_changed_params(old_params, params)
     # pending_changed_params holds changes already checkpointed but not yet
     # run to completion: a restored revision (all CORE_PARAMS), or an
@@ -1282,7 +1262,7 @@ def _render_params_summary() -> None:
     box = _coord(_BOX_WIDGET_KEYS[3:])
 
     # The selector, not params: like the box fields, it is what docks.
-    algorithm = st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+    algorithm = selected_docking_algorithm()
 
     with st.expander("Current parameters", expanded=True):
         st.markdown(
@@ -1290,7 +1270,7 @@ def _render_params_summary() -> None:
             f"**Ligands:** {ligands}  \n"
             f"**Center:** {center}  \n"
             f"**Box:** {box}  \n"
-            f"**Algorithm:** {DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}"
+            f"**Algorithm:** {docking_algorithm_label(algorithm)}"
         )
 
 
@@ -1382,7 +1362,7 @@ def render_parameters_panel() -> None:
         algorithm = st.radio(
             "Docking algorithm",
             options=DOCKING_ALGORITHMS,
-            format_func=DOCKING_ALGORITHM_LABELS.get,
+            format_func=docking_algorithm_label,
             key="param_docking_algorithm",
             horizontal=True,
             on_change=reset_workers_to_algorithm_default,
@@ -2081,9 +2061,7 @@ def _render_docking_algorithm_caption(result: dict) -> None:
     dock = result.get("results", {}).get("dock")
     if not dock:
         return
-    # Results from before Phase 15 have no key; they were all Moldina (PSO).
-    algorithm = dock.get("docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
-    st.caption(f"Docked with {DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)}")
+    st.caption(f"Docked with {docking_algorithm_label(docking_algorithm_of(dock))}")
 
 
 def _render_affinity_chart(result: dict) -> None:

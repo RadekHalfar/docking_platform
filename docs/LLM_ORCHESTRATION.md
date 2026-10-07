@@ -385,11 +385,22 @@ recognised…" instead of persisting it.
 
 In the CLI, a switch persists a checkpoint (unless the session already uses
 that algorithm) and invalidates `dock`/`visualize`. "dock with …" then goes
-straight to the rerun plan (dock and visualize only, `[Y/n]`). The GUI
+straight to the rerun plan (dock and visualize only, `[Y/n]`), also when the
+session already uses that algorithm (a plain redock). If the LLM intent
+classifier, rather than the detector, returns this intent, its name is
+normalised the same way and an unknown one is rejected. The GUI
 chat runs the same detector before its LLM parse, but it only switches the
-algorithm; **Run Docking** applies it. A chat message that doesn't name an
-algorithm never resets the chosen one, even though the parser fills the
-default `"moldina"`.
+algorithm; **Run Docking** applies it.
+
+A GUI chat message changes only the form fields it names. The parser fills
+every default (`docking_algorithm`, `cpu`, `exhaustiveness`, `ph`, …), and
+a follow-up carries the previous turn's values, but neither reaches the
+form, so the user's own choices survive the message (Review Stage R1, Phase
+15). The first-parse prompt no longer shows `ph`/`exhaustiveness`/`cpu`/
+`population` at their defaults in its examples, so the model doesn't echo
+them as if the user had named them. An algorithm the LLM names but nobody
+recognises is reported once ("…is not recognised, so Moldina (PSO) stays
+selected") and is not carried into later follow-ups.
 
 #### Rerun steps
 

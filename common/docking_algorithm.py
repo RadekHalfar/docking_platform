@@ -25,22 +25,44 @@ _ALIASES: Dict[str, str] = {
     "moldina": "moldina",
     "pso": "moldina",
     "moldina pso": "moldina",
-    "moldina (pso)": "moldina",
     "vina": "vina",
     "autodock vina": "vina",
     "monte carlo": "vina",
     "vina monte carlo": "vina",
-    "vina (monte carlo)": "vina",
 }
+
+_SEPARATORS = str.maketrans({"-": " ", "_": " ", "(": " ", ")": " "})
 
 
 def normalize_docking_algorithm(value: Any) -> Optional[str]:
     """Return the canonical algorithm name for *value*, or None if unrecognised.
 
-    Case-insensitive; collapses whitespace and treats ``-``/``_`` as spaces,
-    so "Monte-Carlo" and "autodock_vina" are accepted too.
+    Case-insensitive; collapses whitespace and treats ``-``, ``_`` and
+    parentheses as spaces, so "Monte-Carlo", "autodock_vina" and the GUI
+    labels ("Vina (Monte Carlo)") are accepted too.
     """
     if not isinstance(value, str):
         return None
-    key = " ".join(value.lower().replace("-", " ").replace("_", " ").split())
+    key = " ".join(value.lower().translate(_SEPARATORS).split())
     return _ALIASES.get(key)
+
+
+def docking_algorithm_label(value: Any) -> str:
+    """Human-readable name for *value*; an unknown value is shown as is."""
+    return DOCKING_ALGORITHM_LABELS.get(value, str(value))
+
+
+def docking_algorithm_of(dock_result: Optional[Dict[str, Any]]) -> str:
+    """Which algorithm produced a ``run_docking`` result. Results written
+    before Phase 15 have no ``docking_algorithm`` key; they were all
+    Moldina (PSO), the default."""
+    return (dock_result or {}).get("docking_algorithm") or DEFAULT_DOCKING_ALGORITHM
+
+
+def cpus_per_ligand(algorithm: str, cpu: int) -> int:
+    """CPUs one docking process really uses: *cpu* for Vina, whose Monte
+    Carlo search is multithreaded, and 1 for Moldina (PSO), which ignores
+    ``--cpu`` (measured in Stage 15.1, docs/MOLDINA_DOCKING.md). The one
+    rule behind both the server's worker clamp (quota // this) and the
+    GUI's worker maximum."""
+    return max(1, int(cpu)) if algorithm == "vina" else 1

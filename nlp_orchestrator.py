@@ -40,10 +40,10 @@ from services.llm_orchestrator import (
     delete_jobs,
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
-from services.llm_orchestrator.workflow_definition import CORE_PARAMS
-from services.llm_orchestrator.interactive_session import resolve_prepared_protein_pdb_path
+from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS
+from services.llm_orchestrator.interactive_session import compute_changed_params, resolve_prepared_protein_pdb_path
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
-from common.docking_algorithm import DOCKING_ALGORITHM_LABELS, normalize_docking_algorithm
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, docking_algorithm_label, normalize_docking_algorithm
 from common.pdb_geometry import compute_protein_center_and_box
 from common.path_utils import from_container_path
 from common.utils import generate_job_id
@@ -155,8 +155,10 @@ def _persist_parameter_updates(
     session.state_manager.save_parameters_checkpoint(current, source="interactive_update")
     print("✅ Parameters saved to disk.")
 
-    # Compute what changed and offer partial rerun.
-    changed_keys = {k for k in updates if old_params.get(k) != updates[k]}
+    # Compute what changed and offer partial rerun -- the shared diff, so a
+    # key an old checkpoint lacks (docking_algorithm before Phase 15) reads
+    # as its default, not as a change (Review Stage R1, Phase 15).
+    changed_keys = compute_changed_params(old_params, current)
 
     # Keep docking_box.json on disk in sync whenever box coordinates change
     # so that every subsequent read of docking_box.json reflects the current
@@ -186,14 +188,22 @@ def _handle_update_parameters(
     updates = extract_updates_from_command_with_llm(llm_client, user_input)
     # The LLM's value is never trusted as-is: an unrecognised algorithm
     # would only fail later inside moldina-runner.
+    #
+    # NOTE (Review Stage R1, Phase 15, altitude finding #4, deferred): this
+    # per-key clause exists because this write path (and
+    # _persist_parameter_updates) bypasses WorkflowParser's validation gate,
+    # which already normalises and rejects algorithms; the other
+    # LLM-extracted fields here go unvalidated. Fix: a parser-level
+    # normalize_parameter_updates(updates) -> (clean, issues) built on
+    # get_parameter_issue, called from _persist_parameter_updates, replacing
+    # this clause. Trigger: the next enum- or alias-valued parameter, or
+    # the next LLM-extracted field that needs validation on this path. See
+    # dev_plan.md Phase 15 Future Work and docs/reviews/stage_15_r1.md.
     if "docking_algorithm" in updates:
         raw_algorithm = updates.pop("docking_algorithm")
         algorithm = normalize_docking_algorithm(raw_algorithm)
         if algorithm is None:
-            print(
-                f"Docking algorithm '{raw_algorithm}' is not recognised. "
-                "Use 'moldina' (PSO) or 'vina' (Monte Carlo)."
-            )
+            print(_unrecognised_algorithm_message(raw_algorithm))
         else:
             updates["docking_algorithm"] = algorithm
     if not updates:
@@ -253,16 +263,23 @@ def _handle_set_protein_geometry(
     return _persist_parameter_updates(updates, session)
 
 
+def _unrecognised_algorithm_message(name: Any) -> str:
+    return f"Docking algorithm '{name}' is not recognised. Use 'moldina' (PSO) or 'vina' (Monte Carlo)."
+
+
 def _handle_set_docking_algorithm(
     algorithm: str,
     session: "InteractiveSession",
 ) -> Set[str]:
     """Persist a ``docking_algorithm`` switch ("use vina", "dock with
-    moldina"). Returns the changed keys -- empty when the session already
-    uses *algorithm* (or nothing could be persisted)."""
-    label = DOCKING_ALGORITHM_LABELS.get(algorithm, algorithm)
+    moldina"). *algorithm* is canonical (normalised by the caller). Returns
+    the changed keys -- empty when the session already uses *algorithm* (or
+    nothing could be persisted)."""
+    label = docking_algorithm_label(algorithm)
     if session.state_manager is not None:
-        current = (session.state_manager.load_latest_parameters() or {}).get("docking_algorithm", "moldina")
+        current = (session.state_manager.load_latest_parameters() or {}).get(
+            "docking_algorithm", DEFAULT_DOCKING_ALGORITHM
+        )
         if current == algorithm:
             print(f"Docking algorithm is already {label}.")
             return set()
@@ -279,8 +296,8 @@ def _rerun_pending(
     *extra*), or every core step if nothing is pending -- the ``rerun``
     command. Returns False when there was nothing to rerun or the rerun
     was cancelled."""
-    original = (session.last_results or {}).get("services_executed", [])
-    if not original:
+    last = session.last_results or {}
+    if not (last.get("services_executed") or last.get("services_planned")):
         print("No previous workflow execution to rerun. Use 'new <request>' instead.")
         return False
     rerun_params = session.pending_changed_params | (extra or set())
@@ -481,13 +498,20 @@ def _execute_partial_rerun(
         print("No active job to rerun.")
         return None
 
-    # Determine which services were originally executed.
-    original_services = (session.last_results or {}).get("services_executed", [])
-    if not original_services:
+    # Determine which services were originally executed. Steps that were
+    # planned but never ran (the first workflow was cancelled at its
+    # confirmation prompt) must run whatever changed: they have no outputs
+    # to reuse -- the CLI twin of the GUI's rule from Review Stage R1,
+    # Phase 13 (Review Stage R1, Phase 15).
+    last = session.last_results or {}
+    executed = list(last.get("services_executed", []))
+    unfinished = [s for s in last.get("services_planned", []) if s not in executed]
+    if not executed and not unfinished:
         print("Cannot determine original services; use 'new <request>' instead.")
         return None
 
-    steps = compute_rerun_steps(changed_params, original_services=original_services)
+    planned = set(compute_rerun_steps(changed_params, original_services=executed)) | set(unfinished)
+    steps = [s for s in WORKFLOW_STEPS if s in planned]
     if not steps:
         print("No steps need to be re-executed for the changed parameters.")
         return None
@@ -534,7 +558,8 @@ def _execute_partial_rerun(
     # touched -- trust `results["services_executed"]`/`results["results"]`
     # (already merged) instead of recomputing here.
     merged_results = dict(session.last_results or {})
-    merged_results["services_executed"] = original_services  # keep full list
+    ran = set(executed) | set(results.get("services_executed", []))
+    merged_results["services_executed"] = [s for s in WORKFLOW_STEPS if s in ran]  # keep full list
     merged_results["status"] = results.get("status", "failed")
     merged_results["errors"] = results.get("errors", [])
     for key, value in results.get("results", {}).items():
@@ -808,10 +833,19 @@ def _dispatch_intent(
         return True
 
     if intent == "set_docking_algorithm":
-        changed = _handle_set_docking_algorithm((intent_result or {}).get("name"), session)
+        # The deterministic detector only yields canonical names, but the LLM
+        # classifier can return this intent too, with any "name".
+        raw_name = (intent_result or {}).get("name")
+        algorithm = normalize_docking_algorithm(raw_name)
+        if algorithm is None:
+            print(_unrecognised_algorithm_message(raw_name))
+            return True
+        changed = _handle_set_docking_algorithm(algorithm, session)
         if (intent_result or {}).get("rerun"):
-            # "dock with vina": switch, then redock what that invalidates.
-            return _rerun_pending(session, orchestrator, extra=changed)
+            # "dock with vina": switch, then redock dock + visualize -- also
+            # when the session already uses vina (nothing changed), which
+            # would otherwise fall back to a full rerun.
+            return _rerun_pending(session, orchestrator, extra={"docking_algorithm"})
         _mark_changed_and_hint_rerun(session, changed)
         return True
 
@@ -822,14 +856,9 @@ def _dispatch_intent(
             query_name=(intent_result or {}).get("name"),
         )
         if applied and _ask_yes_no("Continue now with rerun of affected steps? [Y/n]: ", default_yes=True):
-            original = (session.last_results or {}).get("services_executed", [])
-            if original:
-                _execute_partial_rerun(
-                    session,
-                    orchestrator,
-                    changed_params=session.pending_changed_params or {"ligand_ids"},
-                )
-                session.pending_changed_params = set()
+            # The shared rerun, so a session whose first workflow was
+            # cancelled (nothing executed yet) runs its planned steps too.
+            _rerun_pending(session, orchestrator, extra={"ligand_ids"})
         return True
 
     if intent == "rerun_steps":
@@ -1950,9 +1979,14 @@ def process_workflow(
                 session.activate(
                     shared_job_id,
                     state_manager,
+                    # Nothing ran: the planned steps are kept apart, so a
+                    # later rerun runs them all instead of only the steps
+                    # its change invalidates, which have no inputs yet
+                    # (Review Stage R1, Phase 15).
                     last_results={
                         "status": "cancelled",
-                        "services_executed": workflow.get("services", []),
+                        "services_executed": [],
+                        "services_planned": workflow.get("services", []),
                         "results": {},
                     },
                 )

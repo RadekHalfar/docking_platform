@@ -14,11 +14,19 @@ from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.job_log import append_job_log
 from common.param_diff import changed_parameter_keys
 
+from .workflow_definition import with_default_parameters
+
 logger = logging.getLogger(__name__)
 
 
 class WorkflowStateManager:
-    """Persists workflow parameters/state with revisioned checkpoints."""
+    """Persists workflow parameters/state with revisioned checkpoints.
+
+    Parameters are stored and returned with every default filled in
+    (:func:`with_default_parameters`): saved full, and upgraded on read for
+    a set written before a parameter existed. Every caller then sees the
+    parameters as they run, and no diff mistakes a missing key for a change.
+    """
 
     def __init__(self, job_dir: Path):
         self.job_dir = Path(job_dir)
@@ -125,6 +133,7 @@ class WorkflowStateManager:
 
     def save_parameters_checkpoint(self, parameters: Dict[str, Any], source: str = "unknown") -> int:
         """Persist latest parameters and snapshot a new immutable revision."""
+        parameters = with_default_parameters(parameters)
         # Computed before _next_revision (and thus before the "latest"
         # parameters file below is overwritten), so this still sees the
         # previous call's values.
@@ -170,7 +179,7 @@ class WorkflowStateManager:
             return None
         params = payload.get("parameters")
         if isinstance(params, dict):
-            return params
+            return with_default_parameters(params)
         return None
 
     def get_parameters_revision(self) -> Optional[int]:
@@ -224,7 +233,7 @@ class WorkflowStateManager:
         baseline (load_latest_parameters()) or the audit history."""
         atomic_write_json(self.draft_parameters_file, {
             "timestamp": self._timestamp(),
-            "parameters": parameters,
+            "parameters": with_default_parameters(parameters),
         })
 
     def load_draft_parameters(self) -> Optional[Dict[str, Any]]:
@@ -233,7 +242,7 @@ class WorkflowStateManager:
         if not payload:
             return None
         params = payload.get("parameters")
-        return params if isinstance(params, dict) else None
+        return with_default_parameters(params) if isinstance(params, dict) else None
 
     def clear_draft_parameters(self) -> None:
         """Remove the draft once its edits are captured in a real checkpoint."""
@@ -299,8 +308,8 @@ class WorkflowStateManager:
         parameters: Optional[Dict[str, Any]] = None
         if params_file.exists():
             payload = self._load_json_file(params_file)
-            if payload:
-                parameters = payload.get("parameters")
+            if payload and isinstance(payload.get("parameters"), dict):
+                parameters = with_default_parameters(payload["parameters"])
 
         runtime_state: Optional[Dict[str, Any]] = None
         if state_file.exists():

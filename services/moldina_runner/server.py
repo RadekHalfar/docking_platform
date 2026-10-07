@@ -8,6 +8,7 @@ Carlo search, with WSL support on Windows.
 import os
 import logging
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
 from common.mcp_base import MCPServer
 from common.mcp_bootstrap import build_service_arg_parser, resolve_port
 from common.mcp_tooling import build_tool_parameters, register_mcp_tool
@@ -49,7 +50,7 @@ class MoldinaRunnerServer(MCPServer):
             energy_range: float = 100.0,
             parallel: bool = False,
             max_workers: int = 1,
-            docking_algorithm: str = "moldina",
+            docking_algorithm: str = DEFAULT_DOCKING_ALGORITHM,
         ) -> dict:
             """Handler for run_docking tool."""
             # Initialize runner if needed
@@ -106,13 +107,13 @@ class MoldinaRunnerServer(MCPServer):
                 ("output_dir", "string", "Directory for output files", True),
                 ("center", "array", "Search box center coordinates [x, y, z]", True),
                 ("box_size", "array", "Search box dimensions [x, y, z] in Angstroms", True),
-                ("cpu", "number", "Number of CPUs to use (default: 1)"),
+                ("cpu", "number", "CPUs per ligand; Vina mode only, PSO ignores it (default: 1)"),
                 ("population", "number", "Population size for PSO, ignored in Vina mode (default: 500, min: 5)"),
                 ("exhaustiveness", "number", "Search exhaustiveness (default: 8)"),
                 ("num_modes", "number", "Maximum number of binding modes (default: 15)"),
                 ("energy_range", "number", "Maximum energy difference for modes in kcal/mol (default: 100.0)"),
                 ("parallel", "boolean", "Dock ligands concurrently, up to max_workers at a time, instead of one at a time (default: false)"),
-                ("max_workers", "number", "Maximum number of ligands to dock concurrently when parallel is true; clamped to the container's CPU quota divided by cpu (default: 1)"),
+                ("max_workers", "number", "Maximum number of ligands to dock concurrently when parallel is true; clamped to the container's CPU quota divided by cpu in Vina mode (PSO uses 1 CPU per ligand) (default: 1)"),
                 ("docking_algorithm", "string", "Search algorithm: 'moldina' (PSO, default) or 'vina' (classic Monte Carlo search)"),
             ]),
         )

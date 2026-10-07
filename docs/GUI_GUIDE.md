@@ -118,8 +118,9 @@ algorithm** selector:
 
 The chat commands "use vina", "switch to PSO" and "set algorithm to vina" move
 the selector too, without an LLM call (see
-[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). A chat message that doesn't name
-an algorithm never resets it.
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). A chat message changes only
+the fields it names: one that doesn't name an algorithm, CPUs per ligand,
+Exhaustiveness or pH leaves your values in those fields alone.
 
 **Max parallel workers** goes up to the docking service's CPU limit divided by
 CPUs per ligand, so workers × CPUs never oversubscribe it. Switching algorithm

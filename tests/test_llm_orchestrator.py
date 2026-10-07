@@ -21,10 +21,12 @@ from services.llm_orchestrator import (
     parse_followup_with_llm,
     extract_box_source_choice_with_llm,
 )
+from services.llm_orchestrator.orchestrator import docking_timeout_seconds
 from services.llm_orchestrator.workflow_definition import (
     DEFAULT_PARAMETERS,
     REQUIRED_PARAMETERS_BY_STEP,
     get_service_urls_from_env,
+    with_default_parameters,
 )
 
 
@@ -469,6 +471,27 @@ class TestWorkflowParser:
         assert result["parameters"]["cpu"] == DEFAULT_PARAMETERS["cpu"]
 
 
+def _dock_ready_session(tmp_path, job_id, ligands=("A", "B", "C"), **extra_params):
+    """A session checkpointed up to prepare_protein, ready to dock *ligands*."""
+    params = {
+        "protein_id": "6lu7",
+        "ligand_ids": list(ligands),
+        "center": [0.0, 0.0, 0.0],
+        "box_size": [20.0, 20.0, 20.0],
+        **extra_params,
+    }
+    state_manager = WorkflowStateManager(tmp_path / job_id)
+    state_manager.save_parameters_checkpoint(params, source="test")
+    state_manager.save_execution_state_checkpoint(
+        {
+            "prepared_protein": "/app/orchestrator_output/x/prepared/receptor.pdbqt",
+            "prepared_ligands": [f"/app/orchestrator_output/x/prepared/{l}.pdbqt" for l in ligands],
+        },
+        step="prepare_protein",
+    )
+    return state_manager, params
+
+
 class TestDockingAlgorithmParameter:
     """Phase 15, Stage 15.1: docking_algorithm defaults, aliases and validation."""
 
@@ -524,22 +547,7 @@ class TestDockingAlgorithmParameter:
 
     @pytest.mark.parametrize("params_extra,expected", [({}, "moldina"), ({"docking_algorithm": "vina"}, "vina")])
     def test_orchestrator_passes_algorithm_to_run_docking(self, tmp_path, params_extra, expected):
-        params = {
-            "protein_id": "6lu7",
-            "ligand_ids": ["A"],
-            "center": [0.0, 0.0, 0.0],
-            "box_size": [20.0, 20.0, 20.0],
-            **params_extra,
-        }
-        state_manager = WorkflowStateManager(tmp_path / "algo_job")
-        state_manager.save_parameters_checkpoint(params, source="test")
-        state_manager.save_execution_state_checkpoint(
-            {
-                "prepared_protein": "/app/orchestrator_output/x/prepared/receptor.pdbqt",
-                "prepared_ligands": ["/app/orchestrator_output/x/prepared/A.pdbqt"],
-            },
-            step="prepare_protein",
-        )
+        state_manager, params = _dock_ready_session(tmp_path, "algo_job", ligands=["A"], **params_extra)
         orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         orchestrator.call_mcp_tool = Mock(
             return_value={"status": "ok", "stopped": False, "successful": 1, "failed": 0,
@@ -555,6 +563,39 @@ class TestDockingAlgorithmParameter:
         tool, arguments = orchestrator.call_mcp_tool.call_args[0][1:3]
         assert tool == "run_docking"
         assert arguments["docking_algorithm"] == expected
+
+
+class TestDockingTimeout:
+    """Review Stage R1, Phase 15, correctness #1: the run_docking HTTP
+    timeout assumed PSO's 120 s per ligand per worker, which Vina exceeds."""
+
+    def _timeout_sent(self, tmp_path, n_ligands, **params_extra):
+        state_manager, params = _dock_ready_session(
+            tmp_path, "timeout_job", ligands=[f"L{i}" for i in range(n_ligands)], **params_extra,
+        )
+        orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+        orchestrator.call_mcp_tool = Mock(return_value={
+            "status": "ok", "stopped": False, "successful": n_ligands, "failed": 0, "errors": [], "results": [],
+        })
+        orchestrator.execute_workflow({"services": ["dock"], "parameters": params},
+                                      job_id="timeout_job", state_manager=state_manager)
+        return orchestrator.call_mcp_tool.call_args.kwargs["timeout"]
+
+    def test_vina_batch_gets_more_than_its_measured_run_time(self, tmp_path):
+        # Measured (docs/BATCH_DOCKING.md): a 10-worker Vina wave at
+        # exhaustiveness 8 takes ~144 s, so 50 ligands need ~5 x 144 s.
+        timeout = self._timeout_sent(tmp_path, 50, docking_algorithm="vina", parallel=True, max_workers=10)
+        assert timeout >= 5 * 144.3 * 1.5
+
+    def test_pso_budget_unchanged(self, tmp_path):
+        assert self._timeout_sent(tmp_path, 50, parallel=True, max_workers=10) == 600
+
+    def test_vina_scales_with_exhaustiveness(self):
+        assert docking_timeout_seconds(10, 1, "vina", 16) == 2 * docking_timeout_seconds(10, 1, "vina", 8)
+        assert docking_timeout_seconds(10, 1, "moldina", 16) == docking_timeout_seconds(10, 1, "moldina", 8)
+
+    def test_floor_of_300_seconds(self):
+        assert docking_timeout_seconds(1, 1, "vina", 1) == 300
 
 
 class TestWorkflowOrchestrator:
@@ -921,29 +962,8 @@ class TestDockingStopFlag:
     """Stage 13.1b: a stop mid-docking (moldina-runner returns "stopped")
     cancels the workflow, and a stale flag never leaks into a new dock step."""
 
-    @staticmethod
-    def _dock_ready_session(tmp_path, job_id):
-        from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
-
-        params = {
-            "protein_id": "6lu7",
-            "ligand_ids": ["A", "B", "C"],
-            "center": [0.0, 0.0, 0.0],
-            "box_size": [20.0, 20.0, 20.0],
-        }
-        state_manager = WorkflowStateManager(tmp_path / job_id)
-        state_manager.save_parameters_checkpoint(params, source="test")
-        state_manager.save_execution_state_checkpoint(
-            {
-                "prepared_protein": "/app/orchestrator_output/x/prepared/receptor.pdbqt",
-                "prepared_ligands": [f"/app/orchestrator_output/x/prepared/{l}.pdbqt" for l in "ABC"],
-            },
-            step="prepare_protein",
-        )
-        return state_manager, params
-
     def test_stopped_dock_result_cancels_and_skips_visualize(self, tmp_path):
-        state_manager, params = self._dock_ready_session(tmp_path, "stop_dock_test")
+        state_manager, params = _dock_ready_session(tmp_path, "stop_dock_test")
         orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
         orchestrator.call_mcp_tool = Mock(
             return_value={
@@ -973,7 +993,7 @@ class TestDockingStopFlag:
         # rebuilt services_executed from the result keys, so a stopped dock
         # counted as executed next to the earlier run's (now stale)
         # visualize (Review Stage R1, Phase 13).
-        state_manager, params = self._dock_ready_session(tmp_path, "stop_redock_test")
+        state_manager, params = _dock_ready_session(tmp_path, "stop_redock_test")
         (tmp_path / "stop_redock_test" / "workflow_results.json").write_text(json.dumps({
             "status": "completed",
             "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
@@ -1003,7 +1023,7 @@ class TestDockingStopFlag:
         assert saved["results"]["prepare_protein"] == {"old": True}
 
     def test_stale_stop_flag_is_cleared_before_docking(self, tmp_path):
-        state_manager, params = self._dock_ready_session(tmp_path, "stale_flag_test")
+        state_manager, params = _dock_ready_session(tmp_path, "stale_flag_test")
         docking_dir = tmp_path / "stale_flag_test" / "docking_results"
         docking_dir.mkdir(parents=True)
         (docking_dir / "STOP_REQUESTED").touch()  # left over from an earlier stopped run
@@ -1027,7 +1047,7 @@ class TestDockingStopFlag:
         assert results["services_executed"] == ["dock"]
 
     def test_cancel_before_dock_step_makes_no_docking_call(self, tmp_path):
-        state_manager, params = self._dock_ready_session(tmp_path, "cancel_pre_dock_test")
+        state_manager, params = _dock_ready_session(tmp_path, "cancel_pre_dock_test")
         cancel_event = threading.Event()
         cancel_event.set()
         orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
@@ -1159,7 +1179,9 @@ class TestWorkflowStateManager:
         assert (manager.checkpoints_dir / "rev_000002_parameters.json").exists()
         assert (manager.checkpoints_dir / "rev_000003_state.json").exists()
 
-        assert manager.load_latest_parameters() == {"protein_id": "6lu7", "ligand_ids": ["ATP"]}
+        assert manager.load_latest_parameters() == with_default_parameters(
+            {"protein_id": "6lu7", "ligand_ids": ["ATP"]}
+        )
         assert manager.load_latest_state() == {
             "protein_file": "/app/6lu7.pdb",
             "ligand_files": ["/app/ATP.sdf"],

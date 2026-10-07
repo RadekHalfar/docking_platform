@@ -351,7 +351,7 @@ def format_stats_columns(stats: Dict[str, float]) -> str:
 
 def run_docking(url, receptor, ligands, center, box_size, output_dir,
                  parallel, max_workers, exhaustiveness, population,
-                 num_modes, energy_range, timeout, docking_algorithm="moldina", cpu=1) -> dict:
+                 num_modes, energy_range, timeout, docking_algorithm=DEFAULT_DOCKING_ALGORITHM, cpu=1) -> dict:
     arguments = {
         "receptor_path": receptor,
         "ligand_paths": ligands,
@@ -359,6 +359,7 @@ def run_docking(url, receptor, ligands, center, box_size, output_dir,
         "center": list(center),
         "box_size": list(box_size),
         "cpu": cpu,
+        "population": population,  # PSO only; the server leaves it out of a Vina command
         "exhaustiveness": exhaustiveness,
         "num_modes": num_modes,
         "energy_range": energy_range,
@@ -366,9 +367,35 @@ def run_docking(url, receptor, ligands, center, box_size, output_dir,
         "max_workers": max_workers,
         "docking_algorithm": docking_algorithm,
     }
-    if docking_algorithm == "moldina":  # PSO-only; Vina mode has no population
-        arguments["population"] = population
     return call_mcp_tool(url, "run_docking", arguments, timeout=timeout)
+
+
+def timeout_per_ligand(args: argparse.Namespace) -> int:
+    """--timeout-per-ligand, or a default that covers the slowest
+    configuration, the sequential one. Vina's search grows with
+    exhaustiveness (~62 s per ligand at 8, ~2x at 16), so a flat 180 s would
+    cut off a sequential Vina row at higher settings (Review Stage R1,
+    Phase 15; the same budget as the orchestrator's
+    docking_timeout_seconds(), with PSO's floor kept at 180 s)."""
+    if args.timeout_per_ligand is not None:
+        return args.timeout_per_ligand
+    if args.docking_algorithm == "vina":
+        return max(180, 30 * args.exhaustiveness)
+    return 180
+
+
+def workers_ran(requested: int, result: Optional[dict]) -> int:
+    """How many ligands the server really docked at a time. It clamps
+    max_workers to its CPU quota // CPUs per ligand and to the ligand count,
+    and reports the result as ``workers``; a row labelled with the request
+    would, at --cpu 4, record parallel_8 and parallel_10 rows that both ran
+    2 workers (Review Stage R1, Phase 15). A failed call, or a server from
+    before that review, falls back to the request."""
+    ran = (result or {}).get("workers", requested)
+    if ran != requested:
+        print(f"  NOTE: the server ran {ran} worker(s), not {requested} "
+              "(clamped to its CPU quota // CPUs per ligand, or to the ligand count)")
+    return ran
 
 
 def run_timed(call: Callable[[], dict],
@@ -417,8 +444,9 @@ def main() -> None:
     parser.add_argument("--container-name", default=DEFAULT_CONTAINER_NAME,
                          help=f"Docker container name for CPU diagnostics (default: {DEFAULT_CONTAINER_NAME})")
     parser.add_argument("--skip-cpu-diagnostics", action="store_true", help="Skip the docker exec CPU/cgroup probe")
-    parser.add_argument("--timeout-per-ligand", type=int, default=180,
-                         help="HTTP timeout budget per ligand, in seconds (default: 180)")
+    parser.add_argument("--timeout-per-ligand", type=int, default=None,
+                         help="HTTP timeout budget per ligand, in seconds (default: 180 for PSO; "
+                              "for Vina max(180, 30 x exhaustiveness), since its search grows with it)")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path to also write results as JSON")
     parser.add_argument("--sample-stats", action="store_true",
                          help="Sample the container's memory/CPU%% with `docker stats` during each "
@@ -460,7 +488,7 @@ def main() -> None:
     configs = [("sequential", False, 1)] + [(f"parallel_{w}", True, w) for w in worker_counts]
 
     run_id = uuid.uuid4().hex[:8]
-    timeout = max(300, args.timeout_per_ligand * len(ligands))
+    timeout = max(300, timeout_per_ligand(args) * len(ligands))
 
     print(f"\nBenchmarking {len(ligands)} ligand(s) with docking_algorithm={args.docking_algorithm} cpu={args.cpu} "
           f"across {len(configs)} configuration(s): "
@@ -481,20 +509,23 @@ def main() -> None:
             sampler,
         )
 
+        ran = workers_ran(workers, result)
         if error is not None:
             row = {"label": label, "workers": workers, "error": error}
         else:
             if baseline_seconds is None:
                 baseline_seconds = elapsed
             row = {
-                "label": label, "workers": workers, "elapsed_seconds": elapsed,
+                "label": label, "workers": ran, "elapsed_seconds": elapsed,
                 "seconds_per_ligand": elapsed / len(ligands) if ligands else 0.0,
                 "speedup_vs_sequential": baseline_seconds / elapsed if elapsed else 0.0,
                 "successful": result.get("successful", 0), "failed": result.get("failed", 0),
             }
+            if ran != workers:
+                row["requested_workers"] = workers
         # Sampled for failed runs too: a memory-pressure failure is exactly when the numbers matter.
         if sampler:
-            row["stats"] = sampler.summary(idle_bytes, max(1, min(workers, len(ligands))))
+            row["stats"] = sampler.summary(idle_bytes, max(1, min(ran, len(ligands))))
             print(f"  {format_stats(row['stats'])}")
         if error is not None:
             print(f"  FAILED: {error}\n")

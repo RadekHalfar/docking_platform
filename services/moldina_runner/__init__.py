@@ -33,7 +33,12 @@ from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Callable, Dict, List, Optional, Any, Tuple
 
-from common.docking_algorithm import DOCKING_ALGORITHMS, normalize_docking_algorithm
+from common.docking_algorithm import (
+    DEFAULT_DOCKING_ALGORITHM,
+    DOCKING_ALGORITHMS,
+    cpus_per_ligand,
+    normalize_docking_algorithm,
+)
 from common.docking_stop import docking_stop_requested
 from common.utils import ensure_directory, compute_file_checksum
 
@@ -470,7 +475,7 @@ class MoldinaRunner:
         energy_range: float,
         progress: "_DockingProgress",
         stop_check: Callable[[], bool] = lambda: False,
-        algorithm: str = "moldina",
+        algorithm: str = DEFAULT_DOCKING_ALGORITHM,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
         """
         Dock a single ligand against the already-prepared receptor/config.
@@ -566,7 +571,7 @@ class MoldinaRunner:
         energy_range: float = 100.0,
         parallel: bool = False,
         max_workers: int = 1,
-        docking_algorithm: str = "moldina",
+        docking_algorithm: str = DEFAULT_DOCKING_ALGORITHM,
     ) -> Dict[str, Any]:
         """
         Run Moldina docking.
@@ -586,8 +591,10 @@ class MoldinaRunner:
                 one at a time (default: False, i.e. sequential)
             max_workers: Maximum number of ligands to dock concurrently when
                 parallel is True — clamped to this process's own CPU count
-                divided by ``cpu`` (so workers × cpu never oversubscribes
-                it) and to the number of ligands, whichever is smallest
+                divided by the CPUs each ligand really uses (``cpu`` in Vina
+                mode, 1 in PSO mode, which ignores ``--cpu``; see
+                ``cpus_per_ligand``), so workers × CPUs never oversubscribes
+                it, and to the number of ligands, whichever is smallest
             docking_algorithm: "moldina" (PSO, default) or "vina" (the
                 binary's classic Monte Carlo search); aliases accepted by
                 ``normalize_docking_algorithm``. Anything else raises
@@ -595,7 +602,8 @@ class MoldinaRunner:
 
         Returns:
             Dictionary with docking results, including the canonical
-            ``docking_algorithm`` that produced them. ``stopped`` is True when a stop
+            ``docking_algorithm`` that produced them and ``workers``, the
+            number of ligands actually docked at a time after the clamp. ``stopped`` is True when a stop
             was requested mid-run (a ``STOP_REQUESTED`` flag file appeared in
             *output_dir*, see ``common/docking_stop.py``): no further ligands
             were started and running Moldina processes were killed.
@@ -688,12 +696,17 @@ size_z = {box_size[2]}
         # Clamped to this container's real, schedulable CPU budget (not
         # whatever the caller guessed, and not os.cpu_count() — see
         # _detect_effective_cpu_count()'s docstring for why that's unsafe)
-        # divided by the CPUs each worker's process uses, so workers × cpu
-        # never oversubscribes it (Vina's Monte Carlo search really is
-        # multithreaded), and to the number of ligands — no point spinning
-        # up more workers than any of these allows.
+        # divided by the CPUs each worker's process really uses, so workers
+        # × CPUs never oversubscribes it (Vina's Monte Carlo search is
+        # multithreaded; PSO ignores --cpu and uses one), and to the number
+        # of ligands — no point spinning up more workers than any of these
+        # allows.
         workers = (
-            max(1, min(max_workers, _detect_effective_cpu_count() // cpu, len(ligand_paths)))
+            max(1, min(
+                max_workers,
+                _detect_effective_cpu_count() // cpus_per_ligand(algorithm, cpu),
+                len(ligand_paths),
+            ))
             if parallel and len(ligand_paths) > 1
             else 1
         )
@@ -756,6 +769,7 @@ size_z = {box_size[2]}
             "status": "stopped" if was_stopped else "ok",
             "stopped": was_stopped,
             "docking_algorithm": algorithm,
+            "workers": workers,
             "skipped": skipped,
             "receptor": receptor_path,
             "total": len(ligand_paths),

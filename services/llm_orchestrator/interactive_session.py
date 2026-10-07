@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set, cast
 from common.file_io import atomic_write_json
 from common.job_log import append_job_log
 from common.param_diff import changed_parameter_keys
-from .workflow_definition import get_ligand_display_names, get_protein_display_name
+from .workflow_definition import get_ligand_display_names, get_protein_display_name, with_default_parameters
 from .workflow_state_manager import WorkflowStateManager
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,15 @@ def compute_changed_params(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -
     ``pending_changed_params`` for changes already checkpointed but not yet
     run to completion (a restored revision, a cancelled redock plan), which
     that diff can't see.
+
+    Both sides get the defaults filled in (:func:`with_default_parameters`),
+    so a key one side lacks -- a form without energy_range, a checkpoint
+    from before docking_algorithm existed -- isn't a change. With no prior
+    parameters (*old* is None) every key in *new* still counts as changed.
     """
-    return set(changed_parameter_keys(old, new))
+    if old is None:
+        return set(changed_parameter_keys(None, new))
+    return set(changed_parameter_keys(with_default_parameters(old), with_default_parameters(new)))
 
 
 def resolve_prepared_protein_pdb_path(last_results: Optional[Dict[str, Any]]) -> Optional[str]:

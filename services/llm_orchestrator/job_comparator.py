@@ -8,22 +8,30 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
+from common.docking_algorithm import docking_algorithm_of
+
+
+def _load_results(job_dir: str) -> Dict[str, Any]:
+    """Read a job directory's workflow_results.json."""
+    results_file = Path(job_dir) / "workflow_results.json"
+    if not results_file.exists():
+        raise FileNotFoundError(f"No results found in {job_dir}")
+    return json.loads(results_file.read_text())
 
 
 def load_job_affinities(job_dir: str) -> Dict[str, Optional[float]]:
-    """Read workflow_results.json from a job directory; return {ligand_id: best_affinity}.
+    """Read workflow_results.json from a job directory; return {ligand_id: best_affinity}."""
+    return _affinities(_load_results(job_dir))
+
+
+def _affinities(data: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """{ligand_id: best_affinity} from a workflow_results.json dict.
 
     A job can dock the same ligand_id more than once (e.g. "two WWO ligands"),
     producing multiple dock-result entries with an identical ligand_id. Each
     occurrence after the first is disambiguated as "WWO #2", "WWO #3", etc. (in
     dock-result order) so no result is silently dropped.
     """
-    results_file = Path(job_dir) / "workflow_results.json"
-    if not results_file.exists():
-        raise FileNotFoundError(f"No results found in {job_dir}")
-
-    data = json.loads(results_file.read_text())
     dock_results = data.get("results", {}).get("dock", {}).get("results", [])
 
     affinities: Dict[str, Optional[float]] = {}
@@ -36,31 +44,6 @@ def load_job_affinities(job_dir: str) -> Dict[str, Optional[float]]:
         affinities[key] = r.get("best_affinity")
 
     return affinities
-
-
-def _load_job_name(job_dir: str) -> Optional[str]:
-    """Read the user-supplied job_name from a job's workflow_results.json, if any."""
-    results_file = Path(job_dir) / "workflow_results.json"
-    try:
-        data = json.loads(results_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data.get("job_name") or None
-
-
-def _load_docking_algorithm(job_dir: str) -> str:
-    """Read which docking algorithm produced a job's dock results.
-
-    Results written before Phase 15 (no ``docking_algorithm`` key) were all
-    Moldina (PSO), so they read as the default.
-    """
-    results_file = Path(job_dir) / "workflow_results.json"
-    try:
-        data = json.loads(results_file.read_text())
-    except (OSError, json.JSONDecodeError):
-        return DEFAULT_DOCKING_ALGORITHM
-    dock = data.get("results", {}).get("dock") or {}
-    return dock.get("docking_algorithm") or DEFAULT_DOCKING_ALGORITHM
 
 
 def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
@@ -80,9 +63,10 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
     if not job_dirs:
         raise ValueError("At least one job directory is required")
 
-    job_names = [_load_job_name(d) or Path(d).name for d in job_dirs]
-    algorithms = [_load_docking_algorithm(d) for d in job_dirs]
-    per_job_affinities = [load_job_affinities(d) for d in job_dirs]
+    per_job_data = [_load_results(d) for d in job_dirs]
+    job_names = [data.get("job_name") or Path(d).name for d, data in zip(job_dirs, per_job_data)]
+    algorithms = [docking_algorithm_of(data.get("results", {}).get("dock")) for data in per_job_data]
+    per_job_affinities = [_affinities(data) for data in per_job_data]
 
     ligands = sorted({ligand_id for affinities in per_job_affinities for ligand_id in affinities})
 

@@ -74,7 +74,8 @@ limited to 10 CPUs):
   at about 40× the per-ligand time with `cpu=1`. One ligand and one target
   isn't a general verdict. Benchmark your own system before choosing.
 - Because Vina really uses `cpu` cores per ligand, the server clamps
-  parallel workers to `CPU budget // cpu`
+  parallel workers to `CPU budget // cpu` in Vina mode (PSO counts as 1 CPU
+  per ligand, whatever `cpu` says)
   ([DOCKING_PARAMETERS.md](DOCKING_PARAMETERS.md#docking_algorithm---search-algorithm)).
 
 Both modes write the same `<ligand>_out.pdbqt` and

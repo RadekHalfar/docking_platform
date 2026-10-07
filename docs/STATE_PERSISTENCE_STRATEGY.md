@@ -93,11 +93,19 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
     deleted the next time a real checkpoint is saved for that job, and by
     a **Save Session** that finds no change against the checkpoint (a
     stale draft would otherwise bring back an edit the form was set back
-    from). The draft holds the same defaults-filled shape as a checkpoint
-    (`_params_as_checkpointed()` in `ui/app.py`, shared with the redock
-    diff); Save Session diffs that against the checkpoint, so an unchanged
-    form is reported as unchanged (2026-10-02 fix, `dev_plan.md` Phase 13
-    changelog).
+    from). Save Session diffs the form against the checkpoint with
+    `compute_changed_params()`, so an unchanged form is reported as
+    unchanged (2026-10-02 fix, `dev_plan.md` Phase 13 changelog).
+  - **Defaults are filled in one place.** `WorkflowStateManager` stores
+    every parameters checkpoint and draft with all defaults filled in
+    (`workflow_definition.with_default_parameters()`), and fills them in
+    again on read, so a file written before a parameter existed (e.g.
+    `docking_algorithm`, before Phase 15) reads as the default it ran with.
+    `compute_changed_params()` fills both sides the same way. A key missing
+    on one side is therefore never a change: no bogus redock plan, no
+    `None -> 'moldina'` line in `job.log` (Review Stage R1, Phase 15; this
+    replaced the GUI-only `_params_as_checkpointed()` /
+    `_latest_checkpoint_params()`).
 - `checkpoints/rev_XXXXXX_parameters.json`
   - immutable snapshot for each parameter update revision
 - `checkpoints/rev_XXXXXX_state.json`

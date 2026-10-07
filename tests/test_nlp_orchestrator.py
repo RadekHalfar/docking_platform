@@ -1,7 +1,9 @@
 """Tests for nlp_orchestrator interactive parameter collection helpers."""
 
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import pytest
 
 from services.llm_orchestrator import WorkflowParser, InteractiveSession, WorkflowStateManager
 from services.llm_orchestrator.workflow_llm_parser import (
@@ -938,7 +940,7 @@ def test_handle_update_parameters_drops_unknown_algorithm(monkeypatch, tmp_path,
     changed = cli._handle_update_parameters("use gnina at ph 6.5", llm_client, session)
     assert changed == {"ph"}
     params = state_manager.load_latest_parameters()
-    assert "docking_algorithm" not in params
+    assert params["docking_algorithm"] == "moldina"  # unchanged (the default)
     assert params["ph"] == 6.5
     assert "'gnina' is not recognised" in capsys.readouterr().out
 
@@ -1685,3 +1687,99 @@ def test_save_results_refused_when_latest_parameters_never_ran(tmp_path, capsys)
 
     assert "have not been run yet" in capsys.readouterr().out
     assert not (job_dir / "saved_results").exists()
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R1, Phase 15 (docs/reviews/stage_15_r1.md)
+# ---------------------------------------------------------------------------
+
+def _dispatch(intent_result, session, orchestrator=None):
+    return cli._dispatch_intent(
+        intent_result, "switch the search over", Mock(), orchestrator or Mock(), WorkflowParser(),
+        session, cli.CLARIFICATION_MODE_HYBRID, None, None, None,
+    )
+
+
+@pytest.mark.parametrize("name", [None, "gnina", "AutoDock Vina 1.1"])
+def test_llm_classified_algorithm_intent_with_bad_name_persists_nothing(tmp_path, capsys, name):
+    """Correctness #4: the LLM classifier may return set_docking_algorithm
+    with any name; it never reaches the checkpoint unnormalised."""
+    session, state_manager = _algo_session(tmp_path, "job_bad_intent")
+    revision = state_manager.get_current_revision()
+
+    assert _dispatch({"intent": "set_docking_algorithm", "name": name}, session) is True
+
+    assert state_manager.get_current_revision() == revision
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "moldina"
+    assert "is not recognised" in capsys.readouterr().out
+
+
+def test_llm_classified_algorithm_intent_alias_is_normalised(tmp_path):
+    session, state_manager = _algo_session(tmp_path, "job_alias_intent")
+    _dispatch({"intent": "set_docking_algorithm", "name": "AutoDock Vina"}, session)
+    assert state_manager.load_latest_parameters()["docking_algorithm"] == "vina"
+
+
+def test_dock_with_current_algorithm_redocks_dock_and_visualize_only(tmp_path):
+    """Correctness #5: "dock with vina" on a session already using vina
+    changes nothing, which fell back to a full CORE_PARAMS rerun."""
+    session, _ = _algo_session(tmp_path, "job_same_algo", docking_algorithm="vina")
+    orchestrator = Mock()
+    with patch.object(cli, "_execute_partial_rerun", return_value={"status": "completed"}) as rerun:
+        _dispatch({"intent": "set_docking_algorithm", "name": "vina", "rerun": True}, session, orchestrator)
+
+    assert rerun.call_args.kwargs["changed_params"] == {"docking_algorithm"}
+
+
+def test_llm_update_restating_default_algorithm_on_old_session_is_no_change(monkeypatch, tmp_path, llm_client):
+    """Correctness #8: a checkpoint from before Phase 15 lacks
+    docking_algorithm; restating the algorithm that ran is not a change."""
+    session, _ = _algo_session(tmp_path, "job_old_session")
+    monkeypatch.setattr(
+        cli, "extract_updates_from_command_with_llm",
+        lambda _llm, _text: {"docking_algorithm": "moldina"},
+    )
+    assert cli._handle_update_parameters("go back to the PSO search please", llm_client, session) == set()
+
+
+def test_dock_with_vina_after_cancelled_first_workflow_runs_every_planned_step(monkeypatch, tmp_path, llm_client):
+    """Found by Review Stage R1, Phase 15's real-data run (bug since
+    2026-04-14): a workflow declined at "Execute this workflow?" recorded
+    its planned steps as executed, so "dock with vina" planned docking
+    alone and failed with "No prepared protein available for docking"."""
+    services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *_a, **_k: {
+        "services": list(services),
+        "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"],
+                       "center": [10.0, 10.0, 10.0], "box_size": [25.0, 25.0, 25.0]},
+        "missing_required": [],
+    })
+    orchestrator = Mock()
+    orchestrator.output_base = Path(tmp_path)
+    orchestrator.execute_workflow.return_value = {
+        "status": "completed", "services_executed": list(services), "results": {}, "errors": [],
+    }
+    answers = iter(["Download 6lu7 and ATP, prepare and dock", "n", "dock with vina", "y", "end"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    cli._run_interactive_loop(llm_client, orchestrator, WorkflowParser(), cli.CLARIFICATION_MODE_HYBRID)
+
+    orchestrator.execute_workflow.assert_called_once()
+    workflow = orchestrator.execute_workflow.call_args.args[0]
+    assert workflow["services"] == services
+    assert workflow["parameters"]["docking_algorithm"] == "vina"
+
+
+def test_search_ligand_rerun_after_cancelled_first_workflow_still_runs(monkeypatch, tmp_path):
+    """The search-ligand "rerun now?" branch checked services_executed
+    itself, which a cancelled first workflow leaves empty, so "y" silently
+    did nothing. It shares _rerun_pending now (Review Stage R1, Phase 15)."""
+    session, _ = _algo_session(tmp_path, "job_search_after_cancel")
+    session.last_results = {"status": "cancelled", "services_executed": [],
+                            "services_planned": list(_ALGO_SERVICES), "results": {}}
+    monkeypatch.setattr(cli, "_handle_search_ligand", lambda **_kw: True)
+    monkeypatch.setattr(cli, "_ask_yes_no", lambda *_a, **_kw: True)
+    with patch.object(cli, "_execute_partial_rerun", return_value={"status": "completed"}) as rerun:
+        _dispatch({"intent": "search_ligand", "name": "aspirin"}, session)
+
+    assert rerun.call_args.kwargs["changed_params"] == {"ligand_ids"}

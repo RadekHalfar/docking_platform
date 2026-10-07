@@ -4,7 +4,7 @@ from __future__ import annotations
 import html as _html
 from typing import Any, Dict
 
-from common.docking_algorithm import DOCKING_ALGORITHM_LABELS
+from common.docking_algorithm import docking_algorithm_label
 
 
 def prepare_affinity_data(dock_results: list) -> list[tuple[str, float]] | None:
@@ -96,7 +96,7 @@ def build_comparison_html(comparison: Dict[str, Any]) -> str:
     if algorithms:
         algorithm_cells = "".join(
             f"<td style='padding:4px 10px;font-style:italic;{border}'>"
-            f"{_html.escape(DOCKING_ALGORITHM_LABELS.get(alg, str(alg)))}</td>"
+            f"{_html.escape(docking_algorithm_label(alg))}</td>"
             for alg in algorithms
         )
         rows.append(

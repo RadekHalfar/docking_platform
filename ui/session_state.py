@@ -1,7 +1,7 @@
 """Session state initialization and parameter helpers."""
 import streamlit as st
 
-from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, normalize_docking_algorithm
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, cpus_per_ligand, normalize_docking_algorithm
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
@@ -172,17 +172,29 @@ def get_params() -> dict:
     return st.session_state.get("params", {})
 
 
+def selected_docking_algorithm() -> str:
+    """The algorithm the GUI's selector has chosen."""
+    return st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+
+
 def effective_cpu() -> int:
     """CPUs per ligand the form docks with: the "CPUs per ligand" field in
-    Vina mode, always 1 for Moldina (PSO), which ignores --cpu -- a cpu left
-    over from Vina mode would otherwise still cut its workers to
-    quota // cpu on the server."""
-    if st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM) != "vina":
-        return 1
+    Vina mode, always 1 for Moldina (PSO), which ignores --cpu
+    (:func:`cpus_per_ligand`, the same rule as the server's worker clamp).
+    Sending 1 for PSO also keeps a cpu left over from Vina mode out of
+    parameters.txt.
+
+    NOTE (Review Stage R1, Phase 15): text that isn't a whole number
+    ("four") silently counts as 1, the way the form's other numeric text
+    fields (pH, Exhaustiveness) are read. A ``number_input`` would remove
+    the fallback; Phase 16 rebuilds this form in NiceGUI, so do it there
+    (Stage 16.4), not twice.
+    """
     try:
-        return max(1, int(st.session_state.get("param_cpu", "1")))
+        cpu = int(st.session_state.get("param_cpu", "1"))
     except (TypeError, ValueError):
-        return 1
+        cpu = 1
+    return cpus_per_ligand(selected_docking_algorithm(), cpu)
 
 
 def reset_workers_to_algorithm_default() -> None:
@@ -191,7 +203,7 @@ def reset_workers_to_algorithm_default() -> None:
     switched (the selector's on_change, a chat command), never on a session
     load, whose saved worker count wins."""
     st.session_state["param_max_workers"] = default_worker_count(
-        WORKER_CAP, st.session_state["param_docking_algorithm"], effective_cpu()
+        WORKER_CAP, selected_docking_algorithm(), effective_cpu()
     )
 
 
@@ -205,7 +217,11 @@ def set_docking_algorithm_widget(algorithm: str) -> None:
 
 
 def apply_parsed_params(parsed_params: dict) -> None:
-    """Sync LLM-extracted parameters into both params dict and widget pre-fill keys."""
+    """Sync LLM-extracted parameters into both params dict and widget pre-fill keys.
+
+    Writes every key it is given, so a chat caller passes only the keys the
+    message named: a validator default would overwrite the user's own edit.
+    """
     params = st.session_state.params
     for k, v in parsed_params.items():
         if v is not None:
@@ -241,11 +257,10 @@ def apply_parsed_params(parsed_params: dict) -> None:
     if parsed_params.get("cpu") is not None:
         st.session_state["param_cpu"] = str(parsed_params["cpu"])
 
-    # Callers pass docking_algorithm only when it was explicitly chosen
-    # (a chat command, an LLM parse that named it): the validator's default
-    # would otherwise reset the selector every message (Phase 15 finding 8).
-    # An unrecognised name (the validator reports it as missing) is not
-    # applied: a value outside the selector's options makes st.radio raise.
+    # The chat callers pass only what the message named, never the
+    # validator's defaults, so this moves the selector only on an explicit
+    # choice (Phase 15 finding 8). An unrecognised name is not applied: a
+    # value outside the selector's options makes st.radio raise.
     algorithm = normalize_docking_algorithm(parsed_params.get("docking_algorithm"))
     if algorithm is not None:
         set_docking_algorithm_widget(algorithm)

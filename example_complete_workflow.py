@@ -150,9 +150,9 @@ def main():
     print(f"\n⚙️  Docking parameters:")
     print(f"   Center: {CENTER}")
     print(f"   Box Size: {BOX_SIZE}")
-    print(f"   CPU: 4")
-    print(f"   Population: 500 (PSO)")
-    print(f"   Exhaustiveness: 16")
+    print(f"   Algorithm: Moldina (PSO)")
+    print(f"   Population: 500")
+    print(f"   CPU: 4, Exhaustiveness: 16 (used only by docking_algorithm='vina'; PSO ignores both)")
     
     docking_result = call_mcp_tool(
         MOLDINA_URL,
@@ -167,7 +167,8 @@ def main():
             "population": 500,
             "exhaustiveness": 16,
             "num_modes": 15,
-            "energy_range": 100.0
+            "energy_range": 100.0,
+            "docking_algorithm": "moldina",
         }
     )
     

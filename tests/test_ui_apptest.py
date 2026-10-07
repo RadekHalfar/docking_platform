@@ -1459,7 +1459,43 @@ def test_chat_parse_naming_an_unknown_algorithm_renders_without_crash(app, monke
 
     assert not at.exception
     assert at.radio(key="param_docking_algorithm").value == "moldina"
-    assert any("docking_algorithm" in t and "Still needed" in t for t in _chat_texts(at))
+    reply = _chat_texts(at)[-1]
+    assert "'gnina' is not recognised, so Moldina (PSO) stays selected" in reply
+    assert "docking_algorithm" not in reply
+
+    # Review Stage R1, Phase 15, correctness #6: the bad name used to ride
+    # along into every follow-up merge and be asked about again each time.
+    monkeypatch.setattr(
+        "services.llm_orchestrator.workflow_llm_parser.parse_followup_with_llm",
+        lambda client, message, **_kw: {"services_add": [], "parameters": {"ph": 6.5}},
+    )
+    at.chat_input[0].set_value("set pH to 6.5").run()
+
+    assert not at.exception
+    assert "not recognised" not in _chat_texts(at)[-1]
+    assert "docking_algorithm" not in _chat_texts(at)[-1]
+
+
+def test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph(app, monkeypatch, cap10):
+    """Review Stage R1, Phase 15, correctness #3: the validator's defaults
+    (cpu 1, exhaustiveness 8, pH 7.4) overwrote the form's own values on
+    every chat message; only what the message named reaches the form."""
+    monkeypatch.setattr(
+        "services.llm_orchestrator.workflow_llm_parser.parse_workflow_with_llm",
+        lambda client, message: {"services": ["dock"], "parameters": {"center": [10.0, 20.0, 30.0]}},
+    )
+    at = _set_algorithm(app.run(), "vina")
+    at = at.text_input(key="param_cpu").set_value("2").run()
+    at = at.text_input(key="param_exhaustiveness").set_value("16").run()
+    at = at.text_input(key="param_ph").set_value("6.5").run()
+
+    at.chat_input[0].set_value("set center to 10, 20, 30").run()
+
+    assert not at.exception
+    assert at.text_input(key="param_center_x").value == "10.0"
+    assert at.text_input(key="param_cpu").value == "2"
+    assert at.text_input(key="param_exhaustiveness").value == "16"
+    assert at.text_input(key="param_ph").value == "6.5"
 
 
 def test_chat_algorithm_command_moves_the_selector_and_resets_workers(app, cap10):

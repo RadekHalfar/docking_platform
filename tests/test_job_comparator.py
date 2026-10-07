@@ -6,7 +6,7 @@ import pytest
 from services.llm_orchestrator.job_comparator import compare_jobs, load_job_affinities
 
 
-def _write_workflow_results(job_dir, dock_results, job_name=None):
+def _write_workflow_results(job_dir, dock_results, job_name=None, docking_algorithm=None):
     job_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "job_id": job_dir.name,
@@ -19,6 +19,8 @@ def _write_workflow_results(job_dir, dock_results, job_name=None):
     }
     if job_name is not None:
         data["job_name"] = job_name
+    if docking_algorithm is not None:
+        data["results"]["dock"]["docking_algorithm"] = docking_algorithm
     (job_dir / "workflow_results.json").write_text(json.dumps(data))
 
 
@@ -152,10 +154,7 @@ class TestCompareJobs:
         # results written before Phase 15 have no key and were Moldina (PSO).
         job_a = tmp_path / "job_abc"
         job_b = tmp_path / "job_def"
-        _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -5.8}])
-        data = json.loads((job_a / "workflow_results.json").read_text())
-        data["results"]["dock"]["docking_algorithm"] = "vina"
-        (job_a / "workflow_results.json").write_text(json.dumps(data))
+        _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -5.8}], docking_algorithm="vina")
         _write_workflow_results(job_b, [{"ligand_id": "ATP", "best_affinity": -4.3}])
 
         comparison = compare_jobs([str(job_a), str(job_b)])

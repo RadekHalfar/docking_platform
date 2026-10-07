@@ -463,7 +463,7 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
 | `num_modes` | integer | No | Maximum binding modes to output (default: 15) |
 | `energy_range` | number | No | Max energy difference for modes in kcal/mol (default: 100.0) |
 | `parallel` | boolean | No | Dock up to `max_workers` ligands concurrently (default: false) |
-| `max_workers` | integer | No | Concurrent ligands when `parallel` is true (default: 1); clamped to the ligand count and to the container's CPU budget divided by `cpu` |
+| `max_workers` | integer | No | Concurrent ligands when `parallel` is true (default: 1); clamped to the ligand count and to the container's CPU budget divided by `cpu` in Vina mode (PSO uses 1 CPU per ligand); the count actually used is returned as `workers` |
 
 **Request Example:**
 ```json
@@ -502,6 +502,7 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
     "status": "ok",
     "stopped": false,
     "docking_algorithm": "moldina",
+    "workers": 1,
     "skipped": 0,
     "receptor": "/data/jobs/job_001/prepared/6lu7.pdbqt",
     "total": 2,
@@ -561,6 +562,9 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
   no further ligands start, running Moldina processes are killed, and the
   response has `"status": "stopped"`, `"stopped": true` and `skipped` =
   ligands never docked (see `docs/MOLDINA_DOCKING.md` → "Stopping a run")
+- `workers` is how many ligands were docked at a time after the server's
+  clamp (added in Review Stage R1, Phase 15); `benchmark_docking.py` labels
+  its rows with it. Older servers don't return it.
 - Population size should be ≥ 5; recommended: 100 × rotatable_bonds
 - Higher exhaustiveness and population = more thorough but slower
 - See `docs/MOLDINA_DOCKING.md` for the engine guide, and

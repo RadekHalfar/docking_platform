@@ -41,6 +41,8 @@ Extract the following:
    - docking_algorithm ("moldina" = Moldina PSO, the default, or "vina" = AutoDock Vina Monte Carlo).
      ONLY set this when the user names an algorithm (vina, autodock vina, monte carlo, moldina, PSO);
      otherwise omit it.
+   - Include ph, exhaustiveness, cpu and population ONLY when the user states a value for them;
+     otherwise omit them (their defaults are filled in later).
 
 CRITICAL RULE FOR LIGAND_IDS:
 - If user says "two WWO ligands", you MUST output: ["WWO", "WWO"]
@@ -78,11 +80,7 @@ Example 1 — center and box_size both explicitly given by the user:
     "protein_id": "5ogo",
     "ligand_ids": ["WWO", "WWO"],
     "center": [16.0, 9.0, 12.0],
-    "box_size": [24.0, 28.0, 32.0],
-    "ph": 7.4,
-    "exhaustiveness": 8,
-    "cpu": 1,
-    "population": 500
+    "box_size": [24.0, 28.0, 32.0]
   },
   "missing_required": []
 }
@@ -93,11 +91,7 @@ Example 2 — center given but box_size NOT given (must be listed as missing):
   "parameters": {
     "protein_id": "6lu7",
     "ligand_ids": ["ATP"],
-    "center": [10.0, 20.0, 30.0],
-    "ph": 7.4,
-    "exhaustiveness": 8,
-    "cpu": 1,
-    "population": 500
+    "center": [10.0, 20.0, 30.0]
   },
   "missing_required": ["box_size"]
 }
@@ -108,11 +102,7 @@ Example 3 — box_size given but center NOT given (must be listed as missing; NE
   "parameters": {
     "protein_id": "6lu7",
     "ligand_ids": ["ATP"],
-    "box_size": [1.0, 10.0, 1.0],
-    "ph": 7.4,
-    "exhaustiveness": 8,
-    "cpu": 1,
-    "population": 500
+    "box_size": [1.0, 10.0, 1.0]
   },
   "missing_required": ["center"]
 }
@@ -606,7 +596,7 @@ def detect_docking_algorithm_command(text: str) -> Optional[Dict[str, Any]]:
         match = _SET_ALGORITHM_RE.match(stripped)
     if match is None:
         return None
-    algorithm = normalize_docking_algorithm(re.sub(r"[()]", " ", match.group("alg")))
+    algorithm = normalize_docking_algorithm(match.group("alg"))
     if algorithm is None:
         return None
     return {"algorithm": algorithm, "rerun": rerun}

@@ -13,6 +13,15 @@ def test_no_prior_params_reports_every_key_as_changed():
     assert compute_changed_params(None, new) == {"protein_id", "ligand_ids"}
 
 
+def test_key_missing_on_one_side_reads_as_its_default():
+    """Review Stage R1, Phase 15: a checkpoint from before docking_algorithm
+    existed, against a form that sends the default, is not a change -- and
+    neither is a form without energy_range against a full checkpoint."""
+    old = {"protein_id": "6lu7", "energy_range": 100.0}
+    assert compute_changed_params(old, {"protein_id": "6lu7", "docking_algorithm": "moldina"}) == set()
+    assert compute_changed_params(old, {"protein_id": "6lu7", "docking_algorithm": "vina"}) == {"docking_algorithm"}
+
+
 def test_identical_params_report_no_changes():
     old = {"protein_id": "6lu7", "ligand_ids": ["ATP"]}
     new = dict(old)

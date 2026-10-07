@@ -16,6 +16,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
 from common.docking_stop import clear_docking_stop
 from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.file_utils import scan_ligand_folder
@@ -37,6 +38,29 @@ _mcp_session = build_mcp_retry_session()
 VERBOSITY_LOW = 0       # Minimal output (step summaries only)
 VERBOSITY_NORMAL = 1    # Normal output (current behavior)
 VERBOSITY_MCP_DEMO = 2  # Full MCP demonstration mode (show JSON-RPC messages)
+
+
+def docking_timeout_seconds(num_ligands: int, workers: int, algorithm: str, exhaustiveness: int) -> int:
+    """HTTP timeout for one run_docking call.
+
+    moldina-runner docks one ligand at a time (or up to *workers* at once),
+    so the timeout scales with batch size / parallelism -- a flat 300 s cap
+    silently fails any sequential batch of more than a couple of ligands.
+
+    Per-ligand budget: 120 s for PSO (~2-3 s measured, it ignores
+    exhaustiveness). Vina's Monte Carlo search grows with exhaustiveness, so
+    it gets 30 s per exhaustiveness unit (240 s at the default 8; measured
+    ~62-106 s per ligand alone and ~144 s for a 10-worker wave,
+    docs/BATCH_DOCKING.md). No credit is given for cpu > 1: Vina is
+    CPU-bound, so splitting the quota into fewer, multi-CPU workers doesn't
+    shorten the batch -- and the server may clamp workers to quota // cpu,
+    below the *workers* asked for (Phase 15 R1, docs/reviews/stage_15_r1.md).
+    """
+    if algorithm == "vina":
+        per_ligand = max(120, 30 * max(1, int(exhaustiveness)))
+    else:
+        per_ligand = 120
+    return max(300, math.ceil(per_ligand * num_ligands / max(1, workers)))
 
 
 class WorkflowOrchestrator:
@@ -533,22 +557,20 @@ class WorkflowOrchestrator:
                 
                 if self.verbosity != VERBOSITY_LOW:
                     logger.info(f"Docking parameters:")
-                    logger.info(f"  Algorithm: {params.get('docking_algorithm', 'moldina')}")
+                    logger.info(f"  Algorithm: {params.get('docking_algorithm', DEFAULT_DOCKING_ALGORITHM)}")
                     logger.info(f"  Center: {params['center']}")
                     logger.info(f"  Box Size: {params['box_size']}")
                     logger.info(f"  Exhaustiveness: {params.get('exhaustiveness', 8)}")
                     logger.info(f"  Population: {params.get('population', 500)}")
                 
-                # Moldina docks ligands one subprocess at a time by default (or up to
-                # max_workers concurrently when parallel is enabled), so the HTTP
-                # timeout must scale with batch size / parallelism — a flat 300s cap
-                # silently fails any sequential batch of more than a couple ligands.
                 parallel = bool(params.get("parallel", False))
                 max_workers = max(1, int(params.get("max_workers", 1)))
-                effective_workers = max_workers if parallel else 1
-                dock_timeout = max(
-                    300,
-                    math.ceil(120 * len(self.workflow_state["prepared_ligands"]) / effective_workers),
+                algorithm = params.get("docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+                dock_timeout = docking_timeout_seconds(
+                    len(self.workflow_state["prepared_ligands"]),
+                    max_workers if parallel else 1,
+                    algorithm,
+                    params.get("exhaustiveness", 8),
                 )
 
                 docking_result = self.call_mcp_tool(
@@ -567,7 +589,7 @@ class WorkflowOrchestrator:
                         "energy_range": params.get("energy_range", 100.0),
                         "parallel": parallel,
                         "max_workers": max_workers,
-                        "docking_algorithm": params.get("docking_algorithm", "moldina"),
+                        "docking_algorithm": algorithm,
                     },
                     timeout=dock_timeout,
                 )

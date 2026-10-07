@@ -205,6 +205,7 @@ The sampler and the idle-baseline read could drift apart, so that one crashes wh
    - **Recommendation:** do it when a third GUI caller of `compute_changed_params` or `save_draft_parameters` is added, or when a "changed to None" diff shows up on the CLI.
    - **Trigger comment:** `ui/app.py`, the `_params_as_checkpointed()` docstring.
    - **Future Work:** `dev_plan.md` Phase 14.
+   - **Resolved (2026-10-06, Review Stage R1 of Phase 15, `docs/reviews/stage_15_r1.md` Quality #1).** The trigger fired in substance: Stage 15.3 needed a second GUI helper, and the CLI had the "changed from None" bug. The owner chose the root fix. `WorkflowStateManager` now stores and reads parameters with defaults filled in, via `workflow_definition.with_default_parameters()`, and `compute_changed_params()` fills both sides. `_params_as_checkpointed()` and its trigger comment are gone.
 3. **Exact peak memory from the kernel** (altitude #5).
    - **Problem:** polled peaks are lower bounds. cgroup v2 `memory.peak` exists in moldina-runner (kernel 6.18), but it covers the container's lifetime (5178 MiB at review time, against a sampled 4963 MiB at 10 workers). It can be reset only per open file, so a plain read can't be attributed to one configuration.
    - **Fix:** keep `memory.peak` open in a `docker exec` for each configuration; reset it at the start and read it at the end.

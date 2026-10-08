@@ -49,7 +49,10 @@ def _write_raw(tmp_path, body):
 class TestDetectMoldinaWorkerCap:
     def test_reads_configured_cpu_limit(self, tmp_path):
         compose_path = _write_compose(tmp_path, "4")
-        assert detect_moldina_worker_cap(compose_path) == WorkerCap(4, "compose")
+        # The cap is min(quota, cpu_count); pin the CPUs so a 2-CPU CI
+        # runner doesn't make it 2.
+        with patch("ui.worker_cap.os.cpu_count", return_value=16):
+            assert detect_moldina_worker_cap(compose_path) == WorkerCap(4, "compose")
 
     def test_truncates_fractional_cpu_limit(self, tmp_path):
         compose_path = _write_compose(tmp_path, "2.5")

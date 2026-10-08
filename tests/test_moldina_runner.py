@@ -348,15 +348,18 @@ class TestMoldinaExecution:
 
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
 
-        runner_linux.run_moldina_docking(
-            receptor_path=receptor_path,
-            ligand_paths=[ligand_path],
-            output_dir=output_dir,
-            center=(10.5, 20.3, -5.2),
-            box_size=(25, 30, 35),
-            cpu=4,
-            population=200
-        )
+        # cpu is clamped to the machine's CPUs; pin them so a 2-CPU CI
+        # runner doesn't turn the requested 4 into 2.
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=8):
+            runner_linux.run_moldina_docking(
+                receptor_path=receptor_path,
+                ligand_paths=[ligand_path],
+                output_dir=output_dir,
+                center=(10.5, 20.3, -5.2),
+                box_size=(25, 30, 35),
+                cpu=4,
+                population=200
+            )
 
         # Check that subprocess.run was called
         assert mock_subprocess.run.called

@@ -360,9 +360,10 @@ docking_platform/
 │
 ├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
-│   ├── session_state.py        # Session state init/parameter sync
+│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, run_control, sessions (Phase 16)
+│   ├── session_state.py        # Streamlit adapter: st.session_state as a GuiSession view, init
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
-│   ├── orchestrator_bridge.py  # Background-thread workflow execution
+│   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-thread stdout capture
 │   ├── job_history.py          # Sidebar job history scan, job naming/rename
 │   ├── ollama_models.py        # Ollama model listing
 │   ├── pymol_client.py         # pymol-interactive helper-API client (box selection only)

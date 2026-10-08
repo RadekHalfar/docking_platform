@@ -1,12 +1,21 @@
-"""Session state initialization and parameter helpers."""
+"""Streamlit adapter for the GUI state (Stage 16.1).
+
+The GUI's logic lives in the framework-free ``ui/core`` package and works on
+a :class:`ui.core.state.GuiSession`. Streamlit keeps that state in
+``st.session_state`` under its long-standing keys; :func:`gui_session`
+returns a view of it with ``GuiSession``'s attributes, so the ``ui/core``
+functions run against it unchanged. The helpers below are the page's
+existing entry points, now thin delegations to ``ui/core``.
+"""
 import streamlit as st
 
-from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, cpus_per_ligand, normalize_docking_algorithm
 from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
+from ui.core import form
+from ui.core.state import DEFAULT_INPUT_MODE, GREETING_MESSAGE, form_defaults
 from ui.settings import load_settings, save_settings
-from ui.worker_cap import default_worker_count, detect_moldina_worker_cap, max_workers_for
+from ui.worker_cap import detect_moldina_worker_cap
 
 # Detected once at import time — the docking service's worker ceiling (and
 # where it came from), used to cap the "max parallel workers" control, to
@@ -14,24 +23,7 @@ from ui.worker_cap import default_worker_count, detect_moldina_worker_cap, max_w
 WORKER_CAP = detect_moldina_worker_cap()
 
 # Widget keys that mirror parsed parameters — set before widgets render to pre-fill them.
-_WIDGET_DEFAULTS = {
-    "param_job_name": "",
-    "param_protein_id": "",
-    "param_ligand_ids_text": "",
-    "param_ligand_folder_path": "",
-    "param_center_x": "",
-    "param_center_y": "",
-    "param_center_z": "",
-    "param_box_x": "",
-    "param_box_y": "",
-    "param_box_z": "",
-    "param_ph": "7.4",
-    "param_exhaustiveness": "8",
-    "param_cpu": "1",
-    "param_parallel": False,
-    "param_max_workers": default_worker_count(WORKER_CAP),
-    "param_docking_algorithm": DEFAULT_DOCKING_ALGORITHM,
-}
+_WIDGET_DEFAULTS = form_defaults(WORKER_CAP)
 
 # Keyed widgets whose values must survive a run that stops (st.rerun())
 # before rendering them -- see init(). Not the file uploaders (Streamlit
@@ -43,13 +35,83 @@ _PERSISTED_WIDGET_KEYS = (
 
 # Shared by init() (first load) and start_new_session() (detaching from a
 # job without a full page reload) so the greeting text lives in one place.
-_GREETING_MESSAGE = {
-    "role": "assistant",
-    "content": (
-        "Hello! Describe your docking workflow or use the form on the right.\n\n"
-        "Example: *Download 6lu7 and dock ATP with center 10 20 30 box 25 30 35*"
-    ),
+_GREETING_MESSAGE = GREETING_MESSAGE
+
+# GuiSession field -> (st.session_state key, value while the key is absent,
+# whether assigning None removes the key). Keys removed on None are the
+# ones the page (and its tests) treat as "absent" rather than None.
+_STATE_KEYS = {
+    "messages": ("messages", None, False),
+    "params": ("params", None, False),
+    "settings": ("settings", None, False),
+    "llm_client": ("llm_client", None, False),
+    "parser": ("parser", None, False),
+    "interactive_session": ("interactive_session", None, False),
+    "bridge": ("bridge", None, False),
+    "box_picker_bridge": ("box_picker_bridge", None, False),
+    "job_id": ("job_id", None, False),
+    "job_name": ("job_name", "", False),
+    "viewed_job_id": ("viewed_job_id", None, False),
+    "job_done": ("_job_done", False, False),
+    "pending_rerun": ("_pending_rerun", None, True),
+    "comparison": ("comparison", None, False),
+    "save_conflict": ("_save_conflict", None, True),
+    "box_picker_receptor_pdb": ("_box_picker_receptor_pdb", None, True),
+    "box_picker_last_click": ("_box_picker_last_click", None, True),
+    "box_picker_error": ("_box_picker_error", None, True),
+    "box_picker_job_id": ("_box_picker_job_id", None, False),
+    "pending_geometry_target": ("_pending_geometry_target", None, True),
 }
+
+
+class _StreamlitGuiSession:
+    """``GuiSession``'s attributes, stored in ``st.session_state``.
+
+    ``form`` is ``st.session_state`` itself (the form fields are the
+    ``param_*`` widget keys). ``worker_cap`` and ``form_defaults`` are read
+    from this module's globals at each access, so tests that patch
+    ``WORKER_CAP`` / ``_WIDGET_DEFAULTS`` reach the ``ui/core`` code too.
+    """
+
+    __slots__ = ()
+
+    @property
+    def form(self):
+        return st.session_state
+
+    @property
+    def worker_cap(self):
+        return WORKER_CAP
+
+    @property
+    def form_defaults(self):
+        return _WIDGET_DEFAULTS
+
+    def __getattr__(self, name):
+        try:
+            key, default, _ = _STATE_KEYS[name]
+        except KeyError:
+            raise AttributeError(name) from None
+        return st.session_state.get(key, default)
+
+    def __setattr__(self, name, value):
+        try:
+            key, _, drop_on_none = _STATE_KEYS[name]
+        except KeyError:
+            raise AttributeError(name) from None
+        if value is None and drop_on_none:
+            st.session_state.pop(key, None)
+        else:
+            st.session_state[key] = value
+
+
+_GUI_SESSION = _StreamlitGuiSession()
+
+
+def gui_session() -> _StreamlitGuiSession:
+    """This browser tab's state, for the ``ui/core`` functions. Stateless
+    itself -- every access goes to the current ``st.session_state``."""
+    return _GUI_SESSION
 
 
 def init() -> None:
@@ -70,7 +132,7 @@ def init() -> None:
         st.session_state.params = {}
 
     if "input_mode" not in st.session_state:
-        st.session_state.input_mode = "local_files"
+        st.session_state.input_mode = DEFAULT_INPUT_MODE
 
     if "bridge" not in st.session_state:
         st.session_state.bridge = None
@@ -126,45 +188,13 @@ def apply_settings(new_settings: dict) -> None:
 
 
 def clear_box_picker_state() -> None:
-    """Discard the box picker's loaded receptor and click marker.
-
-    Used whenever that state might no longer correspond to the protein
-    actually in play: starting a fresh box-picker load, the user
-    discarding it explicitly, and -- the case Review Stage R1 (Phase 12)
-    found missing -- detaching from or starting a new docking session,
-    where a previously-loaded receptor could otherwise be silently reused
-    for the wrong protein by a geometry chat command
-    ("set up box center as protein center" / "look across all protein",
-    via ``ui/app.py``'s ``_resolve_prepared_protein_pdb_path()``). Also
-    drops a pending geometry command awaiting a fetch/prepare job started
-    on its behalf (``ui/app.py``'s ``_handle_protein_geometry_command()``),
-    for the same reason -- it shouldn't fire against a different job.
-    """
-    st.session_state.pop("_box_picker_receptor_pdb", None)
-    st.session_state.pop("_box_picker_last_click", None)
-    st.session_state.pop("_pending_geometry_target", None)
-    st.session_state.pop("_box_picker_error", None)
+    """See :func:`ui.core.form.clear_box_picker_state`."""
+    form.clear_box_picker_state(gui_session())
 
 
 def start_new_session() -> None:
-    """Detach from the current job/session while keeping parameter widgets
-    and LLM settings untouched.
-
-    Clears job_id/viewed_job_id/bridge/interactive_session/chat so the next
-    "Run Docking" click starts a brand-new job_dir/revision history, without
-    losing whatever the user has already typed into the form. Used by the
-    "New Session" button and by deleting the session currently active/in
-    view (ui/app.py).
-    """
-    st.session_state.interactive_session = InteractiveSession()
-    st.session_state.job_id = None
-    st.session_state.job_name = ""
-    st.session_state.viewed_job_id = None
-    st.session_state.bridge = None
-    st.session_state["_job_done"] = False
-    st.session_state.pop("_pending_rerun", None)
-    st.session_state.messages = [dict(_GREETING_MESSAGE)]
-    clear_box_picker_state()
+    """See :func:`ui.core.form.start_new_session`."""
+    form.start_new_session(gui_session())
 
 
 def get_params() -> dict:
@@ -173,126 +203,31 @@ def get_params() -> dict:
 
 
 def selected_docking_algorithm() -> str:
-    """The algorithm the GUI's selector has chosen."""
-    return st.session_state.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
+    """See :func:`ui.core.form.selected_docking_algorithm`."""
+    return form.selected_docking_algorithm(gui_session())
 
 
 def effective_cpu() -> int:
-    """CPUs per ligand the form docks with: the "CPUs per ligand" field in
-    Vina mode, always 1 for Moldina (PSO), which ignores --cpu
-    (:func:`cpus_per_ligand`, the same rule as the server's worker clamp).
-    Sending 1 for PSO also keeps a cpu left over from Vina mode out of
-    parameters.txt.
-
-    NOTE (Review Stage R1, Phase 15): text that isn't a whole number
-    ("four") silently counts as 1, the way the form's other numeric text
-    fields (pH, Exhaustiveness) are read. A ``number_input`` would remove
-    the fallback; Phase 16 rebuilds this form in NiceGUI, so do it there
-    (Stage 16.4), not twice.
-    """
-    try:
-        cpu = int(st.session_state.get("param_cpu", "1"))
-    except (TypeError, ValueError):
-        cpu = 1
-    return cpus_per_ligand(selected_docking_algorithm(), cpu)
+    """See :func:`ui.core.form.effective_cpu`."""
+    return form.effective_cpu(gui_session())
 
 
 def reset_workers_to_algorithm_default() -> None:
-    """Set "Max parallel workers" to the selected algorithm's benchmarked
-    best at the current CPUs per ligand. Called whenever the algorithm is
-    switched (the selector's on_change, a chat command), never on a session
-    load, whose saved worker count wins."""
-    st.session_state["param_max_workers"] = default_worker_count(
-        WORKER_CAP, selected_docking_algorithm(), effective_cpu()
-    )
+    """See :func:`ui.core.form.reset_workers_to_algorithm_default` (the
+    selector's on_change)."""
+    form.reset_workers_to_algorithm_default(gui_session())
 
 
 def set_docking_algorithm_widget(algorithm: str) -> None:
-    """Select *algorithm* in the GUI's selector, resetting the worker count
-    to its benchmarked best if that is a real switch."""
-    if st.session_state.get("param_docking_algorithm") == algorithm:
-        return
-    st.session_state["param_docking_algorithm"] = algorithm
-    reset_workers_to_algorithm_default()
+    """See :func:`ui.core.form.set_docking_algorithm`."""
+    form.set_docking_algorithm(gui_session(), algorithm)
 
 
 def apply_parsed_params(parsed_params: dict) -> None:
-    """Sync LLM-extracted parameters into both params dict and widget pre-fill keys.
-
-    Writes every key it is given, so a chat caller passes only the keys the
-    message named: a validator default would overwrite the user's own edit.
-    """
-    params = st.session_state.params
-    for k, v in parsed_params.items():
-        if v is not None:
-            params[k] = v
-
-    if parsed_params.get("protein_id"):
-        st.session_state["param_protein_id"] = parsed_params["protein_id"]
-
-    if isinstance(parsed_params.get("ligand_ids"), list):
-        st.session_state["param_ligand_ids_text"] = ", ".join(parsed_params["ligand_ids"])
-
-    if parsed_params.get("ligand_folder"):
-        st.session_state["param_ligand_folder_path"] = parsed_params["ligand_folder"]
-
-    center = parsed_params.get("center")
-    if isinstance(center, list) and len(center) == 3:
-        st.session_state["param_center_x"] = str(center[0])
-        st.session_state["param_center_y"] = str(center[1])
-        st.session_state["param_center_z"] = str(center[2])
-
-    box = parsed_params.get("box_size")
-    if isinstance(box, list) and len(box) == 3:
-        st.session_state["param_box_x"] = str(box[0])
-        st.session_state["param_box_y"] = str(box[1])
-        st.session_state["param_box_z"] = str(box[2])
-
-    if parsed_params.get("ph") is not None:
-        st.session_state["param_ph"] = str(parsed_params["ph"])
-
-    if parsed_params.get("exhaustiveness") is not None:
-        st.session_state["param_exhaustiveness"] = str(parsed_params["exhaustiveness"])
-
-    if parsed_params.get("cpu") is not None:
-        st.session_state["param_cpu"] = str(parsed_params["cpu"])
-
-    # The chat callers pass only what the message named, never the
-    # validator's defaults, so this moves the selector only on an explicit
-    # choice (Phase 15 finding 8). An unrecognised name is not applied: a
-    # value outside the selector's options makes st.radio raise.
-    algorithm = normalize_docking_algorithm(parsed_params.get("docking_algorithm"))
-    if algorithm is not None:
-        set_docking_algorithm_widget(algorithm)
+    """See :func:`ui.core.form.apply_parsed_params`."""
+    form.apply_parsed_params(gui_session(), parsed_params)
 
 
 def load_session_params(loaded_params: dict) -> None:
-    """Replace current params with a loaded session's (or restored
-    revision's) checkpointed parameters, syncing both
-    st.session_state.params and the param_* widget pre-fill keys.
-
-    Widgets are reset to their defaults first: apply_parsed_params() only
-    writes keys present in *loaded_params*, so without the reset e.g. a
-    stale param_protein_id would survive loading a protein_file revision.
-    param_job_name is kept -- it only names the *next* new session.
-    parallel/max_workers are applied here rather than in
-    apply_parsed_params(), whose chat-parse callers carry the validator's
-    default ``parallel: False`` and would reset the checkbox every message.
-    A session without docking_algorithm (saved before Phase 15) reads as
-    the default, Moldina; switching to its algorithm here doesn't reset the
-    worker count -- the saved max_workers (or, without one, the default
-    for that algorithm) applies.
-    """
-    for key, default in _WIDGET_DEFAULTS.items():
-        if key != "param_job_name":
-            st.session_state[key] = default
-    st.session_state.params = {}
-    apply_parsed_params(loaded_params)
-    if loaded_params.get("parallel") is not None:
-        st.session_state["param_parallel"] = bool(loaded_params["parallel"])
-    if loaded_params.get("max_workers") is not None:
-        # Clamped to the widget's own bounds (a checkpoint may come from a
-        # machine with more cores than this one, or ran more CPUs per ligand).
-        st.session_state["param_max_workers"] = min(
-            max(1, int(loaded_params["max_workers"])), max_workers_for(WORKER_CAP, effective_cpu())
-        )
+    """See :func:`ui.core.form.load_session_params`."""
+    form.load_session_params(gui_session(), loaded_params)

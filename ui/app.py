@@ -2,7 +2,6 @@
 import json
 import os
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,18 +13,13 @@ from common.pdb_geometry import compute_protein_center_and_box
 from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import (
     SAVED_RESULTS_DIRNAME,
-    compute_changed_params,
     resolve_prepared_protein_pdb_path,
     save_results_bundle,
     timestamped_bundle_name,
     validate_bundle_name,
 )
 from services.llm_orchestrator.job_comparator import compare_jobs
-from services.llm_orchestrator.rerun_planner import (
-    compute_rerun_steps,
-    describe_rerun_plan,
-    missing_required_params,
-)
+from services.llm_orchestrator.rerun_planner import describe_rerun_plan
 from services.llm_orchestrator.workflow_llm_parser import (
     _deterministic_intent,
     detect_docking_algorithm_command,
@@ -33,9 +27,9 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
-from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS, with_default_parameters
-from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
-from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
+from ui.core import form as gui_form
+from ui.core import run_control, sessions
+from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
@@ -47,8 +41,8 @@ from ui.session_state import (
     clear_box_picker_state,
     effective_cpu,
     get_params,
+    gui_session,
     init,
-    load_session_params,
     reset_workers_to_algorithm_default,
     selected_docking_algorithm,
     start_new_session,
@@ -87,57 +81,22 @@ def _save_upload(uploaded_file, upload_dir: Path) -> str:
 
 
 def _collect_form_params() -> dict:
-    """Read widget keys and return a params dict for validation/execution."""
-    params: dict = {}
-    mode = st.session_state.get("input_mode", "local_files")
-
-    if mode == "rcsb":
-        pid = st.session_state.get("param_protein_id", "").strip()
-        if pid:
-            params["protein_id"] = pid
-        ligand_text = st.session_state.get("param_ligand_ids_text", "").strip()
-        if ligand_text:
-            params["ligand_ids"] = [l.strip() for l in ligand_text.split(",") if l.strip()]
-
-    elif mode == "folder":
-        pid = st.session_state.get("param_protein_id", "").strip()
-        if pid:
-            params["protein_id"] = pid
-        # ligand_files already written to params via _on_folder_ligand_upload_change
-
-    # local_files: protein_file / ligand_files already written to params during upload
-
-    center, box_size = _read_box_fields()
-    if center is not None:
-        params["center"] = center
-    if box_size is not None:
-        params["box_size"] = box_size
-
-    for key, default, cast in [
-        ("ph", "7.4", float),
-        ("exhaustiveness", "8", int),
-    ]:
-        try:
-            params[key] = cast(st.session_state.get(f"param_{key}", default))
-        except (ValueError, TypeError):
-            pass
-    params["docking_algorithm"] = selected_docking_algorithm()
-    params["cpu"] = effective_cpu()
-
-    params["parallel"] = bool(st.session_state.get("param_parallel", False))
-    try:
-        params["max_workers"] = max(1, int(st.session_state.get("param_max_workers", 1)))
-    except (ValueError, TypeError):
-        params["max_workers"] = 1
-
-    return params
+    """See :func:`ui.core.form.collect_form_params`."""
+    return gui_form.collect_form_params(gui_session())
 
 
 def _sync_form_into_params() -> dict:
-    """Fold the form into ``st.session_state.params`` (which also holds
-    upload paths and chat-parsed values the form doesn't) and return a copy."""
-    st.session_state.params.update(_collect_form_params())
-    return st.session_state.params.copy()
+    """See :func:`ui.core.form.sync_form_into_params`."""
+    return gui_form.sync_form_into_params(gui_session())
+
+
+def _show_outcome(outcome) -> None:
+    """Carry out a ``ui/core`` action's :class:`~ui.core.state.Outcome`:
+    an inline error, then a rerun if the page must redraw."""
+    if outcome.error:
+        st.error(outcome.error)
+    if outcome.refresh:
+        st.rerun()
 
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
@@ -345,282 +304,32 @@ def _on_chat_submit(user_message: str) -> None:
 
 
 # ── Run / Reset ───────────────────────────────────────────────────────────────
+# The actions live in ui/core (run_control, sessions); these wrappers carry
+# out their Outcome the Streamlit way (st.error / st.rerun).
 
 def _handle_run_docking() -> None:
-    params = _sync_form_into_params()
-
-    session = st.session_state.interactive_session
-    if session.has_active_job():
-        _handle_redock_request(session, params)
-        return
-
-    # A brand-new job is about to start -- any box-picker receptor loaded
-    # for a previous (unrelated) protein/session no longer applies. Without
-    # this, _find_receptor_pdb_for_geometry() would keep preferring that
-    # stale path over this new job's own prepare_protein result once it
-    # completes, silently computing geometry chat commands from the wrong
-    # protein (Review Stage R1, Phase 12).
-    clear_box_picker_state()
-
-    # Always include visualization — it runs after docking and produces the PNG.
-    services = list(WORKFLOW_STEPS)
-    try:
-        validated = st.session_state.parser.validate_workflow(
-            {"services": services, "parameters": params}
-        )
-    except Exception as exc:
-        st.error(f"Validation error: {exc}")
-        return
-
-    missing = validated.get("missing_required", [])
-    if missing:
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": f"Cannot start — required parameters missing: **{', '.join(missing)}**.",
-            }
-        )
-        return
-
-    job_id = generate_job_id()
-    job_name = st.session_state.get("param_job_name", "").strip()[:60]
-    st.session_state.job_id = job_id
-    st.session_state.job_name = job_name
-    st.session_state.viewed_job_id = job_id
-    st.session_state["_job_done"] = False
-
-    state_manager = WorkflowStateManager(OUTPUT_BASE / job_id)
-    state_manager.save_parameters_checkpoint(validated["parameters"], source="initial_parse")
-    state_manager.clear_draft_parameters()
-    session.activate(job_id, state_manager)
-
-    bridge = OrchestratorBridge()
-    bridge.start_workflow(
-        validated, job_id, str(OUTPUT_BASE), job_name=job_name, state_manager=state_manager
-    )
-    st.session_state.bridge = bridge
-
-    st.session_state.messages.append(
-        {"role": "assistant", "content": f"Starting docking session `{job_id}`..."}
-    )
-    st.rerun()
+    _show_outcome(run_control.run_docking(gui_session(), OUTPUT_BASE, OrchestratorBridge))
 
 
 def _handle_save_session() -> None:
-    """Persist the current form's parameter edits as a draft, without
-    running/redocking anything. Lets edits (e.g. a box-size tweak) survive
-    switching to a different session and back.
-
-    With nothing changed against the checkpoint, any earlier draft is
-    dropped: Load prefers a draft, so a stale one would bring back an edit
-    the form has since been set back from."""
-    session = st.session_state.interactive_session
-    if not session.has_active_job():
-        return
-    params = _sync_form_into_params()
-    checkpointed = session.state_manager.load_latest_parameters() or {}
-    if not compute_changed_params(checkpointed, params):
-        session.state_manager.clear_draft_parameters()
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "No parameter changes to save."}
-        )
-    else:
-        session.state_manager.save_draft_parameters(params)
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "Parameters saved. Click **Run Docking** to apply them."}
-        )
-
-
-def _handle_redock_request(session, params: dict) -> None:
-    """Diff params against the active session's last checkpoint and, if a
-    rerun is warranted, stage a plan for confirmation.
-
-    Mirrors the CLI's ``_execute_partial_rerun`` (describe_rerun_plan +
-    ``[Y/n]`` prompt) via a two-step "Run Docking" → "Confirm redock" button
-    pair, since Streamlit has no blocking ``input()``.
-    """
-    # The form doesn't carry every parameter (energy_range, num_modes,
-    # population, ...): with the defaults filled in, params is what the
-    # checkpoint below holds and what the redock runs with.
-    params = with_default_parameters(params)
-    old_params = session.state_manager.load_latest_parameters() or {}
-    changed = compute_changed_params(old_params, params)
-    # pending_changed_params holds changes already checkpointed but not yet
-    # run to completion: a restored revision (all CORE_PARAMS), or an
-    # earlier redock that was cancelled / failed. The form matches the
-    # checkpoint in those cases, so the diff alone would miss them.
-    rerun_keys = changed | session.pending_changed_params
-
-    # Steps the last run never got to (stopped or failed part-way) must run
-    # even with no parameter change, and must stay plannable: intersecting
-    # with the executed steps alone dropped dock/visualize for good after a
-    # stopped first run (Review Stage R1, Phase 13).
-    last = session.last_results or {}
-    executed = set(last.get("services_executed", []))
-    unfinished = set() if last.get("status") == "completed" else set(WORKFLOW_STEPS) - executed
-    if not rerun_keys and not unfinished:
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "No parameter changes detected — nothing to redock."}
-        )
-        return
-
-    if changed:
-        session.state_manager.save_parameters_checkpoint(params, source="interactive_update")
-        session.state_manager.clear_draft_parameters()
-
-    planned = set(compute_rerun_steps(rerun_keys, original_services=executed | unfinished)) | unfinished
-    steps = [s for s in WORKFLOW_STEPS if s in planned]
-    if not steps:
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "Parameters updated, but no steps need to be re-executed."}
-        )
-        # Not for the reply (the chat history is drawn last): the checkpoint
-        # above is a new revision, and the Revision history panel already
-        # rendered this run.
-        st.rerun()
-        return
-
-    # The checkpoint above now runs ahead of the results on disk until a
-    # run completes (_process_docking_bridge() clears this) -- Cancel or the error
-    # return below must not lose that.
-    session.pending_changed_params |= changed
-
-    # params is what the checkpoint holds -- reuse it instead of a
-    # redundant round trip back through the checkpoint file.
-    missing = missing_required_params(steps, params)
-    if missing:
-        st.error("Cannot redock — required parameters are missing: " + ", ".join(sorted(set(missing))))
-        return
-
-    st.session_state["_pending_rerun"] = {
-        "job_id": session.job_id,
-        "steps": steps,
-        "params": params,
-    }
-    st.rerun()
+    _show_outcome(run_control.save_session(gui_session()))
 
 
 def _execute_confirmed_redock() -> None:
-    pending = st.session_state.pop("_pending_rerun", None)
-    if not pending:
-        return
-
-    session = st.session_state.interactive_session
-    if pending.get("job_id") != session.job_id:
-        # The active session changed (e.g. a sidebar Load) after this plan
-        # was staged but before it was confirmed -- the staged steps/params
-        # were computed for a different job_id and must not be applied here.
-        st.error("Redock plan was for a different session and has been discarded — please try again.")
-        st.rerun()
-        return
-
-    rerun_workflow = {"services": pending["steps"], "parameters": pending["params"]}
-
-    st.session_state["_job_done"] = False
-    st.session_state.viewed_job_id = session.job_id
-
-    bridge = OrchestratorBridge()
-    bridge.start_workflow(
-        rerun_workflow,
-        session.job_id,
-        str(OUTPUT_BASE),
-        job_name=st.session_state.get("job_name", ""),
-        state_manager=session.state_manager,
-    )
-    st.session_state.bridge = bridge
-
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": f"Redocking `{session.job_id}` — steps: {', '.join(pending['steps'])}...",
-        }
-    )
-    st.rerun()
+    _show_outcome(run_control.confirm_redock(gui_session(), OUTPUT_BASE, OrchestratorBridge))
 
 
 def _undo_to_revision(revision: int) -> str:
-    """Restore the active session's parameters to *revision* (the GUI's
-    ``undo <rev>``) and return the reply to show.
-
-    Shared by the Revision history panel's button (an on_click callback)
-    and the chat command; never calls st.rerun() and must run before the
-    parameter widgets render, since it rewrites their keys.
-    """
-    session = st.session_state.interactive_session
-    if not session.has_active_job():
-        return "No active session — run or load one first."
-    if _active_bridge_job_id() is not None:
-        # The orchestrator re-reads the latest parameters before every
-        # step, so a restore now would change the running job mid-flight.
-        return "A session is running — Stop it before restoring a revision."
-
-    try:
-        has_parameters = session.state_manager.load_checkpoint(revision)["parameters"] is not None
-    except ValueError as exc:
-        return f"Cannot restore revision {revision}: {exc}"
-    if not has_parameters:
-        # Restoring only a runtime-state checkpoint would roll back
-        # workflow_state.json under results it no longer matches, with
-        # nothing marked to rerun -- the Revision history panel only offers
-        # parameter revisions, so chat doesn't either (R1, Phase 13).
-        return (
-            f"Revision {revision} has no parameter checkpoint — only revisions marked "
-            "[params] in `show history` can be restored."
-        )
-
-    restored = session.state_manager.restore_revision(revision)["parameters"]
-
-    # A draft would otherwise win over the restored revision on the next Load.
-    session.state_manager.clear_draft_parameters()
-    st.session_state.pop("_pending_rerun", None)
-    _load_params_into_form(restored)
-    # The results on disk come from the newer parameters -- the next redock
-    # must rerun everything those affect, even though the form now matches
-    # the checkpoint exactly (mirrors the CLI's undo).
-    session.pending_changed_params |= CORE_PARAMS
-    return (
-        f"Restored revision {revision}. The results panel still shows the last run — "
-        "click **Run Docking** to rerun with the restored parameters."
-    )
-
-
-def _format_history_markdown(revisions: list[dict]) -> str:
-    """A job's revision history (``WorkflowStateManager.list_revisions()``)
-    as a markdown table -- the GUI's equivalent of the CLI's ``show history``."""
-    if not revisions:
-        return "No revisions recorded yet."
-
-    lines = ["| Rev | Time (UTC) | Event | Details |", "|---|---|---|---|"]
-    for r in revisions:
-        details = ", ".join(f"{k}={v}" for k, v in r["details"].items())
-        flags = [name for name, present in (("params", r["has_parameters"]), ("state", r["has_state"])) if present]
-        if flags:
-            details = f"{details} [{', '.join(flags)}]" if details else f"[{', '.join(flags)}]"
-        timestamp = r["timestamp"][:19].replace("T", " ")
-        event, details = (escape_markdown(s).replace("|", "\\|") for s in (r["event_type"], details))
-        lines.append(f"| {r['revision']} | {timestamp} | {event} | {details} |")
-    return "\n".join(lines)
+    """See :func:`ui.core.sessions.undo_to_revision`. Never calls st.rerun()
+    and must run before the parameter widgets render (it rewrites their keys)."""
+    return sessions.undo_to_revision(gui_session(), revision)
 
 
 def _handle_history_chat_intent(intent: dict) -> None:
     """Answer a deterministic ``show history`` / ``undo [N]`` chat command."""
-    session = st.session_state.interactive_session
-    if intent["intent"] == "show_history":
-        if not session.has_active_job():
-            reply = "No active session — no history yet."
-        else:
-            current = session.state_manager.get_parameters_revision()
-            reply = (
-                _format_history_markdown(session.state_manager.list_revisions())
-                + f"\n\nParameters are currently at revision **{current}**. "
-                "Type `undo <revision>` to restore one."
-            )
-    elif intent.get("name") is None:
-        reply = "Which revision? e.g. `undo 3` — type `show history` to list them."
-    else:
-        reply = _undo_to_revision(int(intent["name"]))
-    st.session_state.messages.append({"role": "assistant", "content": reply})
-
+    st.session_state.messages.append(
+        {"role": "assistant", "content": sessions.history_chat_reply(gui_session(), intent)}
+    )
 
 _SAVE_SCOPES = ("all", "docking", "visualization")
 
@@ -835,73 +544,9 @@ def _render_settings_form() -> None:
             st.error(f"Could not apply settings: {exc}")
 
 
-def _load_params_into_form(params: dict) -> None:
-    """Make *params* the form's full parameter state: params dict + every
-    param_* widget (load_session_params) and the chat parser. Shared by a sidebar Load and a revision restore. Must
-    run before the parameter widgets render (sidebar/chat code, or an
-    on_click callback).
-    """
-    # A receptor loaded for box picking belongs to the previous protein; kept
-    # across a Load or restore that changes the protein, a geometry chat
-    # command would compute from the wrong one (Phase 12 R1's stale-receptor
-    # fix only covered New Session and a fresh job -- Review Stage R1,
-    # Phase 13).
-    protein_keys = ("protein_id", "protein_file")
-    if [st.session_state.params.get(k) for k in protein_keys] != [params.get(k) for k in protein_keys]:
-        clear_box_picker_state()
-    load_session_params(params)
-    # Seed parser.parsed_workflow so a chat follow-up sent right after this
-    # merges onto these parameters instead of being treated as a brand-new
-    # workflow (see parse_followup_with_llm usage in _on_chat_submit).
-    st.session_state.parser.validate_workflow(
-        {
-            "services": list(WORKFLOW_STEPS),
-            "parameters": params,
-        }
-    )
-
-
 def _resume_session(job: dict) -> None:
-    """Load a session's results into the results panel *and* resume it as
-    the active interactive session, so redocking can continue immediately
-    instead of starting a brand-new job on the next "Run Docking" click.
-
-    Reconstructing a WorkflowStateManager against an existing job_dir is
-    safe -- it only creates the manifest file if missing, never overwrites
-    existing checkpoints (see workflow_state_manager.py).
-    """
-    st.session_state.viewed_job_id = job["job_id"]
-    state_manager = WorkflowStateManager(Path(job["job_dir"]))
-    # Populate the "Current parameters" panel (and its param_* widgets) from
-    # the job's saved parameters -- without this, the panel stays empty
-    # after a Load since nothing else in this function touches
-    # st.session_state.params. A draft (saved via "Save Session" without
-    # docking) takes priority over the last real checkpoint since it's
-    # strictly newer.
-    loaded_params = state_manager.load_draft_parameters() or state_manager.load_latest_parameters()
-    if loaded_params:
-        _load_params_into_form(loaded_params)
-    last_results = _load_workflow_results(job["job_id"])
-    session = st.session_state.interactive_session
-    session.activate(job["job_id"], state_manager, last_results=last_results)
-    # activate() starts `pending` empty, but the latest parameters may never
-    # have run (a restored revision, a cancelled redock plan) -- the next
-    # redock would then say "nothing to redock" while Save says "Run
-    # Docking first" (Review Stage R1, Phase 13). The per-key detail isn't
-    # on disk, so mark everything those parameters affect, as undo does.
-    if not state_manager.parameters_ran():
-        session.pending_changed_params |= CORE_PARAMS
-    st.session_state.job_id = job["job_id"]
-    st.session_state.job_name = job.get("job_name", "")
-    # Prevents _process_docking_bridge()'s completion sync from immediately
-    # overwriting session.last_results on the next rerun (it only runs
-    # while _job_done is False, i.e. for a run it's actively tracking).
-    st.session_state["_job_done"] = True
-    # A redock staged for the *previous* active session is no longer valid
-    # once the active session switches to a different job_id -- discard it
-    # rather than risk it being confirmed against this new job later
-    # (_execute_confirmed_redock also checks job_id as a second guard).
-    st.session_state.pop("_pending_rerun", None)
+    """"Load" -- see :func:`ui.core.sessions.resume_session`."""
+    sessions.resume_session(gui_session(), job, OUTPUT_BASE)
     st.rerun()
 
 
@@ -911,25 +556,8 @@ def _clear_all_job_caches() -> None:
 
 
 def _active_bridge_job_id() -> str | None:
-    """job_id this browser tab's own bridge is actively running, if any.
-
-    Only the current tab's own bridge is visible here -- a different
-    tab/process running the same job_id is not detectable, and that
-    residual gap is documented rather than silently assumed solved.
-
-    Used to guard every action that would detach ``st.session_state`` from
-    the job a live bridge is writing into (New Session, Reset, Load, Delete)
-    -- detaching without checking this first would orphan the running
-    background thread (it keeps writing to its job_dir with nothing left in
-    session_state able to observe or stop it) and, for Load/Delete
-    specifically, desyncs ``job_id`` from the bridge's real target, which
-    defeats the very running-job guard those actions rely on (see
-    docs/reviews/stage_11_2_11_3_r2.md).
-    """
-    bridge = st.session_state.get("bridge")
-    if bridge is not None and bridge.is_running():
-        return st.session_state.get("job_id")
-    return None
+    """See :func:`ui.core.run_control.active_bridge_job_id`."""
+    return run_control.active_bridge_job_id(gui_session())
 
 
 def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str | None:
@@ -989,15 +617,12 @@ def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str |
         col_save, col_cancel = st.columns(2)
         with col_save:
             if st.button("Save", key=f"job_rename_save_{job['job_id']}"):
-                try:
-                    rename_job(job["job_dir"], new_name)
-                except Exception as exc:
-                    st.error(f"Rename failed: {exc}")
+                error = sessions.rename_session(gui_session(), job, new_name)
+                if error:
+                    st.error(error)
                 else:
                     _clear_all_job_caches()
                     st.session_state[f"_renaming_{job['job_id']}"] = False
-                    if st.session_state.get("viewed_job_id") == job["job_id"]:
-                        st.session_state.job_name = new_name.strip()[:60]
                     st.rerun()
         with col_cancel:
             if st.button("Cancel", key=f"job_rename_cancel_{job['job_id']}"):
@@ -1009,16 +634,11 @@ def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str |
         col_confirm, col_cancel2 = st.columns(2)
         with col_confirm:
             if st.button("Confirm delete", key=f"job_delete_confirm_{job['job_id']}"):
-                try:
-                    shutil.rmtree(job["job_dir"])
-                except OSError as exc:
-                    st.error(f"Delete failed: {exc}")
+                error = sessions.delete_session(gui_session(), job)
+                if error:
+                    st.error(error)
                 else:
                     _clear_all_job_caches()
-                    if st.session_state.get("viewed_job_id") == job["job_id"]:
-                        st.session_state.viewed_job_id = None
-                    if st.session_state.get("job_id") == job["job_id"]:
-                        start_new_session()
                     st.session_state[f"_deleting_{job['job_id']}"] = False
                     st.rerun()
         with col_cancel2:
@@ -1068,53 +688,9 @@ def _render_failed_session_history() -> None:
 # ── Chat panel ────────────────────────────────────────────────────────────────
 
 def _process_docking_bridge() -> None:
-    """Stream a running job's log lines into the chat and, once it has
-    finished, record the outcome and post the reply -- exactly once
-    (``_job_done``). Runs before the layout (see ``_process_bridges``)."""
-    bridge: OrchestratorBridge = st.session_state.bridge
-    if not bridge:
-        return
-
-    # Stream progress lines from a running job into the last assistant message.
-    if bridge.is_running():
-        new_lines = bridge.get_log_lines()
-        if new_lines and st.session_state.messages:
-            st.session_state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
-        return
-
-    if st.session_state.get("_job_done"):
-        return
-    result = bridge.get_result()
-    error = bridge.get_error()
-    # Sync the session's view of "what's been run" from the already-merged
-    # result execute_workflow() returns, so a subsequent redock's
-    # original_services/last_results reflect this run instead of going
-    # stale -- reusing the on-disk merge execute_workflow() already does
-    # rather than re-deriving it here (see docs/reviews/stage_11_1_r1.md
-    # finding #5).
-    session = st.session_state.interactive_session
-    if result is not None and session.has_active_job() and session.job_id == st.session_state.job_id:
-        session.last_results = result
-
-    status = (result or {}).get("status")
-    if status == "completed":
-        # The checkpointed parameters have now actually been run. Only a
-        # *completed* run clears them (stricter than the CLI): after a
-        # stop/failure the results on disk still predate them, so the next
-        # redock must still include them.
-        if session.job_id == st.session_state.job_id:
-            session.pending_changed_params = set()
-        reply = "Workflow completed successfully!"
-    elif error:
-        reply = f"Workflow failed: {error}"
-    elif status == "cancelled":
-        reply = "Session stopped."
-    elif status == "failed":
-        reply = "Workflow failed: " + ("; ".join(result.get("errors", [])) or "unknown error")
-    else:
-        return
-    st.session_state["_job_done"] = True
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    """See :func:`ui.core.run_control.process_docking_bridge`. Runs before
+    the layout (see ``_process_bridges``)."""
+    run_control.process_docking_bridge(gui_session())
 
 
 def _process_box_picker_bridge() -> None:
@@ -1160,8 +736,7 @@ def _process_box_picker_bridge() -> None:
 
 
 def _any_bridge_running() -> bool:
-    bridges = (st.session_state.bridge, st.session_state.get("box_picker_bridge"))
-    return any(b is not None and b.is_running() for b in bridges)
+    return run_control.any_bridge_running(gui_session())
 
 
 def _process_bridges() -> bool:
@@ -1220,10 +795,7 @@ _PICKER_MIN_BOX_SIZE = 1.0
 # then -- so the box that was shown is the box that gets docked.
 _PICKER_DEFAULT_BOX_SIZE = 20.0
 
-_BOX_WIDGET_KEYS = (
-    "param_center_x", "param_center_y", "param_center_z",
-    "param_box_x", "param_box_y", "param_box_z",
-)
+_BOX_WIDGET_KEYS = gui_form.BOX_FORM_KEYS
 
 
 def _render_params_summary() -> None:
@@ -1294,7 +866,7 @@ def _render_revision_history() -> None:
 
     revisions = state_manager.list_revisions()
     with st.expander("Revision history"):
-        st.markdown(_format_history_markdown(revisions))
+        st.markdown(sessions.format_history_markdown(revisions))
         current = state_manager.get_parameters_revision()
         if current is not None:
             st.caption(f"Parameters are currently at revision {current}.")
@@ -1425,15 +997,14 @@ def render_parameters_panel() -> None:
                 _execute_confirmed_redock()
         with col_cancel:
             if st.button("Cancel", width="stretch"):
-                st.session_state.pop("_pending_rerun", None)
-                st.rerun()
+                _show_outcome(run_control.cancel_redock(gui_session()))
     else:
         # New Session/Reset both detach st.session_state from whatever job
         # is currently attached -- while this tab's own bridge is actively
         # running that job, detaching would orphan the background thread
         # (nothing left in session_state could observe or stop it) and
         # desync the sidebar's running-job guards for it (see
-        # _active_bridge_job_id docstring).
+        # ui.core.run_control.active_bridge_job_id's docstring).
         running_job = _active_bridge_job_id()
         col_run, col_save, col_new, col_reset = st.columns(4)
         with col_run:
@@ -1609,15 +1180,8 @@ def _render_folder_inputs() -> None:
 
 
 def _read_box_fields() -> tuple[list[float] | None, list[float] | None]:
-    """``(center, box_size)`` from the Docking Box fields; each is None
-    unless all three of its fields parse as numbers."""
-    def triple(keys: tuple) -> list[float] | None:
-        try:
-            return [float(st.session_state.get(k, "")) for k in keys]
-        except (ValueError, TypeError):
-            return None
-
-    return triple(_BOX_WIDGET_KEYS[:3]), triple(_BOX_WIDGET_KEYS[3:])
+    """See :func:`ui.core.form.read_box_fields`."""
+    return gui_form.read_box_fields(gui_session())
 
 
 def _drawable_box_size() -> list[float] | None:
@@ -1826,18 +1390,8 @@ def render_results_panel() -> None:
 
 
 def _load_workflow_results(job_id: str) -> dict | None:
-    """Read workflow_results.json straight from disk for a completed job.
-
-    Used to view jobs loaded from history (or run in a previous session /
-    via the CLI), which have no in-memory OrchestratorBridge to poll.
-    """
-    results_file = OUTPUT_BASE / job_id / "workflow_results.json"
-    if not results_file.exists():
-        return None
-    try:
-        return json.loads(results_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+    """See :func:`ui.core.sessions.load_workflow_results`."""
+    return sessions.load_workflow_results(OUTPUT_BASE, job_id)
 
 
 def _read_docking_progress(job_id: str) -> dict | None:
@@ -2030,8 +1584,7 @@ def _render_job_results() -> None:
             if bridge.stop_requested():
                 st.caption("Stop requested — stopping (docking halts within a few seconds)...")
             elif st.button("Stop", key=f"stop_{viewed_job_id}"):
-                bridge.request_stop()
-                st.rerun()
+                _show_outcome(run_control.stop_run(gui_session()))
             _render_job_log(viewed_job_id)
             return
 

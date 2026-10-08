@@ -559,3 +559,31 @@ What the numbers say about Streamlit:
 - **Interactions are slower on a finished session than in setup** (box step
   899 ms vs 491 ms), most likely because each rerun also redraws the results panel, which is
   now full (not separately verified).
+
+## Code Structure (for developers)
+
+Since Phase 16 (Stage 16.1) the GUI's logic is split from Streamlit, so the
+NiceGUI port reuses it rather than rewriting it:
+
+- **`ui/core/`** — framework-free, no `streamlit` or `nicegui` import:
+  - `state.py`: `GuiSession`, one browser client's state, never module-global.
+  - `form.py`: form ↔ workflow parameters.
+  - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session, bridge polling.
+  - `sessions.py`: Load, rename, delete, revision history and undo.
+
+  Each action appends its chat replies to `state.messages`. It returns an
+  `Outcome`: `refresh` to redraw the page, `error` to show next to the
+  control. The bridge class is passed in, so tests swap in a fake.
+- **`ui/session_state.py`** — the Streamlit adapter. `gui_session()` is a
+  view of `st.session_state` with `GuiSession`'s attributes. The page's
+  keys are unchanged (`_job_done`, `_pending_rerun`, the `param_*` widget
+  keys), so the `ui/core` functions run against it as they are.
+- **`ui/app.py`** — the Streamlit page; its handlers are thin wrappers that
+  carry out an `Outcome` with `st.error` / `st.rerun()`. Chat, geometry,
+  save-as and the results helpers move to `ui/core` in Stage 16.2.
+- **`ui/orchestrator_bridge.py`** captures only its own thread's `print()`
+  output. One routing `sys.stdout` proxy is installed once, and each
+  bridge thread registers its log queue with it. Before this, each bridge
+  used `contextlib.redirect_stdout`, which swaps the process-wide stdout:
+  a docking run and a box-picker receptor load at the same time captured
+  each other's lines.

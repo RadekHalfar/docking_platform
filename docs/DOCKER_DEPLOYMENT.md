@@ -415,9 +415,15 @@ CI's `requirements.txt`-based environment mirrors `script-runner`'s, not
 `ui`'s. Two kinds of test live in this tier:
 
 - **Helper/state tests** (`tests/test_ui_app_helpers.py`,
-  `tests/test_ui_session_state.py`) call non-widget functions directly
-  (`_collect_form_params`, `_handle_protein_geometry_command`,
-  `apply_parsed_params`, `start_new_session`, etc.).
+  `tests/test_ui_session_state.py`, `tests/test_ui_streamlit_adapter.py`)
+  call non-widget functions directly (`_collect_form_params`,
+  `_handle_protein_geometry_command`, `apply_parsed_params`,
+  `start_new_session`, the `gui_session()` view, etc.).
+
+Not every `tests/test_ui_*.py` file needs streamlit. The framework-free GUI
+logic in `ui/core/` (Phase 16) is tested by `tests/test_ui_core_*.py`, and
+`OrchestratorBridge` by `tests/test_ui_orchestrator_bridge.py`. Both run
+for real in the default hermetic suite (and CI) as well as in this tier.
 - **Render tests** (`tests/test_ui_apptest.py`, Phase 13) run the whole
   page through Streamlit's `AppTest` harness (`streamlit.testing.v1`) and
   assert on what was actually rendered — chat replies, sidebar session

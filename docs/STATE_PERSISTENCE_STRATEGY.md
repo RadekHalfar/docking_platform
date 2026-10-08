@@ -86,9 +86,9 @@ For each job directory (`orchestrator_output/job_<id>/`), the system writes:
     `save_draft_parameters()`/read via `load_draft_parameters()`/removed
     via `clear_draft_parameters()`, with no `job.log` entry and no
     revision bump — so it can't spam the audit history, and can't
-    interfere with `_handle_redock_request()`'s diff, which always
+    interfere with the GUI redock's diff (`ui/core/run_control.py::plan_redock()`), which always
     compares against `load_latest_parameters()` (the real checkpoint)
-    regardless of whether a draft exists. `_resume_session()` prefers
+    regardless of whether a draft exists. A GUI Load (`ui/core/sessions.py::resume_session()`) prefers
     this file over `workflow_parameters.json` when both are present; it's
     deleted the next time a real checkpoint is saved for that job, and by
     a **Save Session** that finds no change against the checkpoint (a
@@ -289,7 +289,7 @@ user: rerun
 ### GUI notes (Phase 13, Stage 13.2)
 
 The GUI's **Restore revision** button and `undo N` chat command share
-`ui/app.py::_undo_to_revision()`. It calls the same `restore_revision()`, then:
+`ui/core/sessions.py::undo_to_revision()` (in `ui/app.py` until Stage 16.1). It calls the same `restore_revision()`, then:
 
 - clears `draft_parameters.json`, which would otherwise win over the restore
   on the next Load;
@@ -309,7 +309,7 @@ restores them, reporting the runtime state restored. In both, the revision
 number must follow `undo` directly (`undo 3`, `undo rev 3`); otherwise the
 CLI prompts and the GUI asks.
 
-The GUI's redock (`_handle_redock_request`) plans from
+The GUI's redock (`ui/core/run_control.py::plan_redock()`) plans from
 `changed | pending_changed_params`. After a checkpoint it adds the changed
 keys to `pending`. It clears `pending` only when a run of the active job
 **completes**. A stopped or failed run keeps it, which is stricter than the
@@ -318,7 +318,7 @@ CLI's `rerun`, where `pending` is cleared either way. `InteractiveSession.activa
 
 `pending_changed_params` lives in memory only, so a sidebar Load re-seeds it
 from disk: when `WorkflowStateManager.parameters_ran()` is False (a restore
-not yet redocked, a cancelled redock plan), `_resume_session()` sets
+not yet redocked, a cancelled redock plan), `resume_session()` sets
 `pending |= CORE_PARAMS`. The per-key detail is not on disk, so this is an
 over-approximation (a full rerun), the same one undo makes. Before Review
 Stage R1 (Phase 13) a Load lost that state: redock said "nothing to redock"

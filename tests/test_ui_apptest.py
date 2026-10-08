@@ -1500,6 +1500,8 @@ def test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph(app, monkeypa
 
 def test_chat_algorithm_command_moves_the_selector_and_resets_workers(app, cap10):
     at = _set_algorithm(app.run(), "vina")
+    # The workers field is disabled until Parallel is ticked, as for a user.
+    at = at.checkbox(key="param_parallel").check().run()
     at = at.number_input(key="param_max_workers").set_value(3).run()
 
     at.chat_input[0].set_value("use moldina").run()

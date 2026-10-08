@@ -1,0 +1,32 @@
+[
+  {
+    "container": "mcp-ui",
+    "interval_seconds": 1.0,
+    "measured_at": "2026-10-07T14:39:41+00:00",
+    "label": "running-25",
+    "seconds": 115.2,
+    "stats": {
+      "n_samples": 52,
+      "peak_mem_bytes": 148058931,
+      "mean_mem_bytes": 138440262.51923078,
+      "peak_cpu_percent": 27.55,
+      "mean_cpu_percent": 10.14096153846154,
+      "sample_errors": 0
+    }
+  },
+  {
+    "container": "mcp-ui",
+    "interval_seconds": 1.0,
+    "measured_at": "2026-10-07T14:39:41+00:00",
+    "label": "idle-completed-25",
+    "seconds": 57.0,
+    "stats": {
+      "n_samples": 26,
+      "peak_mem_bytes": 149317222,
+      "mean_mem_bytes": 148026666.8846154,
+      "peak_cpu_percent": 8.67,
+      "mean_cpu_percent": 2.036153846153846,
+      "sample_errors": 0
+    }
+  }
+]

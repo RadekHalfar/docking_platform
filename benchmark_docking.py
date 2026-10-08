@@ -27,7 +27,8 @@ configuration runs, and reports peak/mean memory plus peak memory per
 worker: (peak - idle baseline) / min(workers, num_ligands). Each
 `docker stats --no-stream` call itself takes ~1-2 s, so the sampled peak is
 a lower bound of the true peak, not an exact value. ContainerStatsSampler is
-container-agnostic and importable, so other measurements can reuse it.
+container-agnostic and importable, so other measurements can reuse it
+(benchmark_gui.py samples the GUI container with it).
 
 Prerequisites:
 - Run on the host, from the repo root, with Python 3.8+ and `requests`

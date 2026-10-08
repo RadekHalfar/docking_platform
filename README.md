@@ -414,6 +414,9 @@ docking_platform/
 │
 ├── nlp_orchestrator.py          # CLI for natural language workflows (also: compare, cleanup-jobs)
 ├── benchmark_docking.py         # Sequential vs. parallel docking benchmark script
+├── benchmark_gui.py             # GUI container CPU/memory sampler (docs/GUI_GUIDE.md "Performance")
+├── benchmark_gui_latency.js     # Browser-console GUI interaction-latency snippet
+├── benchmark_gui_browser.py     # Headless-browser (Playwright) GUI timing driver
 ├── example_complete_workflow.py # Example Python API usage
 ├── example_prepare_ligand.py    # Example ligand preparation
 │

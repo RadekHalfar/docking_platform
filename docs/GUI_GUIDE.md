@@ -466,3 +466,96 @@ used. The
 strongest predicted binder per ligand (most negative kcal/mol) is
 highlighted green — rendered as a plain HTML table (not `st.dataframe`) so
 the highlight stays readable in both light and dark theme.
+
+## Performance
+
+Phase 16 replaces this Streamlit GUI with NiceGUI (`dev_plan.md`, Part 9).
+To show whether the port helped, the Streamlit GUI was timed before it
+(Stage 16.0), and the NiceGUI GUI is timed after it (Stage 16.8). Both use
+the same tools and the same reference session.
+
+### Tools
+
+| What | Tool |
+|---|---|
+| Interaction latency: from a click (or Enter in a text field) until the page stops changing for 300 ms | [`benchmark_gui_latency.js`](../benchmark_gui_latency.js), a DevTools console snippet. By hand: paste it into the console (Chrome blocks the first paste into DevTools; type `allow pasting` and press Enter, then paste again), do the action 5+ times, letting the page settle in between, then run `__lat.summary("<label>")`. For chat commands, run `__lat.summary("<label>", "enter")` instead, so the click that focused the chat box is left out. The median is the figure to record. |
+| GUI container CPU% and memory | [`benchmark_gui.py`](../benchmark_gui.py), `docker stats` on `mcp-ui`. Either for a fixed `--duration`, or with `--from-driver` between the driver's `SAMPLE-START` / `SAMPLE-STOP` lines. |
+| Viewer re-render time and render count | `?perf` in `ui/components/mol_viewer/index.html`. With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
+| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. |
+
+The scripted measurement is one pipeline, run from the repo root in Git
+Bash, with the stack running:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --out /out/<date>_gui_streamlit_browser.json --screenshot /out/<date>_gui_streamlit_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui            --json-out docs/benchmarks/<date>_gui_streamlit_stats.json
+```
+
+The pipeline starts a real docking run on the live stack, so a new session
+appears in Session History. It takes about 5 minutes. The Box X steps are
+made in + / − pairs, so the box ends where it started.
+
+### Reference session
+
+- **Inputs:** the receptor and the first 25 molecules of the 295-ligand
+  session `job_20260817_111507_854b2c`
+  (`orchestrator_output/<job>/downloads/receptor.pdb` and
+  `actives_final.sdf`). They are copied to the git-ignored
+  `data/benchmark_gui/` as `receptor.pdb` and `actives_first25.sdf`.
+- **Run settings:** Local Files, box center (19.354, 16.789, 29.19), size
+  20 × 20 × 20 Å, default algorithm (Moldina PSO), default Parallel (off),
+  so the 25 ligands dock one after another.
+- **Machine state:** the laptop on mains power in normal (not
+  power-saving) mode, for both 16.0 and 16.8. Power-saving throttles the
+  CPU and skews every number.
+- **Phases** (the driver's order):
+  - **setup**: inputs uploaded and the receptor loaded for box picking.
+  - **running**: from Run Docking until the Stop button goes away.
+  - **completed**: the finished session, first left idle for 60 s, then
+    clicked.
+- **Not measured: a 295-ligand session.** Session History lists only the 10
+  newest sessions, so `job_20260817_111507_854b2c` can't be loaded from
+  it. Measuring a large session needs a fresh 295-ligand run, about
+  11 minutes of sequential docking. Add it in 16.8 if the 25-ligand numbers
+  leave the question open.
+
+### Results
+
+Stage 16.0 baseline, Streamlit, 2026-10-07, run by `benchmark_gui_browser.py`
+(headless Chromium 1600 × 1000).
+- **Session:** `job_20261007_144016_08e8a4`, 25 of 25 docked, Moldina,
+  1 worker, about 121 s from Run to finish.
+- **Raw data:** [`docs/benchmarks/2026-10-07_gui_streamlit_browser.json`](benchmarks/2026-10-07_gui_streamlit_browser.json)
+  and [`docs/benchmarks/2026-10-07_gui_streamlit_stats.json`](benchmarks/2026-10-07_gui_streamlit_stats.json).
+  In the stats file, `measured_at` is when the pipeline started. The
+  per-window `started_at` was added after this run.
+- **Latency:** median of 5 actions; Box X ± is 5 pairs, so 10 samples.
+
+| Phase | Measurement | Streamlit (16.0) | NiceGUI (16.8) |
+|---|---|---|---|
+| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | |
+| setup | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 184 ms | |
+| running | `show history` latency, median (min–max) | 4,736 ms (2,492–12,823) | |
+| running | `mcp-ui` CPU mean / peak | 10.1% / 27.6% (52 samples, 115 s) | |
+| running | `mcp-ui` memory mean / peak | 132 MiB / 141 MiB | |
+| completed | `mcp-ui` CPU mean / peak, idle 60 s | 2.0% / 8.7% (26 samples) | |
+| completed | `mcp-ui` memory mean / peak, idle | 141 MiB / 142 MiB | |
+| completed | Viewer renders while idle | 0 | |
+| completed | `show history` latency, median (min–max) | 926 ms (243–954) | |
+| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | |
+| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | |
+| completed | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 190 ms | |
+
+What the numbers say about Streamlit:
+- **Every box step rebuilds the whole viewer scene** (about 190 ms of JS
+  for the 2,186-atom receptor), and that is also what resets the camera.
+  Finding 4's fix should take this to an overlay update, not a rebuild.
+- **While a job runs, interactions wait for the page's 2 s poll cycle.** A
+  `show history` takes 2.5–12.8 s, against under 1 s once the session has
+  finished. The snippet also counted one sample as dropped: it was
+  superseded before it settled. During polling, the 300 ms quiet window
+  is a rough edge, so the running latency is the noisiest figure here.
+- **The polling itself costs CPU:** about 10% mean CPU while the job runs,
+  against 2% idle.
+- **Interactions are slower on a finished session than in setup** (box step
+  899 ms vs 491 ms), most likely because each rerun also redraws the results panel, which is
+  now full (not separately verified).

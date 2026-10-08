@@ -61,6 +61,43 @@
     return "0x" + toHex(r) + toHex(g) + "00";
   }
 
+  // ---- ?perf timing (Stage 16.0 baseline; docs/GUI_GUIDE.md "Performance") --
+  // Off unless the page URL has ?perf. Streamlit serves this file in a
+  // same-origin iframe, so the flag is on the parent's URL; the NiceGUI port
+  // (Stage 16.5) has no iframe and reads its own -- and keeps these names.
+  function hasPerfFlag(win) {
+    try {
+      return new URLSearchParams(win.location.search).has("perf");
+    } catch (e) {
+      return false;  // a cross-origin parent can't be read
+    }
+  }
+  var perfEnabled = hasPerfFlag(window) || (window.parent !== window && hasPerfFlag(window.parent));
+  var perfRenderCount = 0;
+  window.__viewerPerf = [];
+
+  function perfStart() {
+    if (!perfEnabled) return null;
+    perfRenderCount += 1;
+    return { n: perfRenderCount, t0: performance.now() };
+  }
+
+  function perfEnd(token, mode) {
+    if (!token) return;
+    var renderMs = performance.now() - token.t0;
+    var atoms = viewer.selectedAtoms({}).length;
+    requestAnimationFrame(function () {
+      var entry = {
+        render: token.n, mode: mode, atoms: atoms,
+        renderMs: +renderMs.toFixed(1),
+        frameMs: +(performance.now() - token.t0).toFixed(1),
+      };
+      window.__viewerPerf.push(entry);
+      console.info("[perf] render #" + entry.render + " mode=" + mode + " atoms=" + atoms +
+        " render=" + entry.renderMs + "ms frame=" + entry.frameMs + "ms");
+    });
+  }
+
   function clearScene() {
     viewer.removeAllModels();
     viewer.removeAllShapes();
@@ -68,6 +105,7 @@
   }
 
   function renderScene(args) {
+    var perfToken = perfStart();
     clearScene();
     hintEl.textContent = "";
 
@@ -80,6 +118,7 @@
 
     if (!receptorPdb) {
       viewer.render();
+      perfEnd(perfToken, mode);
       setFrameHeight(height);
       return;
     }
@@ -223,6 +262,7 @@
 
     viewer.zoomTo();
     viewer.render();
+    perfEnd(perfToken, mode);
     setFrameHeight(height);
   }
 

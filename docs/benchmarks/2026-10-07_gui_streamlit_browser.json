@@ -1,0 +1,102 @@
+{
+  "url": "http://localhost:3000",
+  "receptor": "/repo/data/benchmark_gui/receptor.pdb",
+  "ligands": "/repo/data/benchmark_gui/actives_first25.sdf",
+  "center": [
+    "19.354",
+    "16.789",
+    "29.19"
+  ],
+  "box": [
+    "20",
+    "20",
+    "20"
+  ],
+  "scenarios": {
+    "setup": {
+      "box_step": {
+        "label": "setup: box X +/-",
+        "n": 10,
+        "median_ms": 491.35,
+        "min_ms": 186.2,
+        "max_ms": 637.2,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 10,
+          "median_render_ms": 183.9,
+          "median_frame_ms": 184.6,
+          "atoms": 2186,
+          "renders_per_action": 1.0
+        }
+      }
+    },
+    "running": {
+      "show_history": {
+        "label": "running: show history",
+        "n": 5,
+        "median_ms": 4736.4,
+        "min_ms": 2492,
+        "max_ms": 12823.2,
+        "capped": 0,
+        "dropped": 1,
+        "viewer": {
+          "renders": 0,
+          "renders_per_action": 0.0
+        }
+      },
+      "run_seconds_observed": 121.3,
+      "viewer_while_running": {
+        "renders": 0
+      }
+    },
+    "completed": {
+      "viewer_while_idle": {
+        "renders": 0
+      },
+      "show_history": {
+        "label": "completed: show history",
+        "n": 5,
+        "median_ms": 925.9,
+        "min_ms": 243.3,
+        "max_ms": 953.6,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 0,
+          "renders_per_action": 0.0
+        }
+      },
+      "load": {
+        "label": "completed: Load",
+        "n": 5,
+        "median_ms": 1025.7,
+        "min_ms": 201.9,
+        "max_ms": 1087.4,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 0,
+          "renders_per_action": 0.0
+        }
+      },
+      "box_step": {
+        "label": "completed: box X +/-",
+        "n": 10,
+        "median_ms": 899.2,
+        "min_ms": 220.4,
+        "max_ms": 996.3,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 10,
+          "median_render_ms": 190.05,
+          "median_frame_ms": 190.65,
+          "atoms": 2186,
+          "renders_per_action": 1.0
+        }
+      }
+    }
+  },
+  "job_id": "job_20261007_144016_08e8a4"
+}

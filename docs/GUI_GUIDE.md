@@ -562,25 +562,36 @@ What the numbers say about Streamlit:
 
 ## Code Structure (for developers)
 
-Since Phase 16 (Stage 16.1) the GUI's logic is split from Streamlit, so the
-NiceGUI port reuses it rather than rewriting it:
+Since Phase 16 (Stages 16.1–16.2) the GUI's logic is split from Streamlit,
+so the NiceGUI port reuses it rather than rewriting it:
 
 - **`ui/core/`** — framework-free, no `streamlit` or `nicegui` import:
   - `state.py`: `GuiSession`, one browser client's state, never module-global.
   - `form.py`: form ↔ workflow parameters.
   - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session, bridge polling.
   - `sessions.py`: Load, rename, delete, revision history and undo.
+  - `chat.py`: chat commands (geometry, algorithm, history, save) and the
+    LLM parse. `parse_message()` is the blocking LLM call and touches no
+    state, so a GUI with an event loop can run it on a worker thread and
+    then apply the result with `apply_parsed_message()`.
+  - `box_picker.py`: the box picker (receptor prep job, viewer click, − / +
+    steps) and protein geometry.
+  - `save_results.py`: Save results as…, its guard and the name-clash flow.
+  - `results_view.py`: what the results panel shows, as data: progress,
+    poses, download lists, the job log.
 
   Each action appends its chat replies to `state.messages`. It returns an
   `Outcome`: `refresh` to redraw the page, `error` to show next to the
-  control. The bridge class is passed in, so tests swap in a fake.
+  control. The bridge class and the LLM parse functions are passed in, so
+  tests swap in fakes. File reads that Streamlit caches take a `read_bytes`
+  callable.
 - **`ui/session_state.py`** — the Streamlit adapter. `gui_session()` is a
   view of `st.session_state` with `GuiSession`'s attributes. The page's
   keys are unchanged (`_job_done`, `_pending_rerun`, the `param_*` widget
   keys), so the `ui/core` functions run against it as they are.
 - **`ui/app.py`** — the Streamlit page; its handlers are thin wrappers that
-  carry out an `Outcome` with `st.error` / `st.rerun()`. Chat, geometry,
-  save-as and the results helpers move to `ui/core` in Stage 16.2.
+  carry out an `Outcome` with `st.error` / `st.rerun()`, and its render
+  functions draw `ui/core`'s data with Streamlit widgets.
 - **`ui/orchestrator_bridge.py`** captures only its own thread's `print()`
   output. One routing `sys.stdout` proxy is installed once, and each
   bridge thread registers its log queue with it. Before this, each bridge

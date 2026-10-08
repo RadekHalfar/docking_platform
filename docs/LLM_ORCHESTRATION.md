@@ -354,7 +354,7 @@ center" isn't swallowed by it). After classifying, the system:
    `_persist_parameter_updates()` helper both intents share), invalidating
    `dock`/`visualize` and printing a `rerun` hint.
 
-The GUI (`ui/app.py`) uses the same `detect_protein_geometry_command()`
+The GUI's chat (`ui/core/chat.py`) uses the same `detect_protein_geometry_command()`
 function ahead of its own chat-parsing call, so both commands work
 identically from the browser — see
 [GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).

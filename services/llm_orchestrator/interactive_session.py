@@ -46,7 +46,7 @@ def resolve_prepared_protein_pdb_path(last_results: Optional[Dict[str, Any]]) ->
     *last_results* is the ``workflow_results.json``-shaped dict
     (``InteractiveSession.last_results`` / a GUI bridge's ``get_result()``):
     ``{"results": {"prepare_protein": {"prepared_proteins": [...]}}, ...}``.
-    Used by both the GUI chat (``ui/app.py``) and the CLI's interactive
+    Used by both the GUI chat (``ui/core/box_picker.py``) and the CLI's interactive
     session (``nlp_orchestrator.py``) to find the file to read atom
     coordinates from for the "set box center as protein center" / "look
     across all protein" commands -- one definition of "where is the

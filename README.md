@@ -360,7 +360,7 @@ docking_platform/
 │
 ├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
-│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, run_control, sessions (Phase 16)
+│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, run_control, sessions, chat, box_picker, save_results, results_view (Phase 16)
 │   ├── session_state.py        # Streamlit adapter: st.session_state as a GuiSession view, init
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-thread stdout capture

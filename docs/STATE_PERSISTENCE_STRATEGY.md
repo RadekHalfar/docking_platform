@@ -380,9 +380,10 @@ This means `show state` always reflects whether the current parameters match the
 This prevents saving a bundle where the metadata parameters do not match the docking results on disk.
 
 **GUI (Stage 13.3).** The **Save results as…** panel and the chat `save
-results as <name>` share `ui/app.py::_save_results()`. Like the CLI, it reads
+results as <name>` share `ui/core/save_results.py::save_results()` (in
+`ui/app.py` until Stage 16.2). Like the CLI, it reads
 the bundle's revision from `get_current_revision()` and its parameters from
-`load_latest_parameters()`. Its guard, `_save_block_reason()`, refuses:
+`load_latest_parameters()`. Its guard, `save_block_reason()`, refuses:
 
 - with no active session;
 - while the tab's own bridge is running;

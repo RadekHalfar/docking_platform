@@ -1,34 +1,21 @@
 """Streamlit front-end for the Molecular Docking Platform."""
-import json
 import os
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
-from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label, docking_algorithm_of
+from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label
 from common.path_utils import from_container_path
-from common.pdb_geometry import compute_protein_center_and_box
-from common.utils import generate_job_id
-from services.llm_orchestrator.interactive_session import (
-    SAVED_RESULTS_DIRNAME,
-    resolve_prepared_protein_pdb_path,
-    save_results_bundle,
-    timestamped_bundle_name,
-    validate_bundle_name,
-)
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.rerun_planner import describe_rerun_plan
 from services.llm_orchestrator.workflow_llm_parser import (
-    _deterministic_intent,
-    detect_docking_algorithm_command,
-    detect_protein_geometry_command,
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
 from ui.core import form as gui_form
-from ui.core import run_control, sessions
+from ui.core import box_picker, chat, results_view, run_control, sessions
+from ui.core import save_results as gui_save
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
@@ -36,7 +23,6 @@ from ui.orchestrator_bridge import OrchestratorBridge
 from ui.results import build_comparison_html, make_affinity_chart_figure
 from ui.session_state import (
     WORKER_CAP,
-    apply_parsed_params,
     apply_settings,
     clear_box_picker_state,
     effective_cpu,
@@ -101,206 +87,36 @@ def _show_outcome(outcome) -> None:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
+# The logic lives in ui/core (chat, box_picker); these wrappers keep the
+# page's names. The LLM parse functions and _start_box_picker_prep are
+# passed at call time, so a test patching them on this module reaches them.
+
 def _find_receptor_pdb_for_geometry() -> Path | None:
-    """Find the prepared receptor PDB to compute protein geometry from.
-
-    Prefers the box picker's already-loaded receptor (freshest, if the user
-    used that control), else falls back to the active session's last
-    completed ``prepare_protein`` result -- the same two sources the box
-    picker and results viewer already read from. Returns ``None`` if
-    neither is available or the file is no longer on disk.
-    """
-    raw_path = st.session_state.get("_box_picker_receptor_pdb")
-    if not raw_path:
-        session = st.session_state.get("interactive_session")
-        last_results = getattr(session, "last_results", None) if session else None
-        raw_path = resolve_prepared_protein_pdb_path(last_results)
-
-    if not raw_path:
-        return None
-    resolved = _resolve_container_path(raw_path)
-    return resolved if resolved.exists() else None
-
-
-def _apply_protein_geometry(receptor_path: Path, target: str) -> None:
-    """Compute center/box_size from *receptor_path*'s bounding box, apply it
-    to the Docking Box fields (which the box picker's viewer draws), and
-    report the result in chat.
-
-    Shared by the immediate path (a receptor is already prepared) and the
-    deferred path (``_process_box_picker_bridge()``, once a just-started
-    fetch/prepare job finishes).
-    """
-    try:
-        pdb_text = _read_file_bytes(
-            str(receptor_path), receptor_path.stat().st_mtime
-        ).decode("utf-8", errors="replace")
-        center, box_size = compute_protein_center_and_box(pdb_text)
-    except (OSError, ValueError) as exc:
-        st.session_state.messages.append(
-            {"role": "assistant", "content": f"Could not compute protein geometry: {exc}"}
-        )
-        return
-
-    if target == "center":
-        apply_parsed_params({"center": center})
-        message = f"Protein center set to ({center[0]}, {center[1]}, {center[2]})."
-    else:
-        apply_parsed_params({"box_size": box_size})
-        message = (
-            f"Box size set to ({box_size[0]}, {box_size[1]}, {box_size[2]}) "
-            "to cover the whole protein (+10% margin)."
-        )
-    st.session_state.messages.append({"role": "assistant", "content": message})
+    """See :func:`ui.core.box_picker.find_receptor_pdb`."""
+    return box_picker.find_receptor_pdb(gui_session(), OUTPUT_BASE)
 
 
 def _handle_protein_geometry_command(target: str) -> None:
-    """Compute center/box_size from the loaded protein's bounding box and
-    apply it, in response to a "set box center as protein center" / "look
-    across all protein" chat command -- see
-    ``detect_protein_geometry_command()``.
-
-    If no protein has been fetched/prepared yet but the form already has
-    enough to do that (a protein source is set), this kicks off the same
-    background get_input_files+prepare_protein job "Load receptor for box
-    picking" uses, via ``_start_box_picker_prep()``, and stashes *target* in
-    ``_pending_geometry_target`` -- ``_process_box_picker_bridge()``
-    applies it once that job completes --
-    instead of failing outright. This is what makes the geometry commands
-    usable on a first message, before any button has been clicked.
-    """
-    receptor_path = _find_receptor_pdb_for_geometry()
-    if receptor_path is not None:
-        _apply_protein_geometry(receptor_path, target)
-        return
-
-    started, message, _severity = _start_box_picker_prep()
-    if started:
-        st.session_state["_pending_geometry_target"] = target
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": (
-                    "I don't have the protein ready yet — fetching and "
-                    "preparing it now, then I'll set this."
-                ),
-            }
-        )
-    else:
-        st.session_state.messages.append({"role": "assistant", "content": message})
+    """See :func:`ui.core.chat.protein_geometry_command`."""
+    chat.protein_geometry_command(gui_session(), target, OUTPUT_BASE, _start_box_picker_prep)
 
 
 def _handle_docking_algorithm_command(algorithm: str) -> None:
-    """Apply a "use vina" / "dock with moldina" chat command. The GUI only
-    switches -- docking always starts from Run Docking, so the CLI's
-    "dock with ..." redock is not mirrored here."""
-    apply_parsed_params({"docking_algorithm": algorithm})
-    label = docking_algorithm_label(algorithm)
-    session = st.session_state.get("interactive_session")
-    if session is not None and session.has_active_job():
-        hint = "Click **Run Docking** to redock with it (docking and visualization only)."
-    else:
-        hint = "It will be used when you click **Run Docking**."
-    st.session_state.messages.append(
-        {"role": "assistant", "content": f"Docking algorithm set to **{label}**. {hint}"}
-    )
+    """See :func:`ui.core.chat.docking_algorithm_command`."""
+    chat.docking_algorithm_command(gui_session(), algorithm)
 
 
 def _on_chat_submit(user_message: str) -> None:
-    st.session_state.messages.append({"role": "user", "content": user_message})
-
-    geometry_target = detect_protein_geometry_command(user_message)
-    if geometry_target is not None:
-        _handle_protein_geometry_command(geometry_target)
+    state = gui_session()
+    if chat.submit(state, user_message, OUTPUT_BASE, OrchestratorBridge):
         return
-
-    algorithm_command = detect_docking_algorithm_command(user_message)
-    if algorithm_command is not None:
-        _handle_docking_algorithm_command(algorithm_command["algorithm"])
-        return
-
-    # Only the revision and save commands are taken from the CLI's
-    # deterministic intents; everything else keeps the parameter-parsing
-    # path below.
-    intent = _deterministic_intent(user_message)
-    if intent is not None and intent["intent"] in ("show_history", "undo_revision"):
-        _handle_history_chat_intent(intent)
-        return
-    if intent is not None and intent["intent"] == "save_results":
-        _handle_save_chat_intent(intent)
-        return
-
     with st.spinner("Parsing with LLM..."):
-        try:
-            prior = st.session_state.parser.parsed_workflow
-            if prior and prior.get("parameters"):
-                delta = parse_followup_with_llm(
-                    st.session_state.llm_client,
-                    user_message,
-                    current_parameters=prior["parameters"],
-                    current_services=prior.get("services", []),
-                )
-                services = list(dict.fromkeys(
-                    prior.get("services", []) + delta.get("services_add", [])
-                ))
-                parameters = {**prior["parameters"], **delta.get("parameters", {})}
-                parsed = {"services": services, "parameters": parameters}
-                named = set(delta.get("parameters", {}))
-            else:
-                parsed = parse_workflow_with_llm(st.session_state.llm_client, user_message)
-                named = set(parsed.get("parameters") or {})
-
-            validated = st.session_state.parser.validate_workflow(parsed)
-            # Only what this message named reaches the form. validate_workflow()
-            # fills every default (and the prior turn's values ride along in a
-            # follow-up merge): applying those would reset the user's own
-            # edits -- algorithm, CPUs per ligand, Exhaustiveness, pH -- on
-            # every message (Phase 15 finding 8; Review Stage R1).
-            p = validated["parameters"]
-            missing = validated.get("missing_required", [])
-            unknown_algorithm = None
-            if "docking_algorithm" in missing:
-                # Unrecognised (the LLM's own word for it): the selector keeps
-                # its choice, and the parser does too, or the bad name would
-                # ride along into every later follow-up merge and be asked
-                # about again on each one.
-                unknown_algorithm = p["docking_algorithm"]
-                p["docking_algorithm"] = selected_docking_algorithm()
-                missing.remove("docking_algorithm")
-                named.discard("docking_algorithm")
-            apply_parsed_params({k: v for k, v in p.items() if k in named})
-
-            lines = ["Got it! Here's what I extracted:"]
-            if p.get("protein_id"):
-                lines.append(f"- Protein: **{p['protein_id']}**")
-            if p.get("ligand_ids"):
-                lines.append(f"- Ligands: **{', '.join(p['ligand_ids'])}**")
-            if p.get("ligand_folder"):
-                lines.append(f"- Ligand folder: `{p['ligand_folder']}`")
-            if p.get("center"):
-                c = p["center"]
-                lines.append(f"- Center: ({c[0]}, {c[1]}, {c[2]})")
-            if p.get("box_size"):
-                b = p["box_size"]
-                lines.append(f"- Box size: ({b[0]}, {b[1]}, {b[2]})")
-            if "docking_algorithm" in named:
-                lines.append(f"- Algorithm: **{docking_algorithm_label(p['docking_algorithm'])}**")
-            if unknown_algorithm is not None:
-                lines.append(
-                    f"- Docking algorithm '{unknown_algorithm}' is not recognised, so "
-                    f"{docking_algorithm_label(p['docking_algorithm'])} stays selected. "
-                    "Use Moldina (PSO) or Vina (Monte Carlo)."
-                )
-            if missing:
-                lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
-
-            st.session_state.messages.append(
-                {"role": "assistant", "content": "\n".join(lines)}
-            )
-        except Exception as exc:
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"Sorry, I couldn't parse that: {exc}"}
-            )
+        chat.answer_with_llm(
+            state,
+            user_message,
+            parse_workflow=parse_workflow_with_llm,
+            parse_followup=parse_followup_with_llm,
+        )
 
 
 # ── Run / Reset ───────────────────────────────────────────────────────────────
@@ -331,95 +147,24 @@ def _handle_history_chat_intent(intent: dict) -> None:
         {"role": "assistant", "content": sessions.history_chat_reply(gui_session(), intent)}
     )
 
-_SAVE_SCOPES = ("all", "docking", "visualization")
+_SAVE_SCOPES = gui_save.SAVE_SCOPES
 
 
 def _save_block_reason() -> str | None:
-    """Why the active session's results can't be saved right now, or None.
-
-    Shared by the Save results panel (shown as a caption) and the chat
-    ``save results as`` command (sent as the reply).
-    """
-    session = st.session_state.interactive_session
-    if not session.has_active_job():
-        return "No active session — run or load one first."
-    if _active_bridge_job_id() is not None:
-        return "A session is running — wait for it to finish before saving results."
-    if session.pending_changed_params:
-        changed = ", ".join(sorted(session.pending_changed_params))
-        return (
-            f"Parameters changed since the last completed run ({changed}) — "
-            "click **Run Docking** first, or restore a revision."
-        )
-    if not session.state_manager.parameters_ran():
-        # The on-disk form of the check above: still true after a Load or a
-        # restart, which reset `pending` (e.g. a restore never redocked).
-        return (
-            f"The parameters (revision {session.state_manager.get_parameters_revision()}) "
-            "have not been run yet — the results shown come from earlier parameters. "
-            "Click **Run Docking** first, or restore the revision the results came from."
-        )
-    result = _load_workflow_results(session.job_id)
-    if not result or result.get("status") != "completed":
-        return "The session's last run did not complete — there are no results to save."
-    return None
+    """See :func:`ui.core.save_results.save_block_reason`."""
+    return gui_save.save_block_reason(gui_session(), OUTPUT_BASE)
 
 
 def _save_results(name: str, scope: str, *, overwrite: bool = False) -> str:
-    """Save the active session's results as bundle *name* (the GUI's
-    ``save results as``) and return the reply to show.
-
-    Shared by the Save results panel's buttons (on_click callbacks) and the
-    chat command; never calls st.rerun(). A name that already exists is
-    not an error: it records ``_save_conflict``, which the panel renders as
-    Overwrite / Save as <name>_HHMMSS buttons.
-    """
-    reason = _save_block_reason()
-    if reason:
-        return f"Cannot save: {reason}"
-    err = validate_bundle_name(name)
-    if err:
-        return f"Invalid bundle name: {err}"
-
-    session = st.session_state.interactive_session
-    state_manager = session.state_manager
-    result = save_results_bundle(
-        state_manager.job_dir,
-        name,
-        scope,
-        state_manager.get_current_revision(),
-        state_manager.load_latest_parameters() or {},
-        overwrite=overwrite,
-    )
-    if result["error"] == "exists":
-        suggested = timestamped_bundle_name(state_manager.job_dir, name)
-        st.session_state["_save_conflict"] = {
-            "job_id": session.job_id, "name": name, "scope": scope, "suggested": suggested,
-        }
-        return (
-            f"A bundle named `{name}` already exists — choose **Overwrite** or "
-            f"**Save as {suggested}** under *Save results as…* in the results panel."
-        )
-    if not result["success"]:
-        return f"Save failed: {result['error']}"
-
-    st.session_state.pop("_save_conflict", None)
-    final_name = Path(result["bundle_path"]).name
-    lines = [f"Saved bundle `{final_name}` (scope: {scope}) to `{result['bundle_path']}`."]
-    if result["artifacts"]:
-        lines.append(f"Artifacts: {', '.join(result['artifacts'])}.")
-    else:
-        lines.append("Warning: no artifacts were available to copy into the bundle.")
-    return "\n\n".join(lines)
+    """See :func:`ui.core.save_results.save_results`. Never calls st.rerun()."""
+    return gui_save.save_results(gui_session(), OUTPUT_BASE, name, scope, overwrite=overwrite)
 
 
 def _handle_save_chat_intent(intent: dict) -> None:
     """Answer a deterministic ``save results/docking/visualization as <name>``."""
-    if not intent.get("name"):
-        reply = "Give the bundle a name, e.g. `save results as run1`."
-    else:
-        reply = _save_results(intent["name"], intent.get("scope") or "all")
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    st.session_state.messages.append(
+        {"role": "assistant", "content": gui_save.save_chat_reply(gui_session(), OUTPUT_BASE, intent)}
+    )
 
 
 def _reset_session(preserve: frozenset = frozenset({"settings"})) -> None:
@@ -694,45 +439,10 @@ def _process_docking_bridge() -> None:
 
 
 def _process_box_picker_bridge() -> None:
-    """Handle a finished "Load receptor for box picking" job: record the
-    receptor, apply a geometry chat command that was waiting for it, and
-    clear the bridge. Runs before the layout (see ``_process_bridges``), so
-    the param_* keys it writes are set before their widgets exist, and its
-    chat reply is drawn this same run."""
-    bridge: OrchestratorBridge | None = st.session_state.get("box_picker_bridge")
-    if not bridge or bridge.is_running():
-        return
-
-    error = bridge.get_error()
-    result = bridge.get_result()
-    # A geometry chat command ("use protein center...") may have started
-    # this very job (no receptor was loaded yet) -- pop its target now so
-    # it's resolved (or reported as failed) exactly once, however this job
-    # turns out.
-    pending_target = st.session_state.pop("_pending_geometry_target", None)
-    panel_error = None  # shown in the picker section (_render_box_picker)
-    failure = None  # chat reply for a pending geometry command
-    if error:
-        panel_error = f"Could not prepare receptor: {error}"
-        failure = f"Could not fetch the protein: {error}"
-    elif result and result.get("status") == "completed":
-        pdb_path = resolve_prepared_protein_pdb_path(result)
-        if pdb_path:
-            st.session_state["_box_picker_receptor_pdb"] = pdb_path
-            if pending_target:
-                _apply_protein_geometry(_resolve_container_path(pdb_path), pending_target)
-        else:
-            panel_error = "Receptor was prepared but no PDB path was returned."
-            failure = "Receptor was prepared but no PDB path was returned -- could not set this."
-    elif result and result.get("status") == "failed":
-        failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
-        panel_error = "Could not prepare receptor: " + failure_detail
-        failure = f"Could not fetch the protein: {failure_detail}"
-    if panel_error:
-        st.session_state["_box_picker_error"] = panel_error
-    if pending_target and failure:
-        st.session_state.messages.append({"role": "assistant", "content": failure})
-    st.session_state.box_picker_bridge = None
+    """See :func:`ui.core.box_picker.process_box_picker_bridge`. Runs before
+    the layout (see ``_process_bridges``), so the param_* keys it writes are
+    set before their widgets exist, and its chat reply is drawn this same run."""
+    box_picker.process_box_picker_bridge(gui_session(), OUTPUT_BASE)
 
 
 def _any_bridge_running() -> bool:
@@ -788,12 +498,7 @@ def _render_chat_history(container) -> None:
 
 # ── Parameters panel ──────────────────────────────────────────────────────────
 
-# Smallest box edge (Å) the box picker's − buttons step down to.
-_PICKER_MIN_BOX_SIZE = 1.0
-# Box edge (Å) the picker's viewer draws while the Box size fields are unset
-# (the component's own fallback), and what a click or a size step fills in
-# then -- so the box that was shown is the box that gets docked.
-_PICKER_DEFAULT_BOX_SIZE = 20.0
+_PICKER_DEFAULT_BOX_SIZE = box_picker.PICKER_DEFAULT_BOX_SIZE
 
 _BOX_WIDGET_KEYS = gui_form.BOX_FORM_KEYS
 
@@ -1185,79 +890,24 @@ def _read_box_fields() -> tuple[list[float] | None, list[float] | None]:
 
 
 def _drawable_box_size() -> list[float] | None:
-    """The Docking Box size if the picker's viewer can draw it -- all three
-    fields parse and are positive -- else None. With None the viewer shows
-    a ``_PICKER_DEFAULT_BOX_SIZE`` placeholder, and a click or − / + writes
-    that placeholder into the fields first, so the box shown is the box
-    docked."""
-    _, box_size = _read_box_fields()
-    return box_size if box_size is not None and min(box_size) > 0 else None
+    """See :func:`ui.core.box_picker.drawable_box_size`."""
+    return box_picker.drawable_box_size(gui_session())
 
 
 def _apply_viewer_click(center: list) -> None:
-    """Write a center clicked in the box picker's viewer into the Docking
-    Box fields -- the picker keeps no box of its own, so "Run Docking" and
-    the viewer both read these. If the viewer was showing its placeholder
-    (``_drawable_box_size()`` is None), fill that in, so the box picked is
-    the box docked.
-    Must run before _render_docking_box() instantiates those widgets.
-    """
-    for key, value in zip(_BOX_WIDGET_KEYS[:3], center):
-        st.session_state[key] = f"{value:.3f}"
-    if _drawable_box_size() is None:
-        for key in _BOX_WIDGET_KEYS[3:]:
-            st.session_state[key] = f"{_PICKER_DEFAULT_BOX_SIZE:.3f}"
+    """See :func:`ui.core.box_picker.apply_viewer_click`. Must run before
+    _render_docking_box() instantiates those widgets."""
+    box_picker.apply_viewer_click(gui_session(), center)
 
 
 def _step_box_size(axis: int, delta: float) -> None:
-    """on_click for the picker's − / + buttons: change one Box size field by
-    *delta* Å, never below ``_PICKER_MIN_BOX_SIZE``. While the viewer shows
-    its placeholder (``_drawable_box_size()`` is None) the step starts from
-    that placeholder and writes all three fields -- stepping one axis alone
-    would leave a size the viewer still can't draw, so the button would
-    seem to do nothing. A callback runs before the next script run, i.e.
-    before the Docking Box widgets exist, so writing their keys is allowed.
-    """
-    size = _drawable_box_size()
-    axes = (axis,) if size else range(3)
-    size = size or [_PICKER_DEFAULT_BOX_SIZE] * 3
-    size[axis] = max(_PICKER_MIN_BOX_SIZE, size[axis] + delta)
-    for a in axes:
-        st.session_state[_BOX_WIDGET_KEYS[3 + a]] = f"{size[a]:.3f}"
+    """See :func:`ui.core.box_picker.step_box_size` (an on_click callback)."""
+    box_picker.step_box_size(gui_session(), axis, delta)
 
 
 def _start_box_picker_prep() -> tuple[bool, str | None, str]:
-    """Validate params and start the background get_input_files +
-    prepare_protein job that fetches/prepares a receptor for box picking.
-
-    Returns ``(started, message, severity)``. On success ``started`` is
-    True and ``message`` is None. On failure ``started`` is False and
-    ``message``/``severity`` ("error" or "warning") describe why, for the
-    caller to surface however fits its UI (an inline st.error/st.warning
-    for the button, a chat reply for the geometry auto-fetch below).
-    """
-    params = _sync_form_into_params()
-
-    prep_services = ["get_input_files", "prepare_protein"]
-    try:
-        validated = st.session_state.parser.validate_workflow(
-            {"services": prep_services, "parameters": params}
-        )
-    except Exception as exc:
-        return False, f"Validation error: {exc}", "error"
-
-    missing = validated.get("missing_required", [])
-    if missing:
-        return False, f"Provide a protein source first — missing: {', '.join(missing)}", "warning"
-
-    job_id = generate_job_id()
-    st.session_state["_box_picker_job_id"] = job_id
-    clear_box_picker_state()
-
-    bridge = OrchestratorBridge()
-    bridge.start_workflow(validated, job_id, str(OUTPUT_BASE), services=prep_services)
-    st.session_state.box_picker_bridge = bridge
-    return True, None, ""
+    """See :func:`ui.core.box_picker.start_box_picker_prep`."""
+    return box_picker.start_box_picker_prep(gui_session(), OUTPUT_BASE, OrchestratorBridge)
 
 
 def _handle_pick_box() -> None:
@@ -1395,11 +1045,8 @@ def _load_workflow_results(job_id: str) -> dict | None:
 
 
 def _read_docking_progress(job_id: str) -> dict | None:
-    path = OUTPUT_BASE / job_id / "docking_results" / "docking_progress.json"
-    try:
-        return json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    """See :func:`ui.core.results_view.read_docking_progress`."""
+    return results_view.read_docking_progress(OUTPUT_BASE, job_id)
 
 
 def _render_docking_progress(job_id: str) -> None:
@@ -1412,19 +1059,8 @@ def _render_docking_progress(job_id: str) -> None:
     if total:
         st.progress(completed / total, text=f"{completed} / {total} ligands docked")
 
-    for entry in progress.get("in_progress") or []:
-        ligand = entry.get("ligand")
-        if not ligand:
-            continue
-        started_at = entry.get("started_at")
-        elapsed_str = ""
-        if started_at:
-            try:
-                started = datetime.fromisoformat(started_at)
-                elapsed = int((datetime.now(timezone.utc) - started).total_seconds())
-                elapsed_str = f" (running {elapsed}s)"
-            except ValueError:
-                pass
+    for ligand, elapsed in results_view.currently_docking(progress, datetime.now(timezone.utc)):
+        elapsed_str = f" (running {elapsed}s)" if elapsed is not None else ""
         st.caption(f"Currently docking: `{ligand}`{elapsed_str}")
 
 
@@ -1441,22 +1077,19 @@ def _render_job_log(job_id: str) -> None:
     other file reads in this module -- would just add complexity for no
     real benefit).
     """
-    log_path = OUTPUT_BASE / job_id / "job.log"
-    if not log_path.exists():
+    text = results_view.read_job_log(OUTPUT_BASE, job_id)
+    if text is None:
         return
-    text = log_path.read_text(encoding="utf-8", errors="replace")
     with st.expander("Session Log"):
-        st.code("\n".join(text.splitlines()[-500:]))
+        st.code("\n".join(text.splitlines()[-results_view.JOB_LOG_TAIL_LINES:]))
         st.download_button(
             "Download full log", text, file_name="job.log", key=f"dl_job_log_{job_id}"
         )
 
 
 def _job_label(job_id: str, job_name: str | None) -> str:
-    """Markdown label for a job header: bold name (if any) plus the id."""
-    if job_name:
-        return f"**{escape_markdown(job_name)}** (`{job_id}`)"
-    return f"`{job_id}`"
+    """See :func:`ui.core.results_view.job_label`."""
+    return results_view.job_label(job_id, job_name)
 
 
 def _render_completed_or_failed(result: dict, job_id: str, job_label: str, *, live: bool) -> bool:
@@ -1503,16 +1136,13 @@ def _on_save_results_click() -> None:
 
 
 def _on_save_conflict_click(*, overwrite: bool) -> None:
-    conflict = st.session_state.get("_save_conflict")
-    if not conflict:
-        return
-    name = conflict["name"] if overwrite else conflict["suggested"]
-    reply = _save_results(name, conflict["scope"], overwrite=overwrite)
-    st.session_state.messages.append({"role": "assistant", "content": reply})
+    reply = gui_save.resolve_save_conflict(gui_session(), OUTPUT_BASE, overwrite=overwrite)
+    if reply is not None:
+        st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
 def _on_save_conflict_cancel() -> None:
-    st.session_state.pop("_save_conflict", None)
+    gui_save.cancel_save_conflict(gui_session())
 
 
 def _render_save_results(job_id: str) -> None:
@@ -1530,10 +1160,7 @@ def _render_save_results(job_id: str) -> None:
         st.text_input("Bundle name", key="save_bundle_name", placeholder="e.g. trial_a")
         st.selectbox(
             "Include", _SAVE_SCOPES, key="save_scope",
-            format_func=lambda s: {
-                "all": "Docking + visualization", "docking": "Docking results only",
-                "visualization": "Visualization only",
-            }[s],
+            format_func=gui_save.SCOPE_LABELS.__getitem__,
         )
         reason = _save_block_reason()
         st.button(
@@ -1611,10 +1238,9 @@ def _render_job_results() -> None:
 
 
 def _render_docking_algorithm_caption(result: dict) -> None:
-    dock = result.get("results", {}).get("dock")
-    if not dock:
-        return
-    st.caption(f"Docked with {docking_algorithm_label(docking_algorithm_of(dock))}")
+    caption = results_view.docked_with_caption(result)
+    if caption:
+        st.caption(caption)
 
 
 def _render_affinity_chart(result: dict) -> None:
@@ -1636,11 +1262,9 @@ def _resolve_container_path(path: str) -> Path:
     return from_container_path(path, OUTPUT_BASE)
 
 
-def _split_sdf_records(sdf_text: str) -> list[str]:
-    """Split a multi-record SDF (one $$$$-terminated block per pose) into a
-    list of individually valid single-record SDF texts, in file order."""
-    blocks = re.split(r"\r?\n\$\$\$\$\r?\n?", sdf_text)
-    return [block + "\n$$$$\n" for block in blocks if block.strip()]
+def _read_cached(path: Path) -> bytes:
+    """``results_view``'s file reader, through the ``_read_file_bytes`` cache."""
+    return _read_file_bytes(str(path), path.stat().st_mtime)
 
 
 def _render_save_and_log(job_id: str) -> None:
@@ -1664,46 +1288,23 @@ def _render_visualization(result: dict, job_id: str) -> None:
         str(receptor_path), receptor_path.stat().st_mtime
     ).decode("utf-8", errors="replace")
 
-    dock_results = {
-        r["ligand_id"]: r
-        for r in result.get("results", {}).get("dock", {}).get("results", [])
-        if r.get("ligand_id")
-    }
+    dock_results = results_view.dock_results_by_ligand(result)
 
     # Parse each ligand's converted poses and read the *currently selected*
     # pose straight from session_state (set by the pickers rendered further
     # down) so the viewer can be drawn right here, immediately below the bar
     # chart — instead of after a page-long list of per-ligand pose pickers,
     # which with a few hundred ligands buried the viewer many screens down.
-    multi_pose: dict[str, list[str]] = {}
-    ligands: dict[str, dict] = {}
-    for entry in viz.get("converted", []):
-        ligand_id = entry.get("ligand_id")
-        raw_sdf_path = entry.get("sdf_path")
-        if not ligand_id or not raw_sdf_path:
-            continue
-        sdf_path = _resolve_container_path(raw_sdf_path)
-        if not sdf_path.exists():
-            continue
-        sdf_text = _read_file_bytes(
-            str(sdf_path), sdf_path.stat().st_mtime
-        ).decode("utf-8", errors="replace")
-        records = _split_sdf_records(sdf_text)
-        if not records:
-            continue
-        if len(records) > 1:
-            multi_pose[ligand_id] = records
-
-        modes = dock_results.get(ligand_id, {}).get("modes") or []
-        selected = st.session_state.get(f"pose_select_{job_id}_{ligand_id}", 1)
-        pose_index = min(selected - 1, len(records) - 1)
-
-        affinity = (
-            modes[pose_index].get("affinity")
-            if pose_index < len(modes)
-            else dock_results.get(ligand_id, {}).get("best_affinity")
+    records_by_ligand = results_view.pose_records(result, OUTPUT_BASE, _read_cached)
+    multi_pose = {lig: recs for lig, recs in records_by_ligand.items() if len(recs) > 1}
+    ligands = {
+        ligand_id: results_view.viewer_ligand(
+            records,
+            dock_results.get(ligand_id, {}),
+            st.session_state.get(f"pose_select_{job_id}_{ligand_id}", 1),
         )
-        ligands[ligand_id] = {"sdf": records[pose_index], "affinity": affinity}
+        for ligand_id, records in records_by_ligand.items()
+    }
 
     render_mol_viewer(receptor_pdb, ligands, mode="view", height=550, key=f"mol_viewer_{job_id}")
 
@@ -1717,9 +1318,7 @@ def _render_visualization(result: dict, job_id: str) -> None:
                 options = list(range(1, len(records) + 1))
 
                 def _format_pose(i: int, m=modes) -> str:
-                    if i - 1 < len(m) and m[i - 1].get("affinity") is not None:
-                        return f"Mode {i} ({m[i - 1]['affinity']:.2f} kcal/mol)"
-                    return f"Mode {i}"
+                    return results_view.pose_label(m, i)
 
                 st.selectbox(
                     f"{ligand_id} — pose",
@@ -1739,51 +1338,23 @@ def _read_file_bytes(path_str: str, mtime: float) -> bytes:
     return Path(path_str).read_bytes()
 
 
-_POSE_DOWNLOAD_FORMATS = ["pdbqt", "pdb", "sdf", "mol2"]
+_POSE_DOWNLOAD_FORMATS = results_view.POSE_DOWNLOAD_FORMATS
 
 
 def _render_pose_downloads(result: dict, job_id: str) -> None:
-    """Per-ligand docked-pose downloads with a global format picker.
-
-    PDBQT is Moldina's native output (no conversion, always available if
-    docking succeeded for that ligand) and is the default; PDB/SDF/MOL2 are
-    the whole multi-pose file (all modes) written by the visualize step's
-    convert_docked_poses, in whichever formats it was asked to produce.
-    """
-    dock_results = {
-        r["ligand_id"]: r
-        for r in result.get("results", {}).get("dock", {}).get("results", [])
-        if r.get("ligand_id")
-    }
-    if not dock_results:
+    """Per-ligand docked-pose downloads with a global format picker (see
+    :func:`ui.core.results_view.pose_download_paths`); PDBQT is the default."""
+    if not results_view.dock_results_by_ligand(result):
         return
-
-    converted = {
-        entry["ligand_id"]: entry
-        for entry in result.get("results", {}).get("visualize", {}).get("converted", [])
-        if entry.get("ligand_id")
-    }
 
     st.subheader("Docked Poses")
     fmt = st.selectbox("Download format", _POSE_DOWNLOAD_FORMATS, index=0, key=f"dl_format_{job_id}")
 
     with st.container(height=300):
-        for ligand_id, dock_entry in dock_results.items():
-            if fmt == "pdbqt":
-                raw_path = dock_entry.get("output_path")
-            else:
-                raw_path = converted.get(ligand_id, {}).get(f"{fmt}_path")
-
-            if not raw_path:
-                continue
-            path = _resolve_container_path(raw_path)
-            if not path.exists():
-                continue
-
-            data = _read_file_bytes(str(path), path.stat().st_mtime)
+        for ligand_id, path in results_view.pose_download_paths(result, OUTPUT_BASE, fmt):
             st.download_button(
                 f"Download {ligand_id} ({fmt})",
-                data,
+                _read_cached(path),
                 file_name=path.name,
                 key=f"dl_pose_{job_id}_{ligand_id}_{fmt}",
             )
@@ -1792,30 +1363,19 @@ def _render_pose_downloads(result: dict, job_id: str) -> None:
 def _render_file_downloads(result: dict, job_id: str) -> None:
     if not job_id:
         return
-    job_dir = OUTPUT_BASE / job_id
-    if not job_dir.exists():
+    if not (OUTPUT_BASE / job_id).exists():
         return
 
     _render_pose_downloads(result, job_id)
 
     st.subheader("Other Files")
-    # Saved bundles are copies of the files already listed here -- pruned
-    # from the walk rather than filtered after it, since each bundle can
-    # hold a full copy of a large batch's docking_results/.
-    files = []
-    for root, dirnames, filenames in os.walk(job_dir):
-        if Path(root) == job_dir and SAVED_RESULTS_DIRNAME in dirnames:
-            dirnames.remove(SAVED_RESULTS_DIRNAME)
-        files.extend(Path(root) / name for name in filenames)
-    for f in sorted(files):
-        if f.suffix in {".pml", ".json", ".png"}:
-            data = _read_file_bytes(str(f), f.stat().st_mtime)
-            st.download_button(
-                f"Download {f.name}",
-                data,
-                file_name=f.name,
-                key=f"dl_{f}",
-            )
+    for f in results_view.other_download_files(OUTPUT_BASE, job_id):
+        st.download_button(
+            f"Download {f.name}",
+            _read_cached(f),
+            file_name=f.name,
+            key=f"dl_{f}",
+        )
 
 
 def _render_comparison_table(comparison: dict) -> None:

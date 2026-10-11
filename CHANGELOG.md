@@ -142,3 +142,129 @@ single trusted machine. Remaining open items are carried forward in
   1000, `/health` responds, bind-mounted cache writes succeed).
   `pymol_visualizer`/`pymol_interactive` remain root — see `dev_plan.md`'s
   Future Work for why and what's left.
+
+## v2.0 — GUI Sessions, Box Geometry, Algorithms, NiceGUI groundwork (Phases 11–16)
+
+The Streamlit GUI caught up with the CLI's interactive session (redock,
+resume, history, undo, save-as), docking gained a second search algorithm,
+parallel docking defaults are now measured rather than guessed, and the GUI
+logic was pulled out of Streamlit as the first half of a NiceGUI migration.
+`VERSION` (repo root) says `2.0` since Phase 11. Backfilled 2026-10-11 from
+`dev_plan.md`; every phase's review report is in `docs/reviews/`.
+
+- **Phase 11 — Session Logging & GUI Session Management (2026-09-12 – 09-14).**
+  - Every job writes a human-readable `job.log`: parameter changes as diffs,
+    step durations, MCP calls, full tracebacks on failure
+    (`common/job_log.py`).
+  - `workflow_results.json` now accumulates across redocks instead of being
+    overwritten, under a file lock and written atomically.
+  - The GUI runs on the CLI's own `InteractiveSession` and
+    `WorkflowStateManager`. Changing parameters on an active session plans a
+    partial redock behind a "Confirm redock" button, and the sidebar's Load
+    resumes a session from disk.
+  - GUI wording moved from "Job" to "Session". New Session detaches from
+    the current job, Delete asks for confirmation, failed sessions are
+    listed, and the Session Log is viewable.
+  - Reviews R1 (`stage_11_1_r1.md`) and R2 (`stage_11_2_11_3_r2.md`):
+    - R1: 14 findings, 9 fixed.
+    - R2: all three risks its stage named were real bugs, among them New
+      Session/Load orphaning a still-running job. All fixed.
+  - Added the `VERSION` file.
+- **Phase 12 — Docking box from protein geometry (2026-09-14).**
+  - Two chat commands in both the GUI and the CLI:
+    - "set box center as protein center" sets the box centre to the
+      protein's bounding-box midpoint;
+    - "look across all protein" sizes the box to the whole protein, plus
+      10%.
+  - Detection is deterministic (regex), never guessed by the LLM.
+  - The geometry comes from one shared parser, `common/pdb_geometry.py`,
+    which reads ATOM records only.
+  - Review R1: 9 findings, 5 fixed. Among them:
+    - geometry computed from a stale protein left over from another session;
+    - "cover the whole protein pocket" wrongly triggering a whole-protein box.
+  - A later fix (2026-09-30) lets a geometry command fetch and prepare the
+    protein itself when none is loaded yet.
+- **Phase 13 — GUI revision controls + render-level GUI tests (2026-09-30 – 10-02).**
+  - **13.1:** a Streamlit `AppTest` harness runs the real page hermetically.
+    It found a real bug on its first run.
+  - **13.1b (unplanned, from a user report):** Stop now halts docking within
+    about a second. `moldina-runner` kills in-flight ligands and starts no
+    more when it sees a stop flag in the job's `docking_results/`. Before,
+    every remaining ligand was docked first.
+  - **13.2 / 13.3:** GUI parity with the CLI for `show history`,
+    `undo <rev>` and `save results as <name>`, as buttons and as typed chat
+    commands, including the name-clash flow.
+  - **Review R1** also covered four earlier commits that had never been
+    reviewed. Correctness: 11 findings, 10 fixed, e.g. a picker box size
+    silently docked with the wrong box, and a session stopped in its first
+    run could never dock again.
+  - **13.4 / 13.5 (R1's deferrals):** the chat history is drawn last, so
+    every reply shows in the same page run. The Docking Box fields are the
+    only box state; the picker steps them with − / + buttons.
+  - The owner's live-browser check passed on 2026-10-02.
+- **Phase 14 — Parallel docking defaults & transparency (2026-10-05).**
+  - **Worker cap:** read from `docker-compose.yml` into
+    `WorkerCap(cap, source, reason)`, with no more silent fallback. The
+    GUI caption states where the limit comes from and warns on the fallback.
+  - **Benchmark:** `benchmark_docking.py --sample-stats` samples container
+    memory and CPU.
+  - **Measured default:** benchmarked on 50 ligands (10 CPUs / 8 GB), 8
+    workers is the best, at about 612 MiB each. The GUI default became
+    `min(8, cap)`. Raw data is in
+    `docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json`.
+  - **Review R1** (`stage_14_r1.md`, widened to cover 13.4/13.5):
+    - correctness: 11 findings, 10 fixed;
+    - quality: 9 fixed, 3 deferred with triggers.
+- **Phase 15 — Selectable docking algorithm: Moldina (PSO) | Vina (Monte Carlo) (2026-10-05 – 10-07).**
+  - **New parameter:** `docking_algorithm`, either `moldina` (default) or
+    `vina`. Vina mode runs the same `moldina` binary without the PSO flags,
+    so no new binary or image is needed.
+  - **Where it flows:** through the MCP tool, the orchestrator, checkpoints,
+    `parameters.txt`, the results and the comparison table. Old sessions
+    read as Moldina.
+  - **Chat and CLI commands:** "use vina", "dock with moldina".
+  - **GUI:** an algorithm selector, plus "CPUs per ligand" for Vina only.
+    The worker limit becomes `cap // cpu`, and the server clamps workers the
+    same way.
+  - **Vina benchmark:** best at 6 workers, recorded per algorithm next to
+    Moldina's.
+  - **Review R1 with a Cross-Service Compatibility Review**
+    (`stage_15_r1.md`): 9 correctness fixes, including:
+    - a timeout too short for Vina;
+    - chat messages resetting the user's CPU, exhaustiveness and pH fields;
+    - a CLI bug from 2026-04-14 where a cancelled first workflow broke every
+      later rerun.
+
+    Parameter defaults are now filled in one place.
+  - **Verified:** the owner's browser check passed on 2026-10-07. The fresh
+    full-stack rebuild was done on 2026-10-11 (see Phase 16): health check,
+    stop integration test, and a GUI-driven 2-ligand Vina run recording
+    `workers: 2`.
+- **Phase 16 — GUI migration to NiceGUI (in progress, started 2026-10-07).**
+  - **16.0:** the Streamlit GUI's baseline timing, scripted and headless
+    (`benchmark_gui*.py`, `?perf` marks in the viewer), and a spike
+    answering five NiceGUI questions. Baseline numbers are in
+    `docs/GUI_GUIDE.md` "Performance".
+  - **16.1 / 16.2:** the page's controller logic moved, unchanged, into
+    framework-free `ui/core/` (state, form, run control, sessions, chat, box
+    picker, save-as, results view). Streamlit's `ui/app.py` is now a thin
+    adapter over it, and the core runs in the hermetic suite. The bridge
+    stopped swapping the process-wide stdout, so concurrent runs no longer
+    capture each other's log lines.
+  - **Review R1 (2026-10-08 – 10-11, `stage_16_r1.md`):**
+    - **Behaviour preservation:** confirmed function by function, and no
+      GUI-framework import reaches `ui/core`.
+    - **Logging:** the orchestrator writes to a per-run `on_message` sink.
+    - **Fixed:**
+      - a geometry command during a running receptor prep started a second
+        prep;
+      - the same command could use an older protein than the one being
+        prepared;
+      - several queued commands kept only the last;
+      - a run's final log lines ("WORKFLOW COMPLETED SUCCESSFULLY") never
+        reached the chat;
+      - the CLI's `show history` named a different revision than the GUI's
+        and now reports the parameters revision.
+    - **Fresh stack:** rebuilt and verified (all images; `down`/`up` under
+      the same compose project).
+  - **Next:** Stage 16.3, the NiceGUI service skeleton.

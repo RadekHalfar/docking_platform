@@ -658,6 +658,25 @@ def test_interactive_session_state_summary_reports_active_job(tmp_path):
     assert "ligand_ids: ['ATP', 'ATP']" in summary
 
 
+def test_show_history_reports_the_parameters_revision_like_the_gui(tmp_path, capsys):
+    # Phase 16 Review Stage R1: the CLI printed get_current_revision(), which
+    # also counts state_update events, so after a run it named revision 2
+    # while the parameters (what undo restores) were at revision 1. The GUI
+    # already said 1.
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_hist")
+    state_manager.save_parameters_checkpoint({"protein_id": "6lu7"}, source="initial_parse")
+    state_manager.save_execution_state_checkpoint({"prepared_protein": "/p.pdbqt"}, step="prepare")
+    session.activate("job_hist", state_manager, last_results={"status": "completed"})
+
+    cli._handle_show_history(session)
+
+    out = capsys.readouterr().out
+    assert "Parameters are currently at revision 1." in out
+    assert "source=initial_parse [params]" in out
+    assert "step=prepare [state]" in out
+
+
 # ---------------------------------------------------------------------------
 # Phase 3: Partial rerun integration tests
 # ---------------------------------------------------------------------------

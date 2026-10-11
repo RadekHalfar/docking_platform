@@ -249,13 +249,13 @@ def test_deferred_geometry_command_applies_and_shows_reply(app, viewer, page_rer
     # 2026-09-30 fix) -- since Stage 13.4 in the same run, with no rerun.
     expected_center, _ = compute_protein_center_and_box(FIXTURE_PDB.read_text())
     app.session_state["box_picker_bridge"] = _prep_done_bridge()
-    app.session_state["_pending_geometry_target"] = "center"
+    app.session_state["_pending_geometry_targets"] = ("center",)
 
     at = app.run()
 
     assert not at.exception
     assert at.session_state["box_picker_bridge"] is None
-    assert "_pending_geometry_target" not in at.session_state
+    assert "_pending_geometry_targets" not in at.session_state
     assert _chat_texts(at)[-1].startswith("Protein center set to")
     assert float(at.session_state["param_center_x"]) == expected_center[0]
     assert viewer.last("box_picker")["center"] == expected_center  # drawn this run
@@ -266,7 +266,7 @@ def test_deferred_geometry_command_reports_failed_fetch(app, page_reruns):
     app.session_state["box_picker_bridge"] = FakeBridge(
         result={"status": "failed", "errors": ["RCSB download failed"]}
     )
-    app.session_state["_pending_geometry_target"] = "box_size"
+    app.session_state["_pending_geometry_targets"] = ("box_size",)
 
     at = app.run()
 

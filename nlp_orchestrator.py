@@ -41,6 +41,7 @@ from services.llm_orchestrator import (
 )
 from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS
+from services.llm_orchestrator.workflow_state_manager import describe_revision
 from services.llm_orchestrator.interactive_session import compute_changed_params, resolve_prepared_protein_pdb_path
 from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
 from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, docking_algorithm_label, normalize_docking_algorithm
@@ -592,17 +593,11 @@ def _handle_show_history(session: "InteractiveSession") -> None:
     print("  " + "-" * 80)
     for r in revisions:
         ts = r["timestamp"][:26] if r["timestamp"] else ""
-        etype = r["event_type"]
-        details = r["details"]
-        detail_str = ", ".join(f"{k}={v}" for k, v in details.items())
-        flags = []
-        if r["has_parameters"]:
-            flags.append("params")
-        if r["has_state"]:
-            flags.append("state")
-        flag_str = f"  [{', '.join(flags)}]" if flags else ""
-        print(f"  {r['revision']:>5}  {ts}  {etype:<22}  {detail_str}{flag_str}")
-    print(f"\n  Current revision: {session.state_manager.get_current_revision()}")
+        print(f"  {r['revision']:>5}  {ts}  {r['event_type']:<22}  {describe_revision(r)}")
+    # The parameters' revision, as the GUI shows it -- not
+    # get_current_revision(), which also counts state_update events and so
+    # named a revision whose parameters aren't the current ones.
+    print(f"\n  Parameters are currently at revision {session.state_manager.get_parameters_revision()}.")
     print("  Use 'undo <revision>' to restore any prior revision.")
 
 

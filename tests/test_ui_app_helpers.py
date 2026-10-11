@@ -16,6 +16,7 @@ st = pytest.importorskip("streamlit")
 
 import ui.app as app
 from common.pdb_geometry import compute_protein_center_and_box
+from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 
 FIXTURE_PDB = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
@@ -24,6 +25,9 @@ FIXTURE_PDB = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
 @pytest.fixture(autouse=True)
 def _clean_session_state():
     st.session_state.clear()
+    # The page's init() always sets this before any handler runs, and
+    # ui/core relies on it (no None guards since Phase 16 Review Stage R1).
+    st.session_state["interactive_session"] = InteractiveSession()
     yield
     st.session_state.clear()
 
@@ -244,7 +248,7 @@ def test_handle_protein_geometry_command_no_protein_source_reports_whats_missing
     assert len(st.session_state.messages) == 1
     assert st.session_state.messages[0]["role"] == "assistant"
     assert "missing" in st.session_state.messages[0]["content"]
-    assert st.session_state.get("_pending_geometry_target") is None
+    assert st.session_state.get("_pending_geometry_targets") is None
 
 
 def test_handle_protein_geometry_command_defers_when_fetch_starts(monkeypatch):
@@ -259,7 +263,7 @@ def test_handle_protein_geometry_command_defers_when_fetch_starts(monkeypatch):
 
     app._handle_protein_geometry_command("box_size")
 
-    assert st.session_state["_pending_geometry_target"] == "box_size"
+    assert st.session_state["_pending_geometry_targets"] == ("box_size",)
     assert "fetching" in st.session_state.messages[-1]["content"].lower()
 
 

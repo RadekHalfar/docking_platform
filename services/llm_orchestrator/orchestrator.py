@@ -13,7 +13,7 @@ import time
 import traceback
 import uuid
 import requests
-from typing import Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
@@ -66,13 +66,22 @@ def docking_timeout_seconds(num_ligands: int, workers: int, algorithm: str, exha
 class WorkflowOrchestrator:
     """Orchestrates workflow execution across MCP services."""
     
-    def __init__(self, output_base: str = "./orchestrator_output", verbosity: int = VERBOSITY_NORMAL):
+    def __init__(
+        self,
+        output_base: str = "./orchestrator_output",
+        verbosity: int = VERBOSITY_NORMAL,
+        on_message: Callable[[str], None] = print,
+    ):
         """
         Initialize orchestrator.
-        
+
         Args:
             output_base: Base directory for workflow outputs
             verbosity: Verbosity level (VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO)
+            on_message: Where step-level messages go (see ``_step_print``).
+                The CLI keeps ``print``; the GUI's ``OrchestratorBridge``
+                passes its run's own log queue, so concurrent runs in one
+                process never share a stream (Phase 16 finding 1).
         """
         self.output_base = Path(output_base).resolve()
         ensure_shared_directory(self.output_base)
@@ -82,6 +91,7 @@ class WorkflowOrchestrator:
         
         # Verbosity level
         self.verbosity = verbosity
+        self._on_message = on_message
 
         # MCP service URLs (env-overridable for Docker/container usage)
         self.services = get_service_urls_from_env()
@@ -91,10 +101,11 @@ class WorkflowOrchestrator:
         self.current_job_id = None
 
     def _step_print(self, message: str) -> None:
-        """Print a step-level message to stdout and always record it via the logger."""
+        """Send a step-level message to *on_message* (stdout by default) and
+        always record it via the logger."""
         logger.info(message)
         if self.verbosity in (VERBOSITY_LOW, VERBOSITY_MCP_DEMO):
-            print(message)
+            self._on_message(message)
     
     def check_services_health(self) -> Dict[str, bool]:
         """Check health of all MCP services."""

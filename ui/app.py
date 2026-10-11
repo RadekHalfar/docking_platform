@@ -26,7 +26,6 @@ from ui.session_state import (
     apply_settings,
     clear_box_picker_state,
     effective_cpu,
-    get_params,
     gui_session,
     init,
     reset_workers_to_algorithm_default,
@@ -71,11 +70,6 @@ def _collect_form_params() -> dict:
     return gui_form.collect_form_params(gui_session())
 
 
-def _sync_form_into_params() -> dict:
-    """See :func:`ui.core.form.sync_form_into_params`."""
-    return gui_form.sync_form_into_params(gui_session())
-
-
 def _show_outcome(outcome) -> None:
     """Carry out a ``ui/core`` action's :class:`~ui.core.state.Outcome`:
     an inline error, then a rerun if the page must redraw."""
@@ -87,9 +81,11 @@ def _show_outcome(outcome) -> None:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
-# The logic lives in ui/core (chat, box_picker); these wrappers keep the
-# page's names. The LLM parse functions and _start_box_picker_prep are
-# passed at call time, so a test patching them on this module reaches them.
+# The logic lives in ui/core (chat, box_picker). The LLM parse functions
+# are passed at call time, so a test patching them on this module reaches
+# them. The two geometry wrappers below are kept only for the
+# tests/test_ui_app_helpers.py cases that call them; the chat route itself
+# goes through chat.submit(), which starts the prep via ui.core.box_picker.
 
 def _find_receptor_pdb_for_geometry() -> Path | None:
     """See :func:`ui.core.box_picker.find_receptor_pdb`."""
@@ -99,11 +95,6 @@ def _find_receptor_pdb_for_geometry() -> Path | None:
 def _handle_protein_geometry_command(target: str) -> None:
     """See :func:`ui.core.chat.protein_geometry_command`."""
     chat.protein_geometry_command(gui_session(), target, OUTPUT_BASE, _start_box_picker_prep)
-
-
-def _handle_docking_algorithm_command(algorithm: str) -> None:
-    """See :func:`ui.core.chat.docking_algorithm_command`."""
-    chat.docking_algorithm_command(gui_session(), algorithm)
 
 
 def _on_chat_submit(user_message: str) -> None:
@@ -141,12 +132,6 @@ def _undo_to_revision(revision: int) -> str:
     return sessions.undo_to_revision(gui_session(), revision)
 
 
-def _handle_history_chat_intent(intent: dict) -> None:
-    """Answer a deterministic ``show history`` / ``undo [N]`` chat command."""
-    st.session_state.messages.append(
-        {"role": "assistant", "content": sessions.history_chat_reply(gui_session(), intent)}
-    )
-
 _SAVE_SCOPES = gui_save.SAVE_SCOPES
 
 
@@ -158,13 +143,6 @@ def _save_block_reason() -> str | None:
 def _save_results(name: str, scope: str, *, overwrite: bool = False) -> str:
     """See :func:`ui.core.save_results.save_results`. Never calls st.rerun()."""
     return gui_save.save_results(gui_session(), OUTPUT_BASE, name, scope, overwrite=overwrite)
-
-
-def _handle_save_chat_intent(intent: dict) -> None:
-    """Answer a deterministic ``save results/docking/visualization as <name>``."""
-    st.session_state.messages.append(
-        {"role": "assistant", "content": gui_save.save_chat_reply(gui_session(), OUTPUT_BASE, intent)}
-    )
 
 
 def _reset_session(preserve: frozenset = frozenset({"settings"})) -> None:

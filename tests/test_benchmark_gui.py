@@ -91,6 +91,28 @@ class TestSampleOnCue:
         # the monkeypatch is undone, inside other tests.
         assert not [t for t in threading.enumerate() if t.name == "container-stats"]
 
+    def test_windows_finished_before_a_bad_cue_are_kept(self, monkeypatch):
+        # Review Stage R1 (Phase 16): a driver dying mid-window used to
+        # throw away every finished record, so --json-out wrote nothing.
+        self._fake_stats(monkeypatch)
+        lines = ["SAMPLE-START running-25\n", "SAMPLE-STOP running-25\n", "SAMPLE-START idle\n"]
+        with pytest.raises(benchmark_gui.CueError, match="input ended") as err:
+            benchmark_gui.sample_on_cue(lines, "mcp-ui", 0.01)
+        assert [r["label"] for r in err.value.records] == ["running-25"]
+
+    def test_main_saves_finished_windows_then_fails(self, monkeypatch, tmp_path):
+        import io
+        import sys
+        self._fake_stats(monkeypatch)
+        monkeypatch.setattr(benchmark_gui, "read_container_stats", lambda name: (100 * MIB, 5.0))
+        out = tmp_path / "perf.json"
+        monkeypatch.setattr(sys, "stdin", io.StringIO("SAMPLE-START a\nSAMPLE-STOP a\nSAMPLE-START b\n"))
+        monkeypatch.setattr(sys, "argv", ["benchmark_gui.py", "--from-driver", "--interval", "0.01",
+                                          "--json-out", str(out)])
+        with pytest.raises(SystemExit, match="ended badly"):
+            benchmark_gui.main()
+        assert [r["label"] for r in json.loads(out.read_text())] == ["a"]
+
 
 class TestDriverHelpers:
     def test_parse_perf_line(self):

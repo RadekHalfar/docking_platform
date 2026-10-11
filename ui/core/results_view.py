@@ -10,7 +10,6 @@ cached reader (Streamlit re-reads them on every rerun otherwise).
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 from datetime import datetime
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from common.docking_algorithm import docking_algorithm_label, docking_algorithm_of
+from common.file_io import load_json_dict
 from common.path_utils import from_container_path
 from services.llm_orchestrator.interactive_session import SAVED_RESULTS_DIRNAME
 from ui.job_history import escape_markdown
@@ -34,6 +34,13 @@ OTHER_DOWNLOAD_SUFFIXES = {".pml", ".json", ".png"}
 
 
 def _read_path(path: Path) -> bytes:
+    # Uncached. Streamlit passes its mtime-keyed st.cache_data reader. DEFERRED
+    # to Stages 16.4/16.6 (Review Stage R1, docs/reviews/stage_16_r1.md,
+    # deferred #3): a NiceGUI ui.timer that calls pose_records() or
+    # read_job_log() with this default re-reads every SDF / the whole job.log
+    # per client per tick. Fix when wiring the timer: pass a reader cached
+    # on (path, mtime), and redo pose/log reads only when the job's result
+    # or the file's size changes.
     return path.read_bytes()
 
 
@@ -54,11 +61,7 @@ def docked_with_caption(result: dict) -> Optional[str]:
 
 def read_docking_progress(output_base: Path, job_id: str) -> Optional[dict]:
     """The dock step's ``docking_progress.json``, or None if absent/unreadable."""
-    path = Path(output_base) / job_id / "docking_results" / "docking_progress.json"
-    try:
-        return json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    return load_json_dict(Path(output_base) / job_id / "docking_results" / "docking_progress.json")
 
 
 def currently_docking(progress: dict, now: datetime) -> list[tuple[str, Optional[int]]]:

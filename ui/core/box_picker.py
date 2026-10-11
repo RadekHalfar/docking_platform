@@ -25,6 +25,7 @@ from ui.core.form import (
     read_box_fields,
     sync_form_into_params,
 )
+from ui.core.state import reply
 
 # Smallest box edge (Å) the box picker's − buttons step down to.
 PICKER_MIN_BOX_SIZE = 1.0
@@ -34,10 +35,6 @@ PICKER_MIN_BOX_SIZE = 1.0
 PICKER_DEFAULT_BOX_SIZE = 20.0
 
 PREP_SERVICES = ["get_input_files", "prepare_protein"]
-
-
-def _reply(state, content: str) -> None:
-    state.messages.append({"role": "assistant", "content": content})
 
 
 def drawable_box_size(state) -> Optional[list[float]]:
@@ -124,9 +121,7 @@ def find_receptor_pdb(state, output_base: Path) -> Optional[Path]:
     """
     raw_path = state.box_picker_receptor_pdb
     if not raw_path:
-        session = state.interactive_session
-        last_results = getattr(session, "last_results", None) if session else None
-        raw_path = resolve_prepared_protein_pdb_path(last_results)
+        raw_path = resolve_prepared_protein_pdb_path(state.interactive_session.last_results)
 
     if not raw_path:
         return None
@@ -147,7 +142,7 @@ def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
         pdb_text = Path(receptor_path).read_bytes().decode("utf-8", errors="replace")
         center, box_size = compute_protein_center_and_box(pdb_text)
     except (OSError, ValueError) as exc:
-        _reply(state, f"Could not compute protein geometry: {exc}")
+        reply(state, f"Could not compute protein geometry: {exc}")
         return
 
     if target == "center":
@@ -159,7 +154,7 @@ def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
             f"Box size set to ({box_size[0]}, {box_size[1]}, {box_size[2]}) "
             "to cover the whole protein (+10% margin)."
         )
-    _reply(state, message)
+    reply(state, message)
 
 
 def process_box_picker_bridge(state, output_base: Path) -> None:
@@ -175,11 +170,11 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
     error = bridge.get_error()
     result = bridge.get_result()
     # A geometry chat command ("use protein center...") may have started
-    # this very job (no receptor was loaded yet) -- pop its target now so
-    # it's resolved (or reported as failed) exactly once, however this job
-    # turns out.
-    pending_target = state.pending_geometry_target
-    state.pending_geometry_target = None
+    # this very job (no receptor was loaded yet), and more may have queued
+    # while it ran -- pop them now so each is resolved (or reported as
+    # failed) exactly once, however this job turns out.
+    pending_targets = state.pending_geometry_targets or ()
+    state.pending_geometry_targets = None
     panel_error = None  # shown in the picker section
     failure = None  # chat reply for a pending geometry command
     if error:
@@ -189,8 +184,8 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
         pdb_path = resolve_prepared_protein_pdb_path(result)
         if pdb_path:
             state.box_picker_receptor_pdb = pdb_path
-            if pending_target:
-                apply_protein_geometry(state, from_container_path(pdb_path, output_base), pending_target)
+            for target in pending_targets:
+                apply_protein_geometry(state, from_container_path(pdb_path, output_base), target)
         else:
             panel_error = "Receptor was prepared but no PDB path was returned."
             failure = "Receptor was prepared but no PDB path was returned -- could not set this."
@@ -198,8 +193,16 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
         failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
         panel_error = "Could not prepare receptor: " + failure_detail
         failure = f"Could not fetch the protein: {failure_detail}"
+    # DEFERRED to Stage 16.5 (Review Stage R1, docs/reviews/stage_16_r1.md,
+    # deferred #4): any other ending -- "cancelled", or no result and no
+    # error -- clears a pending geometry command without a chat reply,
+    # though the user was told "I'll set this". Unreachable today: nothing
+    # stops the prep job, so it never ends "cancelled", and a missing result
+    # always comes with an error. Fix if 16.5 (or later) adds a Stop for the
+    # prep job: add an else branch that sets *failure* (e.g. "Receptor
+    # preparation was stopped -- could not set this.") and test it.
     if panel_error:
         state.box_picker_error = panel_error
-    if pending_target and failure:
-        _reply(state, failure)
+    if pending_targets and failure:
+        reply(state, failure)
     state.box_picker_bridge = None

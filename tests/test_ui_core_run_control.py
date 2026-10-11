@@ -298,6 +298,19 @@ def test_running_bridge_streams_lines_into_last_message(state):
     assert state.job_done is False
 
 
+def test_finished_bridge_streams_its_last_lines_before_the_reply(state):
+    # Review Stage R1 (Phase 16): lines queued just before the thread ended
+    # were never drained, so "WORKFLOW COMPLETED SUCCESSFULLY" never showed.
+    state.messages.append({"role": "assistant", "content": "Starting..."})
+    state.bridge = FakeBridge(result={"status": "completed", "results": {}},
+                              lines=["", "WORKFLOW COMPLETED SUCCESSFULLY"])
+
+    run_control.process_docking_bridge(state)
+
+    assert state.messages[-2]["content"] == "Starting...\n\nWORKFLOW COMPLETED SUCCESSFULLY"
+    assert _last_reply(state) == "Workflow completed successfully!"
+
+
 @pytest.mark.parametrize(
     "result, error, expected",
     [

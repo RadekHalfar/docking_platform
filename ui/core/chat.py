@@ -27,13 +27,10 @@ from services.llm_orchestrator.workflow_llm_parser import (
 )
 from ui.core import box_picker, save_results, sessions
 from ui.core.form import apply_parsed_params, selected_docking_algorithm
+from ui.core.state import reply
 
 # Starts the box picker's receptor prep: () -> (started, message, severity).
 StartPrep = Callable[[], tuple]
-
-
-def _reply(state, content: str) -> None:
-    state.messages.append({"role": "assistant", "content": content})
 
 
 def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> bool:
@@ -60,10 +57,10 @@ def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> 
     # path (answer_with_llm).
     intent = _deterministic_intent(message)
     if intent is not None and intent["intent"] in ("show_history", "undo_revision"):
-        _reply(state, sessions.history_chat_reply(state, intent))
+        reply(state, sessions.history_chat_reply(state, intent))
         return True
     if intent is not None and intent["intent"] == "save_results":
-        _reply(state, save_results.save_chat_reply(state, output_base, intent))
+        reply(state, save_results.save_chat_reply(state, output_base, intent))
         return True
     return False
 
@@ -78,13 +75,25 @@ def protein_geometry_command(state, target: str, output_base: Path, start_prep: 
     enough to do that (a protein source is set), this kicks off the same
     background get_input_files+prepare_protein job "Load receptor for box
     picking" uses, via *start_prep* (normally
-    :func:`ui.core.box_picker.start_box_picker_prep`), and stashes *target*
-    in ``state.pending_geometry_target`` --
-    :func:`ui.core.box_picker.process_box_picker_bridge` applies it once
+    :func:`ui.core.box_picker.start_box_picker_prep`), and queues *target*
+    in ``state.pending_geometry_targets`` --
+    :func:`ui.core.box_picker.process_box_picker_bridge` applies them once
     that job completes -- instead of failing outright. This is what makes
     the geometry commands usable on a first message, before any button has
     been clicked.
     """
+    prep = state.box_picker_bridge
+    if prep is not None and prep.is_running():
+        # The receptor is on its way (the button, or an earlier command):
+        # wait for it rather than start a second prep job, which would
+        # replace this bridge and orphan its result. Checked before
+        # find_receptor_pdb(): starting the prep cleared the picker's
+        # receptor, so that would fall back to the session's last prepared
+        # protein, which may not be the one being prepared now.
+        _queue_geometry_target(state, target)
+        reply(state, "I'm still preparing the protein — I'll set this once it's ready.")
+        return
+
     receptor_path = box_picker.find_receptor_pdb(state, output_base)
     if receptor_path is not None:
         box_picker.apply_protein_geometry(state, receptor_path, target)
@@ -92,14 +101,21 @@ def protein_geometry_command(state, target: str, output_base: Path, start_prep: 
 
     started, message, _severity = start_prep()
     if started:
-        state.pending_geometry_target = target
-        _reply(
+        _queue_geometry_target(state, target)
+        reply(
             state,
             "I don't have the protein ready yet — fetching and "
             "preparing it now, then I'll set this.",
         )
     else:
-        _reply(state, message)
+        reply(state, message)
+
+
+def _queue_geometry_target(state, target: str) -> None:
+    """Add *target* to the commands waiting for the receptor, in order and
+    once each: "center" then "whole protein" sets both, not just the last."""
+    queued = state.pending_geometry_targets or ()
+    state.pending_geometry_targets = tuple(dict.fromkeys((*queued, target)))
 
 
 def docking_algorithm_command(state, algorithm: str) -> None:
@@ -108,12 +124,11 @@ def docking_algorithm_command(state, algorithm: str) -> None:
     "dock with ..." redock is not mirrored here."""
     apply_parsed_params(state, {"docking_algorithm": algorithm})
     label = docking_algorithm_label(algorithm)
-    session = state.interactive_session
-    if session is not None and session.has_active_job():
+    if state.interactive_session.has_active_job():
         hint = "Click **Run Docking** to redock with it (docking and visualization only)."
     else:
         hint = "It will be used when you click **Run Docking**."
-    _reply(state, f"Docking algorithm set to **{label}**. {hint}")
+    reply(state, f"Docking algorithm set to **{label}**. {hint}")
 
 
 def parse_message(
@@ -130,6 +145,15 @@ def parse_message(
     With a *prior_workflow* (the parser's last result) it is a follow-up:
     only the delta is asked for and merged onto it. Blocking; reads and
     writes no GUI state, so it may run on a worker thread.
+
+    DEFERRED to Stage 16.4 (Review Stage R1, docs/reviews/stage_16_r1.md,
+    deferred #2): if Load, New Session or ``undo`` replaces the
+    parser's workflow while this call is in flight, apply_parsed_message()
+    validates the merge built on the *old* prior and so overwrites the new
+    session's parser state. Streamlit can't hit it (the call blocks the
+    script). Fix when 16.4 moves the call into ``run.io_bound``: keep the
+    *prior_workflow* object and, before applying, drop the reply if
+    ``state.parser.parsed_workflow is not prior_workflow``.
     """
     if prior_workflow and prior_workflow.get("parameters"):
         delta = parse_followup(
@@ -194,7 +218,7 @@ def apply_parsed_message(state, parsed: dict, named: set) -> None:
     if missing:
         lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
 
-    _reply(state, "\n".join(lines))
+    reply(state, "\n".join(lines))
 
 
 def answer_with_llm(
@@ -218,4 +242,4 @@ def answer_with_llm(
         )
         apply_parsed_message(state, parsed, named)
     except Exception as exc:
-        _reply(state, f"Sorry, I couldn't parse that: {exc}")
+        reply(state, f"Sorry, I couldn't parse that: {exc}")

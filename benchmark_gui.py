@@ -42,21 +42,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, TextIO
 
-from benchmark_docking import MIB, STATS_ERRORS, ContainerStatsSampler, read_container_stats, summarize_samples
+from benchmark_docking import MIB, STATS_ERRORS, ContainerStatsSampler, read_container_stats
 
 DEFAULT_CONTAINER_NAME = "mcp-ui"
 
 
 def summarize_sampler(sampler: ContainerStatsSampler) -> Dict[str, float]:
-    """summarize_samples()'s peak/mean fields, without the per-worker one (a
-    GUI container has no workers), plus the sampler's error count and last
-    error so a run with failed samples says so."""
-    stats = summarize_samples(sampler.samples, idle_bytes=0, effective_workers=1)
+    """The sampler's summary (peak/mean, error count, last error), without
+    the per-worker field: a GUI container has no workers."""
+    stats = sampler.summary(idle_bytes=0, effective_workers=1)
     stats.pop("peak_mem_per_worker_bytes", None)
-    stats["sample_errors"] = sampler.errors
-    if sampler.last_error:
-        stats["last_sample_error"] = sampler.last_error
     return stats
+
+
+class CueError(ValueError):
+    """The driver's SAMPLE-START/SAMPLE-STOP lines didn't pair up.
+    *records* holds the windows that did finish, so they can still be saved."""
+
+    def __init__(self, message: str, records: List[dict]) -> None:
+        super().__init__(message)
+        self.records = records
 
 
 def sample_container(container_name: str, duration: float, interval: float) -> Dict[str, float]:
@@ -72,7 +77,8 @@ def sample_on_cue(lines: Iterable[str], container_name: str, interval: float,
     `SAMPLE-STOP <label>`. Returns one {label, started_at, seconds, stats} per window.
 
     A STOP for another label, a second START, or input ending mid-window is
-    an error in the driver, so it raises instead of guessing."""
+    an error in the driver, so it raises CueError instead of guessing; the
+    error carries the windows finished before it."""
     records: List[dict] = []
     active = None  # (label, sampler, start time, start timestamp)
     try:
@@ -83,13 +89,13 @@ def sample_on_cue(lines: Iterable[str], container_name: str, interval: float,
             kind, _, label = line.strip().partition(" ")
             if kind == "SAMPLE-START":
                 if active:
-                    raise ValueError(f"SAMPLE-START {label!r} while {active[0]!r} is still sampling")
+                    raise CueError(f"SAMPLE-START {label!r} while {active[0]!r} is still sampling", records)
                 started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 active = (label, ContainerStatsSampler(container_name, interval).start(),
                           time.monotonic(), started_at)
             elif kind == "SAMPLE-STOP":
                 if not active or active[0] != label:
-                    raise ValueError(f"SAMPLE-STOP {label!r} without a matching SAMPLE-START")
+                    raise CueError(f"SAMPLE-STOP {label!r} without a matching SAMPLE-START", records)
                 name, sampler, started, started_at = active
                 seconds = time.monotonic() - started
                 sampler.stop()
@@ -99,7 +105,7 @@ def sample_on_cue(lines: Iterable[str], container_name: str, interval: float,
                 if echo:
                     echo.write(f"  [{name}] {format_summary(records[-1]['stats'])}\n")
         if active:
-            raise ValueError(f"input ended while {active[0]!r} was still sampling")
+            raise CueError(f"input ended while {active[0]!r} was still sampling", records)
     finally:
         # Never leave a sampler thread running `docker stats` behind an error.
         if active:
@@ -150,10 +156,17 @@ def main() -> None:
                          "Is 'docker' on PATH and the container running?")
 
     measured_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cue_error = None
     if args.from_driver:
+        try:
+            windows = sample_on_cue(sys.stdin, args.container, args.interval, echo=sys.stdout)
+        except CueError as e:
+            # E.g. the driver crashed mid-window: still save the windows
+            # that finished (a running-job window can take half an hour).
+            cue_error, windows = e, e.records
         records = [
             {"container": args.container, "interval_seconds": args.interval, "measured_at": measured_at, **r}
-            for r in sample_on_cue(sys.stdin, args.container, args.interval, echo=sys.stdout)
+            for r in windows
         ]
     else:
         print(f"Sampling {args.container} for {args.duration:.0f} s ({args.label}) ...")
@@ -168,6 +181,8 @@ def main() -> None:
         for record in records:
             append_json(args.json_out, record)
         print(f"Appended {len(records)} record(s) to {args.json_out}")
+    if cue_error:
+        raise SystemExit(f"Driver output ended badly: {cue_error}")
 
 if __name__ == "__main__":
     main()

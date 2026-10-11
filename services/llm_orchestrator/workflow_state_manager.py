@@ -19,6 +19,20 @@ from .workflow_definition import with_default_parameters
 logger = logging.getLogger(__name__)
 
 
+def describe_revision(revision: Dict[str, Any]) -> str:
+    """A :meth:`WorkflowStateManager.list_revisions` entry's details and
+    checkpoint flags as one string, e.g. ``source=initial_parse [params]``.
+    Shared by the CLI's and the GUI's ``show history`` tables, which differ
+    only in layout."""
+    details = ", ".join(f"{k}={v}" for k, v in revision["details"].items())
+    flags = [name for name, present in (("params", revision["has_parameters"]),
+                                        ("state", revision["has_state"])) if present]
+    if not flags:
+        return details
+    flag_text = f"[{', '.join(flags)}]"
+    return f"{details} {flag_text}" if details else flag_text
+
+
 class WorkflowStateManager:
     """Persists workflow parameters/state with revisioned checkpoints.
 

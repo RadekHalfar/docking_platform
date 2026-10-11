@@ -242,7 +242,7 @@ def clear_box_picker_state(state) -> None:
     """
     state.box_picker_receptor_pdb = None
     state.box_picker_last_click = None
-    state.pending_geometry_target = None
+    state.pending_geometry_targets = None
     state.box_picker_error = None
 
 

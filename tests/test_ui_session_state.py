@@ -306,14 +306,14 @@ def test_load_clamps_workers_to_cap_divided_by_cpu(cap10):
 def test_clear_box_picker_state_removes_picker_keys_but_not_the_box():
     st.session_state["_box_picker_receptor_pdb"] = "/x/y.pdb"
     st.session_state["_box_picker_last_click"] = {"center": [1, 2, 3], "clickId": 1}
-    st.session_state["_pending_geometry_target"] = "center"
+    st.session_state["_pending_geometry_targets"] = ("center",)
     st.session_state["_box_picker_error"] = "boom"
     st.session_state["param_center_x"] = "1.0"
 
     session_state.clear_box_picker_state()
 
     for key in ("_box_picker_receptor_pdb", "_box_picker_last_click",
-                "_pending_geometry_target", "_box_picker_error"):
+                "_pending_geometry_targets", "_box_picker_error"):
         assert key not in st.session_state
     # The Docking Box fields are the box itself, not picker state.
     assert st.session_state["param_center_x"] == "1.0"

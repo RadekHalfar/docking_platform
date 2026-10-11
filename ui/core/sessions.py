@@ -6,13 +6,13 @@ Moved unchanged in behaviour from ``ui/app.py``. Listing sessions is
 """
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Optional
 
+from common.file_io import load_json_dict
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS
-from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager, describe_revision
 from ui.core.form import clear_box_picker_state, load_session_params, start_new_session
 from ui.core.run_control import active_bridge_job_id
 from ui.job_history import escape_markdown, rename_job
@@ -24,13 +24,7 @@ def load_workflow_results(output_base: Path, job_id: str) -> Optional[dict]:
     Used to view jobs loaded from history (or run in a previous session /
     via the CLI), which have no in-memory OrchestratorBridge to poll.
     """
-    results_file = Path(output_base) / job_id / "workflow_results.json"
-    if not results_file.exists():
-        return None
-    try:
-        return json.loads(results_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+    return load_json_dict(Path(output_base) / job_id / "workflow_results.json")
 
 
 def load_params_into_form(state, params: dict) -> None:
@@ -176,10 +170,7 @@ def format_history_markdown(revisions: list[dict]) -> str:
 
     lines = ["| Rev | Time (UTC) | Event | Details |", "|---|---|---|---|"]
     for r in revisions:
-        details = ", ".join(f"{k}={v}" for k, v in r["details"].items())
-        flags = [name for name, present in (("params", r["has_parameters"]), ("state", r["has_state"])) if present]
-        if flags:
-            details = f"{details} [{', '.join(flags)}]" if details else f"[{', '.join(flags)}]"
+        details = describe_revision(r)
         timestamp = r["timestamp"][:19].replace("T", " ")
         event, details = (escape_markdown(s).replace("|", "\\|") for s in (r["event_type"], details))
         lines.append(f"| {r['revision']} | {timestamp} | {event} | {details} |")

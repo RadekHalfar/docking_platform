@@ -60,7 +60,7 @@ _STATE_KEYS = {
     "box_picker_last_click": ("_box_picker_last_click", None, True),
     "box_picker_error": ("_box_picker_error", None, True),
     "box_picker_job_id": ("_box_picker_job_id", None, False),
-    "pending_geometry_target": ("_pending_geometry_target", None, True),
+    "pending_geometry_targets": ("_pending_geometry_targets", None, True),
 }
 
 

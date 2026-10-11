@@ -421,13 +421,17 @@ selected") and is not carried into later follow-ups.
 Revision history for job job_abc123:
     Rev  Timestamp                   Type                    Details
   -------------------------------------------------------------------------------
-      1  2026-04-24T10:00:00.000...  parameters_update       source=initial_parse  [params]
-      2  2026-04-24T10:05:00.000...  state_update            step=dock  [state]
-      3  2026-04-24T10:10:00.000...  parameters_update       source=interactive_update  [params]
+      1  2026-04-24T10:00:00.000...  parameters_update       source=initial_parse [params]
+      2  2026-04-24T10:05:00.000...  state_update            step=dock [state]
+      3  2026-04-24T10:10:00.000...  parameters_update       source=interactive_update [params]
 
-  Current revision: 3
+  Parameters are currently at revision 3.
   Use 'undo <revision>' to restore any prior revision.
 ```
+
+The number is the revision of the current *parameters*, the same one the
+GUI's `show history` reports. A `state_update` revision (e.g. 2 above)
+doesn't move it.
 
 `undo <revision>` restores that revision's parameters/state to the latest files and creates a new `undo_restore` revision so the action is auditable. After undo all services are marked as needing re-execution; use `rerun` to apply.
 

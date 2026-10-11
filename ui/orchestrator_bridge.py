@@ -1,7 +1,5 @@
 """Thread-safe wrapper for running execute_workflow() in the background."""
-import contextlib
 import queue
-import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -9,92 +7,15 @@ from typing import Any, Dict, List, Optional
 from common.docking_stop import request_docking_stop
 
 
-class _QueueWriter:
-    """File-like object that enqueues each completed line as it is written."""
-
-    def __init__(self, q: queue.Queue) -> None:
-        self._q = q
-        self._buf = ""
-
-    def write(self, text: str) -> int:
-        self._buf += text
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            self._q.put(line)
-        return len(text)
-
-    def flush(self) -> None:
-        if self._buf:
-            self._q.put(self._buf)
-            self._buf = ""
-
-
-# Which thread's stdout goes where (Phase 16 finding 1). redirect_stdout()
-# swaps the process-wide sys.stdout, so two bridges running at once (the
-# docking run and the box picker's receptor prep, or two browser tabs)
-# captured each other's lines, and whichever finished first restored a
-# stdout the other was still using. Instead one routing proxy is installed
-# once and each bridge thread registers its own writer. The table is
-# module-level, not on the proxy, so registrations survive a reinstall.
-_stdout_routes: Dict[int, "_QueueWriter"] = {}
-_stdout_routes_lock = threading.Lock()
-
-
-class _ThreadRoutingStdout:
-    """``sys.stdout`` replacement that writes to the calling thread's
-    registered writer, else to the stdout it replaced (*fallback*).
-
-    Output from threads a run itself starts goes to the fallback, not the
-    run's log -- the in-process orchestrator prints only from the bridge
-    thread (its MCP calls are synchronous HTTP; the thread pools live in
-    the MCP servers).
-    """
-
-    def __init__(self, fallback) -> None:
-        self._fallback = fallback
-
-    def _target(self):
-        return _stdout_routes.get(threading.get_ident(), self._fallback)
-
-    def write(self, text: str) -> int:
-        return self._target().write(text)
-
-    def flush(self) -> None:
-        self._target().flush()
-
-    def __getattr__(self, name: str):
-        # encoding, isatty(), fileno(), ... -- describe the real stream.
-        return getattr(self._fallback, name)
-
-
-def _install_stdout_router() -> None:
-    """Make sure ``sys.stdout`` is the routing proxy. Idempotent; installs
-    again over whatever replaced it since (e.g. pytest's capture)."""
-    with _stdout_routes_lock:
-        if not isinstance(sys.stdout, _ThreadRoutingStdout):
-            sys.stdout = _ThreadRoutingStdout(sys.stdout)
-
-
-@contextlib.contextmanager
-def _route_stdout_of_this_thread(writer: "_QueueWriter"):
-    """Send this thread's ``print()`` output to *writer* for the block."""
-    _install_stdout_router()
-    ident = threading.get_ident()
-    with _stdout_routes_lock:
-        _stdout_routes[ident] = writer
-    try:
-        yield
-    finally:
-        with _stdout_routes_lock:
-            _stdout_routes.pop(ident, None)
-
-
 class OrchestratorBridge:
     """Runs WorkflowOrchestrator.execute_workflow() in a daemon thread.
 
-    Captures its own thread's stdout line-by-line into a queue (see
-    ``_route_stdout_of_this_thread``) so the UI can stream progress without
-    blocking the GUI, while other bridges' output stays out of it.
+    The orchestrator's step messages go line by line into this bridge's own
+    queue (its ``on_message`` sink, see ``_log_message``), so the UI can
+    stream progress without blocking, and concurrent runs in one process
+    never see each other's lines. Nothing touches ``sys.stdout`` (Phase 16
+    finding 1: the ``redirect_stdout`` this replaced swapped it
+    process-wide).
     """
 
     def __init__(self) -> None:
@@ -155,24 +76,26 @@ class OrchestratorBridge:
     ) -> None:
         from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, WorkflowOrchestrator
 
-        writer = _QueueWriter(self._log_queue)
         try:
-            with _route_stdout_of_this_thread(writer):
-                orchestrator = WorkflowOrchestrator(
-                    output_base=output_base, verbosity=VERBOSITY_LOW
-                )
-                result = orchestrator.execute_workflow(
-                    workflow,
-                    job_id=job_id,
-                    job_name=job_name,
-                    state_manager=state_manager,
-                    cancel_event=cancel_event,
-                )
+            orchestrator = WorkflowOrchestrator(
+                output_base=output_base, verbosity=VERBOSITY_LOW, on_message=self._log_message
+            )
+            result = orchestrator.execute_workflow(
+                workflow,
+                job_id=job_id,
+                job_name=job_name,
+                state_manager=state_manager,
+                cancel_event=cancel_event,
+            )
             self._result = result
         except Exception as exc:
             self._error = str(exc)
-        finally:
-            writer.flush()
+
+    def _log_message(self, message: str) -> None:
+        """Queue *message* one line at a time -- the same lines ``print()``
+        gave the CLI, blank ones included."""
+        for line in message.split("\n"):
+            self._log_queue.put(line)
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()

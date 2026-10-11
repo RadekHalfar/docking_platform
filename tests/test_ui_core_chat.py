@@ -68,14 +68,68 @@ def test_geometry_command_without_a_receptor_starts_the_prep_and_waits(state, tm
 
     assert chat.submit(state, "set box center as protein center", tmp_path, FakeBridge) is True
 
-    assert state.pending_geometry_target == "center"
+    assert state.pending_geometry_targets == ("center",)
     assert isinstance(state.box_picker_bridge, FakeBridge)
     assert "fetching and preparing it now" in state.messages[-1]["content"]
 
 
+def test_geometry_command_during_a_running_prep_waits_for_it(state, tmp_path):
+    # Review Stage R1 (Phase 16): a second prep used to start and replace
+    # the running one, whose result was then never processed.
+    class RunningBridge(FakeBridge):
+        def is_running(self):
+            return True
+
+    running = RunningBridge()
+    state.box_picker_bridge = running
+
+    chat.protein_geometry_command(state, "box_size", tmp_path, _boom)
+
+    assert state.box_picker_bridge is running
+    assert state.pending_geometry_targets == ("box_size",)
+    assert "still preparing" in state.messages[-1]["content"]
+
+
+class _RunningBridge(FakeBridge):
+    def is_running(self):
+        return True
+
+
+def test_geometry_commands_during_a_prep_are_all_queued(state, tmp_path):
+    # Review Stage R1 (Phase 16): one slot kept only the last command,
+    # though each had been told "I'll set this".
+    state.box_picker_bridge = _RunningBridge()
+
+    for target in ("center", "box_size", "center"):
+        chat.protein_geometry_command(state, target, tmp_path, _boom)
+
+    assert state.pending_geometry_targets == ("center", "box_size")
+
+
+def test_geometry_command_during_a_prep_ignores_the_sessions_old_receptor(state, tmp_path):
+    # Review Stage R1 (Phase 16): starting the prep clears the picker's
+    # receptor, so the command fell back to the active session's last
+    # prepared protein -- possibly another protein than the one being
+    # prepared -- and applied its geometry at once.
+    if not FIXTURE_PDB.exists():
+        pytest.skip("Fixture file not available")
+    old = tmp_path / "old_receptor.pdb"
+    old.write_text(FIXTURE_PDB.read_text())
+    state.interactive_session.last_results = {
+        "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(old)}]}}
+    }
+    state.box_picker_bridge = _RunningBridge()
+
+    chat.protein_geometry_command(state, "center", tmp_path, _boom)
+
+    assert "center" not in state.params
+    assert state.pending_geometry_targets == ("center",)
+    assert "still preparing" in state.messages[-1]["content"]
+
+
 def test_geometry_command_with_no_protein_source_says_what_is_missing(state, tmp_path):
     chat.protein_geometry_command(state, "center", tmp_path, lambda: (False, "Provide a protein source first — missing: protein_id", "warning"))
-    assert state.pending_geometry_target is None
+    assert state.pending_geometry_targets is None
     assert _contents(state) == ["Provide a protein source first — missing: protein_id"]
 
 

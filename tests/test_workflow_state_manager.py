@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from services.llm_orchestrator.workflow_definition import with_default_parameters
-from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager, describe_revision
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,18 @@ def test_list_revisions_has_state_flag(mgr):
 
     assert revisions[0]["has_state"] is True
     assert revisions[0]["has_parameters"] is False
+
+
+@pytest.mark.parametrize("details, has_parameters, has_state, expected", [
+    ({"source": "initial_parse"}, True, False, "source=initial_parse [params]"),
+    ({"step": "dock", "n": 2}, False, True, "step=dock, n=2 [state]"),
+    ({}, True, True, "[params, state]"),
+    ({"note": "x"}, False, False, "note=x"),
+    ({}, False, False, ""),
+])
+def test_describe_revision(details, has_parameters, has_state, expected):
+    revision = {"details": details, "has_parameters": has_parameters, "has_state": has_state}
+    assert describe_revision(revision) == expected
 
 
 # ---------------------------------------------------------------------------

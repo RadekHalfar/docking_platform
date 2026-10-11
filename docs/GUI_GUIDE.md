@@ -580,7 +580,8 @@ so the NiceGUI port reuses it rather than rewriting it:
   - `results_view.py`: what the results panel shows, as data: progress,
     poses, download lists, the job log.
 
-  Each action appends its chat replies to `state.messages`. It returns an
+  Each action appends its chat replies to `state.messages`, all through
+  `ui.core.state.reply()`. It returns an
   `Outcome`: `refresh` to redraw the page, `error` to show next to the
   control. The bridge class and the LLM parse functions are passed in, so
   tests swap in fakes. File reads that Streamlit caches take a `read_bytes`
@@ -592,9 +593,12 @@ so the NiceGUI port reuses it rather than rewriting it:
 - **`ui/app.py`** — the Streamlit page; its handlers are thin wrappers that
   carry out an `Outcome` with `st.error` / `st.rerun()`, and its render
   functions draw `ui/core`'s data with Streamlit widgets.
-- **`ui/orchestrator_bridge.py`** captures only its own thread's `print()`
-  output. One routing `sys.stdout` proxy is installed once, and each
-  bridge thread registers its log queue with it. Before this, each bridge
-  used `contextlib.redirect_stdout`, which swaps the process-wide stdout:
-  a docking run and a box-picker receptor load at the same time captured
-  each other's lines.
+- **`ui/orchestrator_bridge.py`** gives each run its own log. The bridge
+  passes `WorkflowOrchestrator` an `on_message` sink that queues the step
+  messages line by line (the CLI keeps the default, `print`), and nothing
+  touches `sys.stdout`. Before this, each bridge used
+  `contextlib.redirect_stdout`, which swaps the process-wide stdout: a
+  docking run and a box-picker receptor load at the same time captured
+  each other's lines. (Stage 16.1 first replaced it with a thread-routing
+  `sys.stdout` proxy; Phase 16's Review Stage R1 replaced that with the
+  sink.)

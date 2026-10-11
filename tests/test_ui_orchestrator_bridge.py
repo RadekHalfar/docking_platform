@@ -1,35 +1,39 @@
 """Tests for the OrchestratorBridge background-thread wrapper."""
+import sys
 import threading
 import time
 
 import pytest
 from unittest.mock import MagicMock, patch
 
-from ui.orchestrator_bridge import OrchestratorBridge, _QueueWriter
+from ui.orchestrator_bridge import OrchestratorBridge
 
 
-class TestQueueWriter:
-    def test_lines_flushed_to_queue_on_newline(self):
-        import queue
-        q = queue.Queue()
-        w = _QueueWriter(q)
-        w.write("hello\nworld\n")
-        assert q.get_nowait() == "hello"
-        assert q.get_nowait() == "world"
+def _orchestrator_whose_run(MockOrchestrator, fake_execute):
+    """Make the patched WorkflowOrchestrator run ``fake_execute(on_message,
+    workflow, job_id, **kwargs)``, with the ``on_message`` sink the bridge
+    gave that instance."""
+    def build(*args, on_message, **kwargs):
+        instance = MagicMock()
+        instance.execute_workflow.side_effect = (
+            lambda *a, **kw: fake_execute(on_message, *a, **kw)
+        )
+        return instance
 
-    def test_partial_line_held_until_flush(self):
-        import queue
-        q = queue.Queue()
-        w = _QueueWriter(q)
-        w.write("no newline yet")
-        assert q.empty()
-        w.flush()
-        assert q.get_nowait() == "no newline yet"
+    MockOrchestrator.side_effect = build
 
-    def test_write_returns_length(self):
-        import queue
-        w = _QueueWriter(queue.Queue())
-        assert w.write("abc\n") == 4
+
+class TestLogMessage:
+    def test_each_line_is_queued_separately(self):
+        bridge = OrchestratorBridge()
+        bridge._log_message("hello\nworld")
+        assert bridge.get_log_lines() == ["hello", "world"]
+
+    def test_blank_lines_are_kept_as_print_gave_them(self):
+        # _step_print("\nSTEP 1: ...") printed a blank line before the step.
+        bridge = OrchestratorBridge()
+        bridge._log_message("\nSTEP 1\n")
+        assert bridge.get_log_lines() == ["", "STEP 1", ""]
 
 
 class TestOrchestratorBridge:
@@ -68,15 +72,13 @@ class TestOrchestratorBridge:
         released.set()
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
-    def test_captures_print_output(self, MockOrchestrator):
-        def fake_execute(*args, **kwargs):
-            print("step 1 done")
-            print("step 2 done")
+    def test_captures_step_messages(self, MockOrchestrator):
+        def fake_execute(on_message, *args, **kwargs):
+            on_message("step 1 done")
+            on_message("step 2 done")
             return {"status": "completed"}
 
-        mock_instance = MagicMock()
-        mock_instance.execute_workflow.side_effect = fake_execute
-        MockOrchestrator.return_value = mock_instance
+        _orchestrator_whose_run(MockOrchestrator, fake_execute)
 
         bridge = OrchestratorBridge()
         bridge.start_workflow({}, "job_test", "/tmp")
@@ -362,28 +364,28 @@ class TestOrchestratorBridge:
         released.set()
 
 
-class TestStdoutRouting:
-    """Phase 16 finding 1: each bridge captures only its own thread's
-    output. redirect_stdout() swapped the process-wide sys.stdout, so two
-    concurrent runs captured each other's lines."""
+class TestConcurrentRuns:
+    """Phase 16 finding 1: each bridge captures only its own run's output.
+    redirect_stdout() swapped the process-wide sys.stdout, so two
+    concurrent runs captured each other's lines. Since Review Stage R1 the
+    orchestrator writes to the bridge's own sink and sys.stdout is never
+    touched."""
 
     @staticmethod
     def _interleaved_runs(MockOrchestrator):
-        """Two runs printing in strict alternation: a1, b1, a2, b2."""
+        """Two runs emitting in strict alternation: a1, b1, a2, b2."""
         turns = {"job_a": threading.Event(), "job_b": threading.Event()}
         other = {"job_a": "job_b", "job_b": "job_a"}
 
-        def fake_execute(workflow, job_id, **kwargs):
+        def fake_execute(on_message, workflow, job_id, **kwargs):
             for i in (1, 2):
                 assert turns[job_id].wait(timeout=5)
                 turns[job_id].clear()
-                print(f"{job_id} line {i}")
+                on_message(f"{job_id} line {i}")
                 turns[other[job_id]].set()
             return {"status": "completed"}
 
-        mock_instance = MagicMock()
-        mock_instance.execute_workflow.side_effect = fake_execute
-        MockOrchestrator.return_value = mock_instance
+        _orchestrator_whose_run(MockOrchestrator, fake_execute)
 
         a, b = OrchestratorBridge(), OrchestratorBridge()
         a.start_workflow({}, "job_a", "/tmp")
@@ -401,38 +403,29 @@ class TestStdoutRouting:
         assert b.get_log_lines() == ["job_b line 1", "job_b line 2"]
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
-    def test_print_outside_a_run_reaches_the_real_stdout(self, MockOrchestrator, capsys):
-        mid_run = threading.Event()
-        release = threading.Event()
-
-        def fake_execute(*args, **kwargs):
-            mid_run.set()
-            release.wait(timeout=5)
-            return {"status": "completed"}
-
-        mock_instance = MagicMock()
-        mock_instance.execute_workflow.side_effect = fake_execute
-        MockOrchestrator.return_value = mock_instance
-
-        bridge = OrchestratorBridge()
-        bridge.start_workflow({}, "job_a", "/tmp")
-        assert mid_run.wait(timeout=5)
-        print("from the GUI's own thread")
-        release.set()
-        bridge._thread.join(timeout=5)
-
-        assert "from the GUI's own thread" in capsys.readouterr().out
-        assert bridge.get_log_lines() == []
-
-    @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
-    def test_runs_ending_out_of_order_leave_no_capture_behind(self, MockOrchestrator, capsys):
-        # With redirect_stdout, the run started second saved the first
-        # run's writer as "the" stdout and restored it when it ended last,
-        # so the first run's writer stayed process-wide after both ended.
+    def test_runs_leave_sys_stdout_alone(self, MockOrchestrator, capsys):
+        stdout_before = sys.stdout
         self._interleaved_runs(MockOrchestrator)
 
+        assert sys.stdout is stdout_before
         print("after both runs")
-
         assert "after both runs" in capsys.readouterr().out
-        from ui import orchestrator_bridge
-        assert orchestrator_bridge._stdout_routes == {}
+
+    def test_real_orchestrator_sends_step_messages_to_the_sink(self, tmp_path):
+        from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, WorkflowOrchestrator
+
+        messages = []
+        orchestrator = WorkflowOrchestrator(
+            output_base=str(tmp_path), verbosity=VERBOSITY_LOW, on_message=messages.append
+        )
+        orchestrator._step_print("STEP 1")
+
+        assert messages == ["STEP 1"]
+
+    def test_real_orchestrator_prints_by_default(self, tmp_path, capsys):
+        # The CLI relies on the default.
+        from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, WorkflowOrchestrator
+
+        WorkflowOrchestrator(output_base=str(tmp_path), verbosity=VERBOSITY_LOW)._step_print("STEP 1")
+
+        assert capsys.readouterr().out == "STEP 1\n"

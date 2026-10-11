@@ -6,6 +6,8 @@ over the same code is covered by tests/test_ui_session_state.py and
 tests/test_ui_apptest.py (ui tier).
 """
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,24 @@ def test_no_ui_core_module_imports_a_gui_framework():
             for name in names:
                 assert name.split(".")[0] not in ("streamlit", "nicegui"), f"{path.name} imports {name}"
                 assert name not in ("ui.session_state", "ui.app"), f"{path.name} imports {name}"
+
+
+def test_importing_ui_core_loads_no_gui_framework_indirectly():
+    """The check above sees only ui/core's own imports. This one also
+    catches a framework pulled in through a module ui/core imports (e.g.
+    ui.job_history, ui.worker_cap), and works in the ui image, where
+    streamlit is installed (Review Stage R1, Phase 16)."""
+    modules = ", ".join(f"ui.core.{p.stem}" for p in sorted(CORE_DIR.glob("*.py")) if p.stem != "__init__")
+    code = (
+        f"import sys, {modules}\n"
+        "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('streamlit', 'nicegui')"
+        " or m in ('ui.app', 'ui.session_state'))\n"
+        "print(','.join(bad))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=CORE_DIR.parents[1], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +237,14 @@ def test_sync_form_into_params_keeps_upload_paths(state):
 def test_clear_box_picker_state_keeps_the_box(state):
     state.box_picker_receptor_pdb = "/x/y.pdb"
     state.box_picker_last_click = {"center": [1, 2, 3], "clickId": 1}
-    state.pending_geometry_target = "center"
+    state.pending_geometry_targets = ("center",)
     state.box_picker_error = "boom"
     state.form["param_center_x"] = "1.0"
 
     form.clear_box_picker_state(state)
 
     assert (state.box_picker_receptor_pdb, state.box_picker_last_click,
-            state.pending_geometry_target, state.box_picker_error) == (None, None, None, None)
+            state.pending_geometry_targets, state.box_picker_error) == (None, None, None, None)
     assert state.form["param_center_x"] == "1.0"
 
 

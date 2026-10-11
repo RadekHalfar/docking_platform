@@ -124,7 +124,7 @@ def test_prep_validation_error_is_reported(state, tmp_path):
 def test_prep_starts_the_prep_services_and_clears_the_old_picker_state(state, tmp_path):
     state.form.update(input_mode="rcsb", param_protein_id="6lu7")
     state.box_picker_receptor_pdb = "/old/receptor.pdb"
-    state.pending_geometry_target = "center"
+    state.pending_geometry_targets = ("center",)
 
     started, message, _ = box_picker.start_box_picker_prep(state, tmp_path, FakeBridge)
 
@@ -133,7 +133,7 @@ def test_prep_starts_the_prep_services_and_clears_the_old_picker_state(state, tm
     args, kwargs = bridge.started_with
     assert args[1] == state.box_picker_job_id and args[2] == str(tmp_path)
     assert kwargs == {"services": ["get_input_files", "prepare_protein"]}
-    assert state.box_picker_receptor_pdb is None and state.pending_geometry_target is None
+    assert state.box_picker_receptor_pdb is None and state.pending_geometry_targets is None
     assert state.params["protein_id"] == "6lu7"
 
 
@@ -196,14 +196,14 @@ def test_apply_geometry_reports_an_unreadable_pdb(state, tmp_path):
 def test_running_prep_is_left_alone(state, tmp_path):
     bridge = FakeBridge(running=True)
     state.box_picker_bridge = bridge
-    state.pending_geometry_target = "center"
+    state.pending_geometry_targets = ("center",)
     box_picker.process_box_picker_bridge(state, tmp_path)
-    assert state.box_picker_bridge is bridge and state.pending_geometry_target == "center"
+    assert state.box_picker_bridge is bridge and state.pending_geometry_targets == ("center",)
 
 
 def test_completed_prep_records_the_receptor_and_applies_a_pending_command(state, tmp_path, receptor):
     state.box_picker_bridge = FakeBridge(result=_prepared(receptor))
-    state.pending_geometry_target = "center"
+    state.pending_geometry_targets = ("center",)
     greeting_count = len(state.messages)
 
     box_picker.process_box_picker_bridge(state, tmp_path)
@@ -212,8 +212,22 @@ def test_completed_prep_records_the_receptor_and_applies_a_pending_command(state
     assert "center" in state.params
     assert "Protein center set to" in state.messages[-1]["content"]
     assert len(state.messages) == greeting_count + 1
-    assert state.box_picker_bridge is None and state.pending_geometry_target is None
+    assert state.box_picker_bridge is None and state.pending_geometry_targets is None
     assert state.box_picker_error is None
+
+
+def test_completed_prep_applies_every_queued_command_in_order(state, tmp_path, receptor):
+    # Review Stage R1 (Phase 16): with one slot, "center" then "whole
+    # protein" sent during a prep set only the box size.
+    state.box_picker_bridge = FakeBridge(result=_prepared(receptor))
+    state.pending_geometry_targets = ("center", "box_size")
+
+    box_picker.process_box_picker_bridge(state, tmp_path)
+
+    assert "center" in state.params and "box_size" in state.params
+    replies = [m["content"] for m in state.messages[-2:]]
+    assert replies[0].startswith("Protein center set to")
+    assert replies[1].startswith("Box size set to")
 
 
 def test_completed_prep_without_a_pending_command_posts_nothing(state, tmp_path, receptor):
@@ -233,13 +247,13 @@ def test_completed_prep_without_a_pending_command_posts_nothing(state, tmp_path,
 ])
 def test_failed_prep_sets_the_panel_error_and_answers_a_pending_command(state, tmp_path, bridge, panel, chat):
     state.box_picker_bridge = bridge
-    state.pending_geometry_target = "box_size"
+    state.pending_geometry_targets = ("box_size",)
 
     box_picker.process_box_picker_bridge(state, tmp_path)
 
     assert state.box_picker_error == panel
     assert chat in state.messages[-1]["content"]
-    assert state.box_picker_bridge is None and state.pending_geometry_target is None
+    assert state.box_picker_bridge is None and state.pending_geometry_targets is None
 
 
 def test_failed_prep_without_a_pending_command_only_sets_the_panel_error(state, tmp_path):

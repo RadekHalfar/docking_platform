@@ -20,13 +20,17 @@ from services.llm_orchestrator.rerun_planner import compute_rerun_steps, missing
 from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS, with_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.core.form import clear_box_picker_state, sync_form_into_params
-from ui.core.state import Outcome
+from ui.core.state import Outcome, reply
 
 BridgeFactory = Callable[[], Any]
 
-
-def _reply(state, content: str) -> None:
-    state.messages.append({"role": "assistant", "content": content})
+# DEFERRED (Review Stage R1, docs/reviews/stage_16_r1.md, deferred #5):
+# output_base and bridge_factory are passed separately into every action
+# here and in box_picker/chat/save_results/sessions. Fine with one GUI
+# calling a few of them. Trigger: if wiring NiceGUI (Stages 16.3-16.7) means
+# threading the same two or three values through many call sites, bundle
+# them in one per-app `GuiDeps(output_base, bridge_factory, ...)` built at
+# startup and pass that instead, in one change across ui/core.
 
 
 def active_bridge_job_id(state) -> Optional[str]:
@@ -82,7 +86,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
 
     missing = validated.get("missing_required", [])
     if missing:
-        _reply(state, f"Cannot start — required parameters missing: **{', '.join(missing)}**.")
+        reply(state, f"Cannot start — required parameters missing: **{', '.join(missing)}**.")
         return Outcome()
 
     job_id = generate_job_id()
@@ -103,7 +107,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
     )
     state.bridge = bridge
 
-    _reply(state, f"Starting docking session `{job_id}`...")
+    reply(state, f"Starting docking session `{job_id}`...")
     return Outcome(refresh=True)
 
 
@@ -137,7 +141,7 @@ def plan_redock(state, params: dict) -> Outcome:
     executed = set(last.get("services_executed", []))
     unfinished = set() if last.get("status") == "completed" else set(WORKFLOW_STEPS) - executed
     if not rerun_keys and not unfinished:
-        _reply(state, "No parameter changes detected — nothing to redock.")
+        reply(state, "No parameter changes detected — nothing to redock.")
         return Outcome()
 
     if changed:
@@ -147,7 +151,7 @@ def plan_redock(state, params: dict) -> Outcome:
     planned = set(compute_rerun_steps(rerun_keys, original_services=executed | unfinished)) | unfinished
     steps = [s for s in WORKFLOW_STEPS if s in planned]
     if not steps:
-        _reply(state, "Parameters updated, but no steps need to be re-executed.")
+        reply(state, "Parameters updated, but no steps need to be re-executed.")
         # Not for the reply: the checkpoint above is a new revision, which
         # the revision history panel must show.
         return Outcome(refresh=True)
@@ -201,7 +205,7 @@ def confirm_redock(state, output_base: Path, bridge_factory: BridgeFactory) -> O
     )
     state.bridge = bridge
 
-    _reply(state, f"Redocking `{session.job_id}` — steps: {', '.join(pending['steps'])}...")
+    reply(state, f"Redocking `{session.job_id}` — steps: {', '.join(pending['steps'])}...")
     return Outcome(refresh=True)
 
 
@@ -235,10 +239,10 @@ def save_session(state) -> Outcome:
     checkpointed = session.state_manager.load_latest_parameters() or {}
     if not compute_changed_params(checkpointed, params):
         session.state_manager.clear_draft_parameters()
-        _reply(state, "No parameter changes to save.")
+        reply(state, "No parameter changes to save.")
     else:
         session.state_manager.save_draft_parameters(params)
-        _reply(state, "Parameters saved. Click **Run Docking** to apply them.")
+        reply(state, "Parameters saved. Click **Run Docking** to apply them.")
     return Outcome()
 
 
@@ -250,11 +254,22 @@ def process_docking_bridge(state) -> None:
     if not bridge:
         return
 
-    # Stream progress lines from a running job into the last assistant message.
-    if bridge.is_running():
-        new_lines = bridge.get_log_lines()
-        if new_lines and state.messages:
-            state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
+    # Stream progress lines into the last assistant message -- also once
+    # more after the job ends, or its last lines ("WORKFLOW COMPLETED
+    # SUCCESSFULLY") are lost. is_running() is read *before* draining: once
+    # the thread is seen finished, everything it printed is already queued.
+    # DEFERRED to Stage 16.4 (Review Stage R1, docs/reviews/stage_16_r1.md,
+    # deferred #1; part (a), the lost last lines, fixed in the review):
+    # (b) "the last message" is whatever was posted last, so a chat sent
+    # mid-run gets the log appended to it; (c) the += rebuilds an
+    # ever-growing string each tick. Fix when live progress moves to a
+    # ui.timer: give the run its own log (a field set by
+    # run_docking/confirm_redock) and render it next to the chat.
+    running = bridge.is_running()
+    new_lines = bridge.get_log_lines()
+    if new_lines and state.messages:
+        state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
+    if running:
         return
 
     if state.job_done:
@@ -279,14 +294,14 @@ def process_docking_bridge(state) -> None:
         # redock must still include them.
         if session.job_id == state.job_id:
             session.pending_changed_params = set()
-        reply = "Workflow completed successfully!"
+        outcome_message = "Workflow completed successfully!"
     elif error:
-        reply = f"Workflow failed: {error}"
+        outcome_message = f"Workflow failed: {error}"
     elif status == "cancelled":
-        reply = "Session stopped."
+        outcome_message = "Session stopped."
     elif status == "failed":
-        reply = "Workflow failed: " + ("; ".join(result.get("errors", [])) or "unknown error")
+        outcome_message = "Workflow failed: " + ("; ".join(result.get("errors", [])) or "unknown error")
     else:
         return
     state.job_done = True
-    _reply(state, reply)
+    reply(state, outcome_message)

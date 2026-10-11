@@ -13,7 +13,7 @@ unchanged against either.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM
 from services.llm_orchestrator.interactive_session import InteractiveSession
@@ -54,6 +54,12 @@ def form_defaults(worker_cap: WorkerCap) -> Dict[str, Any]:
         "param_max_workers": default_worker_count(worker_cap),
         "param_docking_algorithm": DEFAULT_DOCKING_ALGORITHM,
     }
+
+
+def reply(state, content: str) -> None:
+    """Post an assistant chat message. The one place ``ui/core`` writes a
+    reply, so a GUI that pushes chat updates has a single spot to hook."""
+    state.messages.append({"role": "assistant", "content": content})
 
 
 @dataclass(frozen=True)
@@ -99,8 +105,9 @@ class GuiSession:
     box_picker_last_click: Optional[dict] = None
     box_picker_error: Optional[str] = None
     box_picker_job_id: Optional[str] = None
-    # A geometry chat command waiting for a receptor fetch it started.
-    pending_geometry_target: Optional[str] = None
+    # Geometry chat commands ("center", "box_size") waiting for a receptor
+    # prep job, in the order given; None when nothing is waiting.
+    pending_geometry_targets: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         for key, default in {**self.form_defaults, "input_mode": DEFAULT_INPUT_MODE}.items():

@@ -196,6 +196,8 @@ python nlp_orchestrator.py --verbose mcp_demo --interactive
 
 ### Implementation
 - **Low**: Filters out all service-level logging, only prints step summaries to stdout
+  (or to the `on_message` sink a caller passes `WorkflowOrchestrator`; the GUI's
+  `OrchestratorBridge` passes its run's log queue)
 - **Normal**: Standard Python logging with INFO level
 - **MCP Demo**: Enables DEBUG level logging + prints formatted JSON-RPC messages
 

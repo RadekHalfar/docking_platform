@@ -47,6 +47,12 @@ def drawable_box_size(state) -> Optional[list[float]]:
     return box_size if box_size is not None and min(box_size) > 0 else None
 
 
+def viewer_box_size(state) -> list[float]:
+    """The box size the picker's viewer draws: :func:`drawable_box_size`,
+    or the ``PICKER_DEFAULT_BOX_SIZE`` placeholder."""
+    return drawable_box_size(state) or [PICKER_DEFAULT_BOX_SIZE] * 3
+
+
 def apply_viewer_click(state, center: list) -> None:
     """Write a center clicked in the box picker's viewer into the Docking
     Box fields -- the picker keeps no box of its own, so "Run Docking" and
@@ -90,7 +96,9 @@ def start_box_picker_prep(state, output_base: Path, bridge_factory: Callable) ->
     params = sync_form_into_params(state)
 
     try:
-        validated = state.parser.validate_workflow({"services": PREP_SERVICES, "parameters": params})
+        # A copy: validate_workflow() keeps the list in this client's parser,
+        # and the module-level one is shared by every client (Review Stage R2).
+        validated = state.parser.validate_workflow({"services": list(PREP_SERVICES), "parameters": params})
     except Exception as exc:
         return False, f"Validation error: {exc}", "error"
 
@@ -103,7 +111,7 @@ def start_box_picker_prep(state, output_base: Path, bridge_factory: Callable) ->
     clear_box_picker_state(state)
 
     bridge = bridge_factory()
-    bridge.start_workflow(validated, job_id, str(output_base), services=PREP_SERVICES)
+    bridge.start_workflow(validated, job_id, str(output_base), services=list(PREP_SERVICES))
     state.box_picker_bridge = bridge
     return True, None, ""
 
@@ -127,22 +135,20 @@ def find_receptor_pdb(state, output_base: Path) -> Optional[Path]:
     return resolved if resolved.exists() else None
 
 
-def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
-    """Compute center/box_size from *receptor_path*'s bounding box, apply it
-    to the Docking Box fields (which the box picker's viewer draws), and
-    report the result in chat.
+def read_protein_geometry(receptor_path: Path) -> tuple[list[float], list[float]]:
+    """``(center, box_size)`` from *receptor_path*'s bounding box.
 
-    Shared by the immediate path (a receptor is already prepared) and the
-    deferred path (:func:`process_box_picker_bridge`, once a just-started
-    fetch/prepare job finishes).
-    """
-    try:
-        pdb_text = Path(receptor_path).read_bytes().decode("utf-8", errors="replace")
-        center, box_size = compute_protein_center_and_box(pdb_text)
-    except (OSError, ValueError) as exc:
-        reply(state, f"Could not compute protein geometry: {exc}")
-        return
+    The slow half of :func:`apply_protein_geometry` (reading and parsing a
+    receptor of up to a few MB: 35-80 ms for 0.4-0.9 MB on a Docker Desktop
+    bind mount, Review Stage R2), touching no state, so NiceGUI runs it off
+    the event loop. Raises OSError / ValueError."""
+    pdb_text = Path(receptor_path).read_bytes().decode("utf-8", errors="replace")
+    return compute_protein_center_and_box(pdb_text)
 
+
+def set_protein_geometry(state, target: str, center: list[float], box_size: list[float]) -> None:
+    """Apply a :func:`read_protein_geometry` result to the Docking Box
+    fields (which the box picker's viewer draws) and report it in chat."""
     if target == "center":
         apply_parsed_params(state, {"center": center})
         message = f"Protein center set to ({center[0]}, {center[1]}, {center[2]})."
@@ -155,14 +161,44 @@ def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
     reply(state, message)
 
 
-def process_box_picker_bridge(state, output_base: Path) -> None:
+def geometry_failed(state, exc: Exception) -> None:
+    reply(state, f"Could not compute protein geometry: {exc}")
+
+
+def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
+    """Compute center/box_size from *receptor_path*'s bounding box, apply it
+    to the Docking Box fields, and report the result in chat -- all at once
+    (Streamlit; NiceGUI passes its own *apply_geometry*, which reads off the
+    event loop).
+
+    The default *apply_geometry* of the immediate path
+    (:func:`ui.core.chat.protein_geometry_command`, a receptor is already
+    prepared) and the deferred one (:func:`process_box_picker_bridge`, once
+    a just-started fetch/prepare job finishes).
+    """
+    try:
+        center, box_size = read_protein_geometry(receptor_path)
+    except (OSError, ValueError) as exc:
+        geometry_failed(state, exc)
+        return
+    set_protein_geometry(state, target, center, box_size)
+
+
+# How a caller applies protein geometry: (state, receptor_path, target).
+ApplyGeometry = Callable[[object, Path, str], None]
+
+
+def process_box_picker_bridge(
+    state, output_base: Path, *, apply_geometry: ApplyGeometry = apply_protein_geometry
+) -> bool:
     """Handle a finished "Load receptor for box picking" job: record the
     receptor, apply a geometry chat command that was waiting for it, and
     clear the bridge. Called on every page update / poll tick, like
-    ``run_control.process_docking_bridge``."""
+    ``run_control.process_docking_bridge``; returns whether it handled a
+    finished job (the state changed)."""
     bridge = state.box_picker_bridge
     if not bridge or bridge.is_running():
-        return
+        return False
 
     error = bridge.get_error()
     result = bridge.get_result()
@@ -182,7 +218,7 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
         if pdb_path:
             state.box_picker_receptor_pdb = pdb_path
             for target in pending_targets:
-                apply_protein_geometry(state, from_container_path(pdb_path, output_base), target)
+                apply_geometry(state, from_container_path(pdb_path, output_base), target)
         else:
             panel_error = "Receptor was prepared but no PDB path was returned."
             failure = "Receptor was prepared but no PDB path was returned -- could not set this."
@@ -204,3 +240,4 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
     if pending_targets and failure:
         reply(state, failure)
     state.box_picker_bridge = None
+    return True

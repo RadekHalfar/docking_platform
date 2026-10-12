@@ -293,4 +293,29 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
       184 ms rebuild, because the axis labels are made once and then moved.
     - **The viewer element also has a results mode** (affinity-coloured
       poses, swappable without moving the camera), for Stage 16.6.
+  - **Review Stage R2 (2026-10-12)**, covering 16.3–16.5
+    (`docs/reviews/stage_16_r2.md`):
+    - **One tab no longer freezes the others** (NiceGUI). The slow work now
+      runs off the event loop all clients share:
+      - `save results as` (it took 34–37 s for a real session on a Docker
+        Desktop bind mount);
+      - the geometry command's receptor read (35–80 ms);
+      - the progress read (~10 ms per tab per second).
+
+      While a save runs, that tab's chat input, Run, New Session and Reset
+      are off.
+    - **Both GUIs:**
+      - Each upload is kept in a folder of its own, so a same-named upload
+        from another tab no longer replaces the molecule an earlier session
+        docks.
+      - Either GUI can overwrite a results bundle the other saved.
+    - **NiceGUI fixes:**
+      - A run that ended within a second is now drawn.
+      - Ligand drops add up, as in Streamlit.
+      - An unreadable receptor is reported once instead of being retried
+        forever.
+      - A page sync no longer starts nested syncs.
+      - Reset clears the box picker's message.
+      - An LLM answer is dropped after a Load of a session with no saved
+        parameters.
   - **Next:** Stage 16.6, the Results tab.

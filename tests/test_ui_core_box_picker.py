@@ -140,6 +140,18 @@ def test_prep_starts_the_prep_services_and_clears_the_old_picker_state(state, tm
     assert state.params["protein_id"] == "6lu7"
 
 
+def test_prep_gives_each_client_its_own_services_list(state, tmp_path):
+    # validate_workflow() keeps the list in the client's parser; the
+    # module-level PREP_SERVICES is shared by every client (Review Stage R2).
+    state.form.update(input_mode="rcsb", param_protein_id="6lu7")
+
+    box_picker.start_box_picker_prep(state, tmp_path, FakeBridge)
+
+    assert state.parser.parsed_workflow["services"] == box_picker.PREP_SERVICES
+    assert state.parser.parsed_workflow["services"] is not box_picker.PREP_SERVICES
+    assert state.box_picker_bridge.started_with[1]["services"] is not box_picker.PREP_SERVICES
+
+
 # ---------------------------------------------------------------------------
 # find_receptor_pdb, apply_protein_geometry
 # ---------------------------------------------------------------------------
@@ -265,3 +277,32 @@ def test_failed_prep_without_a_pending_command_only_sets_the_panel_error(state, 
     box_picker.process_box_picker_bridge(state, tmp_path)
     assert state.box_picker_error == "Could not prepare receptor: boom"
     assert state.messages == before
+
+
+def test_process_box_picker_bridge_reports_a_handled_prep(state, tmp_path, receptor):
+    assert box_picker.process_box_picker_bridge(state, tmp_path) is False  # none
+    state.box_picker_bridge = FakeBridge(running=True)
+    assert box_picker.process_box_picker_bridge(state, tmp_path) is False
+    state.box_picker_bridge = FakeBridge(result=_prepared(receptor))
+    assert box_picker.process_box_picker_bridge(state, tmp_path) is True
+
+
+def test_a_pending_command_goes_through_the_callers_apply_geometry(state, tmp_path, receptor):
+    # NiceGUI passes its own, which reads the receptor off the event loop.
+    calls = []
+    state.box_picker_bridge = FakeBridge(result=_prepared(receptor))
+    state.pending_geometry_targets = ("center", "box_size")
+
+    box_picker.process_box_picker_bridge(
+        state, tmp_path, apply_geometry=lambda s, path, target: calls.append((path, target))
+    )
+
+    assert calls == [(receptor, "center"), (receptor, "box_size")]
+    assert "center" not in state.params
+
+
+def test_read_and_set_protein_geometry_split_apply_protein_geometry(state, receptor):
+    center, box_size = box_picker.read_protein_geometry(receptor)
+    box_picker.set_protein_geometry(state, "center", center, box_size)
+    assert state.params["center"] == center
+    assert state.messages[-1]["content"].startswith("Protein center set to")

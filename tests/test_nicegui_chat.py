@@ -28,6 +28,7 @@ from tests.nicegui_harness import (  # noqa: E402
     completed_session_with_artifacts,
     element,
     eventually,
+    on_event_loop,
     open_advanced,
     send_chat,
     set_value,
@@ -334,3 +335,42 @@ async def test_underscores_in_chat_replies_are_not_italics(user: User, page):
     reply = next(h for h in html if "Local protein file set" in h)
     assert "<strong>check164_crystal_ligand.mol2</strong>" in reply
     assert "prepare_ligands" in reply and "<em>" not in reply
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R2
+# ---------------------------------------------------------------------------
+
+async def test_save_copies_off_the_event_loop_and_holds_the_session_meanwhile(user: User, page, output_base, monkeypatch):
+    # A real session's bundle took 34-37 s on a Docker Desktop bind mount,
+    # every client's page frozen meanwhile (Review Stage R2).
+    import ui.core.save_results as core_save
+
+    where, gate = [], threading.Event()
+    real = core_save.save_results_bundle
+
+    def save(*args, **kwargs):
+        where.append(on_event_loop())
+        if not where[-1]:
+            gate.wait(5)  # the copy is "still running"
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(core_save, "save_results_bundle", save)
+    page.seed(lambda state: completed_session_with_artifacts(state, output_base))
+    await user.open("/")
+
+    set_value(user, "chat-input", "save results as trial_a")
+    click(user, "chat-send")
+
+    await eventually(lambda: where)
+    try:
+        assert where == [False]
+        await user.should_see("Saving results...")
+        assert not element(user, "chat-input").enabled
+        assert not element(user, "run-docking").enabled
+        assert not element(user, "new-session").enabled
+    finally:
+        gate.set()
+    await eventually(lambda: page.state.messages[-1]["content"].startswith("Saved bundle `trial_a`"))
+    await eventually(lambda: element(user, "chat-input").enabled)
+    assert element(user, "run-docking").enabled

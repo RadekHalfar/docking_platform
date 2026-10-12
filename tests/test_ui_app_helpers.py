@@ -431,8 +431,9 @@ def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_0
     # same directory.
     upload_dir = tmp_path / "uploads"
 
-    saved = app._save_upload(_Upload("../../receptor.pdb", b"ATOM"), upload_dir)
+    saved = Path(app._save_upload(_Upload("../../receptor.pdb", b"ATOM"), upload_dir))
 
-    assert saved == str(upload_dir / "receptor.pdb")
-    assert (upload_dir / "receptor.pdb").read_bytes() == b"ATOM"
+    # Each upload in a directory of its own (Review Stage R2).
+    assert saved.name == "receptor.pdb" and saved.parent.parent == upload_dir
+    assert saved.read_bytes() == b"ATOM"
     assert upload_dir.stat().st_mode & 0o777 == 0o777

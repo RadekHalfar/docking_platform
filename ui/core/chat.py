@@ -12,6 +12,12 @@ loop: :func:`parse_message` makes the LLM call and touches no state;
 the session changed meanwhile (:func:`parse_context`). The parse functions
 are passed in, like the bridge class in ``run_control``, so each GUI's
 tests can swap them.
+
+Two commands do slow file work: a geometry command reads the receptor, and
+``save ... as`` copies the results into a bundle (tens of seconds for a
+real session on a Docker Desktop bind mount, Review Stage R2). A GUI with
+an event loop passes *apply_geometry* / *run_save* to :func:`submit` to
+run those off it; without them they run inline (Streamlit).
 """
 from __future__ import annotations
 
@@ -32,6 +38,8 @@ from ui.core.state import reply
 
 # Starts the box picker's receptor prep: () -> (started, message, severity).
 StartPrep = Callable[[], tuple]
+# Runs a ``save ... as`` command: (intent) -> None; it posts its own reply.
+RunSave = Callable[[dict], None]
 
 STALE_PARSE_REPLY = (
     "The session changed while I was reading that message, so I didn't "
@@ -39,10 +47,21 @@ STALE_PARSE_REPLY = (
 )
 
 
-def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> bool:
+def submit(
+    state,
+    message: str,
+    output_base: Path,
+    bridge_factory: Callable,
+    *,
+    apply_geometry: box_picker.ApplyGeometry = box_picker.apply_protein_geometry,
+    run_save: Optional[RunSave] = None,
+) -> bool:
     """Post the user's *message* and answer it if it is a deterministic
     command. Returns False if it is not one -- the caller then passes it
-    to :func:`answer_with_llm`."""
+    to :func:`answer_with_llm`.
+
+    *apply_geometry* and *run_save* replace the inline geometry read and
+    bundle copy (see the module docstring)."""
     state.messages.append({"role": "user", "content": message})
 
     geometry_target = detect_protein_geometry_command(message)
@@ -50,6 +69,7 @@ def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> 
         protein_geometry_command(
             state, geometry_target, output_base,
             lambda: box_picker.start_box_picker_prep(state, output_base, bridge_factory),
+            apply_geometry=apply_geometry,
         )
         return True
 
@@ -66,12 +86,22 @@ def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> 
         reply(state, sessions.history_chat_reply(state, intent))
         return True
     if intent is not None and intent["intent"] == "save_results":
-        reply(state, save_results.save_chat_reply(state, output_base, intent))
+        if run_save is not None:
+            run_save(intent)
+        else:
+            reply(state, save_results.save_chat_reply(state, output_base, intent))
         return True
     return False
 
 
-def protein_geometry_command(state, target: str, output_base: Path, start_prep: StartPrep) -> None:
+def protein_geometry_command(
+    state,
+    target: str,
+    output_base: Path,
+    start_prep: StartPrep,
+    *,
+    apply_geometry: box_picker.ApplyGeometry = box_picker.apply_protein_geometry,
+) -> None:
     """Compute center/box_size from the loaded protein's bounding box and
     apply it, in response to a "set box center as protein center" / "look
     across all protein" chat command -- see
@@ -102,7 +132,7 @@ def protein_geometry_command(state, target: str, output_base: Path, start_prep: 
 
     receptor_path = box_picker.find_receptor_pdb(state, output_base)
     if receptor_path is not None:
-        box_picker.apply_protein_geometry(state, receptor_path, target)
+        apply_geometry(state, receptor_path, target)
         return
 
     started, message, _severity = start_prep()
@@ -170,17 +200,25 @@ def parse_message(
     return parsed, set(parsed.get("parameters") or {})
 
 
-def parse_context(state) -> tuple[Any, Any]:
+def parse_context(state) -> tuple[Any, Any, Any]:
     """What a :func:`parse_message` result was built on: the parser's
-    workflow (the follow-up's prior) and the active interactive session.
+    workflow (the follow-up's prior), the active interactive session, and
+    the job it is on.
 
     A Load, ``undo``, Run Docking or New Session while the LLM call is in
-    flight replaces one of the two (by identity), and the result must not
-    be applied then: it was merged onto the *old* prior, and validating it
-    would overwrite the new session's parser state and form (Review Stage
-    R1, deferred #2).
+    flight replaces one of these, and the result must not be applied then:
+    it was merged onto the *old* prior, and validating it would overwrite
+    the new session's parser state and form (Review Stage R1, deferred #2).
+    The job id is compared by value: a Load re-activates the same session
+    object, and keeps the parser's workflow when the loaded job has no
+    saved parameters (Review Stage R2).
     """
-    return state.parser.parsed_workflow, state.interactive_session
+    return state.parser.parsed_workflow, state.interactive_session, state.job_id
+
+
+def _context_changed(before: tuple, now: tuple) -> bool:
+    (workflow, session, job_id), (workflow_now, session_now, job_id_now) = before, now
+    return workflow is not workflow_now or session is not session_now or job_id != job_id_now
 
 
 def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[tuple] = None) -> None:
@@ -190,7 +228,7 @@ def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[t
     With *context* (:func:`parse_context` taken before the LLM call), a
     result whose session has changed since is not applied; the reply says
     so instead."""
-    if context is not None and any(a is not b for a, b in zip(context, parse_context(state))):
+    if context is not None and _context_changed(context, parse_context(state)):
         reply(state, STALE_PARSE_REPLY)
         return
     validated = state.parser.validate_workflow(parsed)
@@ -261,4 +299,9 @@ def answer_with_llm(
         )
         apply_parsed_message(state, parsed, named)
     except Exception as exc:
-        reply(state, f"Sorry, I couldn't parse that: {exc}")
+        parse_failed(state, exc)
+
+
+def parse_failed(state, exc: Exception) -> None:
+    """The reply to any failure of the LLM parse: the GUI's boundary for it."""
+    reply(state, f"Sorry, I couldn't parse that: {exc}")

@@ -52,7 +52,7 @@ def build_page(state: GuiSession, output_base: Path) -> PageParts:
     controller = PageController(state, output_base)
     # A job that finished before this page was built is handled before the
     # first draw, as Streamlit handles it at the top of the script.
-    controller.tick()
+    controller.process()
     settings_dialog = _settings_dialog()
     chat_drawer, chat = _chat_drawer(controller)
     _header(chat_drawer, settings_dialog)

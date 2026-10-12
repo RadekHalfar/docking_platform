@@ -293,6 +293,22 @@ def test_parse_dropped_when_the_parser_moved_on(state):
     assert _contents(state) == [chat.STALE_PARSE_REPLY]
 
 
+def test_parse_dropped_after_loading_a_session_without_saved_parameters(state, tmp_path):
+    # Load re-activates the same InteractiveSession and, with no draft or
+    # checkpoint on disk, leaves the parser's workflow as it was: only the
+    # job id shows the change (Review Stage R2).
+    from ui.core.sessions import resume_session
+
+    job_id = "job_20261012_000000_abcdef"
+    context = chat.parse_context(state)
+    resume_session(state, {"job_id": job_id, "job_dir": str(tmp_path / job_id)}, tmp_path)
+
+    chat.apply_parsed_message(state, copy.deepcopy(_PARSED), {"protein_id"}, context=context)
+
+    assert state.form["param_protein_id"] == ""
+    assert _contents(state)[-1] == chat.STALE_PARSE_REPLY
+
+
 def test_parse_dropped_after_a_new_session(state):
     # New Session replaces the interactive session but not the parser.
     from ui.core.form import start_new_session

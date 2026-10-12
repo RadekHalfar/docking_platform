@@ -40,7 +40,8 @@ def _read_path(path: Path) -> bytes:
     # read_job_log() with this default re-reads every SDF / the whole job.log
     # per client per tick (16.4's timer reads neither). Fix in 16.6: pass a reader cached
     # on (path, mtime), and redo pose/log reads only when the job's result
-    # or the file's size changes.
+    # or the file's size changes. Do the reads in the view's async poll(),
+    # in run.io_bound, never in sync() (Review Stage R2: sync() does no I/O).
     return path.read_bytes()
 
 

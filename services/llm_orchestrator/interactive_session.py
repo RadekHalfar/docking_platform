@@ -179,6 +179,13 @@ def save_results_bundle(
         ensure_shared_directory(bundle_dir.parent)
         staging_dir.mkdir()
         included = _write_bundle_contents(job_dir, staging_dir, name, scope, revision, parameters)
+        # The bundle's own directories too: replacing a bundle deletes its
+        # files, which needs write access to every directory in it. Without
+        # this, a bundle the other GUI's uid saved (0o755 copytree dirs)
+        # can't be overwritten, and the failed cleanup then blocks every
+        # later overwrite of that name (Review Stage R2).
+        for directory in (staging_dir, *(d for d in staging_dir.rglob("*") if d.is_dir())):
+            ensure_shared_directory(directory)
         # Overwrite replaces the whole bundle: merging would keep e.g. an
         # older "all" save's visualization/ under metadata that now says
         # scope=docking.

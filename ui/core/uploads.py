@@ -10,8 +10,9 @@ passes ``announce=False`` the second time, so the chat reply is posted once.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Sequence
 
 from common.utils import ensure_shared_directory
@@ -19,33 +20,32 @@ from ui.core.state import reply
 
 
 def save_upload(name: str, data: bytes, upload_dir: Path) -> Path:
-    """Save an uploaded file under *upload_dir*, using only its basename.
+    """Save an uploaded file as ``<upload_dir>/<new dir>/<basename>``.
 
     A GUI's upload endpoint is a plain HTTP POST exposing whatever filename
     the client sends; without stripping directory components a crafted name
     (e.g. "../../etc/x") could write outside *upload_dir*.
+
+    Each upload gets a directory of its own, so a file is never replaced
+    once a session's parameters point to it: with one flat directory, a
+    same-named upload from another tab or the other GUI silently swapped
+    the molecule an earlier session docks -- and redocks (Review Stage R2).
     """
     safe_name = Path(name).name
     if not safe_name or safe_name in (".", ".."):
         raise ValueError(f"Unusable uploaded filename: {name!r}")
 
     # Shared: the root Streamlit UI and the non-root NiceGUI UI (Phase 16)
-    # both upload into this one directory.
+    # both upload into this one directory, and the services read the files.
     upload_dir = ensure_shared_directory(Path(upload_dir))
-    dest = upload_dir / safe_name
-    # Written beside it and swapped in: replacing a file needs write access
-    # to the directory only, so a same-named upload the other GUI's user
-    # owns (e.g. 0o644 from the root Streamlit UI) doesn't block this one,
-    # as writing over it in place would.
-    fd, tmp_name = tempfile.mkstemp(dir=upload_dir, prefix=f".{safe_name}.", suffix=".part")
+    dest_dir = ensure_shared_directory(tempfile.mkdtemp(dir=upload_dir, prefix="upload_"))
+    dest = dest_dir / safe_name
     try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        # mkstemp makes it 0o600; the other GUI and the services read it.
-        os.chmod(tmp_name, 0o666)
-        os.replace(tmp_name, dest)
+        dest.write_bytes(data)
+        os.chmod(dest, 0o666)
     except BaseException:
-        Path(tmp_name).unlink(missing_ok=True)
+        # No half-written upload left behind; the write's error is raised.
+        shutil.rmtree(dest_dir, ignore_errors=True)
         raise
     return dest
 
@@ -63,11 +63,26 @@ def clear_protein_upload(state) -> None:
 
 
 def apply_ligand_uploads(
-    state, names: Sequence[str], paths: Sequence[Path], *, folder_mode: bool = False, announce: bool = True
+    state,
+    names: Sequence[str],
+    paths: Sequence[Path],
+    *,
+    folder_mode: bool = False,
+    announce: bool = True,
+    append: bool = False,
 ) -> None:
     """Dock the uploaded ligand files (replacing any ligand IDs, and in
-    Batch Processing mode a ligand folder)."""
-    state.params["ligand_files"] = [str(p) for p in paths]
+    Batch Processing mode a ligand folder).
+
+    Streamlit's uploader hands over all its files each time. NiceGUI's
+    hands over one drop at a time, so it passes *append*: the drop is added
+    to the files already set (the Clear button empties them), and the reply
+    names them all."""
+    files = [str(p) for p in paths]
+    if append:
+        files = [*(state.params.get("ligand_files") or []), *files]
+        names = [PurePath(f).name for f in files]
+    state.params["ligand_files"] = files
     state.params.pop("ligand_ids", None)
     if folder_mode:
         state.params.pop("ligand_folder", None)

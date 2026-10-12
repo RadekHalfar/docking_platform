@@ -10,7 +10,9 @@ fields, so typing in them, a chat command or a geometry command moves the
 box as well.
 
 The receptor file is read off the event loop (``run.io_bound``), once per
-receptor.
+receptor; :meth:`BoxPickerView.sync` itself touches no file. A receptor
+that can't be read (gone from disk, or unreadable) is shown as such, with a
+Reload button, and not read again until a new one is loaded.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ from ui_nice.mol_viewer import MolViewer
 
 PREPARING = "Preparing receptor for box picking..."
 RECEPTOR_GONE = "Prepared receptor no longer on disk — reload it."
+RECEPTOR_UNREADABLE = "Could not read the prepared receptor ({error}) — reload it."
 NO_CENTER = "Click a receptor atom in the viewer to set the box center."
 PLACEHOLDER = (
     f"Box size is not set — the viewer shows a {box_picker.PICKER_DEFAULT_BOX_SIZE:g} Å "
@@ -47,8 +50,8 @@ class BoxPickerView:
         # being read for it.
         self._shown: Optional[str] = None
         self._loading: Optional[str] = None
-        # Why the last Load didn't start: (message, severity), until the next Load.
-        self.load_message: Optional[tuple[str, str]] = None
+        # A receptor whose read failed, and why: (receptor, message).
+        self._failed: Optional[tuple[str, str]] = None
 
         with ui.column().classes("w-full h-full p-2 gap-2"):
             ui.label("Pick Docking Box Visually").classes("text-lg font-medium")
@@ -61,7 +64,7 @@ class BoxPickerView:
                 "load-receptor"
             )
             with ui.column().classes("w-full gap-1") as self.gone:
-                ui.label(RECEPTOR_GONE).classes("text-warning")
+                self.gone_label = ui.label(RECEPTOR_GONE).classes("text-warning").mark("receptor-gone")
                 ui.button("Reload receptor", on_click=self._on_load).mark("reload-receptor")
             with ui.column().classes("w-full gap-1") as self.picker:
                 self._build_steppers()
@@ -94,20 +97,22 @@ class BoxPickerView:
         bridge = state.box_picker_bridge
         preparing = bool(bridge and bridge.is_running())
         receptor = None if preparing else state.box_picker_receptor_pdb
-        path = from_container_path(receptor, self.controller.output_base) if receptor else None
-        gone = path is not None and not path.exists()
-        loaded = path is not None and not gone
+        failure = self._failed[1] if self._failed and self._failed[0] == receptor else None
+        gone = failure is not None
+        loaded = receptor is not None and not gone
 
         self.preparing.set_visibility(preparing)
         error = None if preparing else state.box_picker_error
         self.error_label.set_text(error or "")
         self.error_label.set_visibility(bool(error))
-        message, severity = self.load_message or ("", "")
+        message, severity = self.controller.picker_message or ("", "")
         self.message_label.set_text(message)
         self.message_label.classes(replace="text-negative" if severity == "error" else "text-warning")
         self.message_label.set_visibility(bool(message) and not preparing)
         self.load_button.set_visibility(not preparing and receptor is None)
         self.gone.set_visibility(gone)
+        if gone:
+            self.gone_label.set_text(failure)
         self.picker.set_visibility(loaded)
 
         if not loaded:
@@ -115,43 +120,51 @@ class BoxPickerView:
             return
         if receptor != self._shown and receptor != self._loading:
             self._loading = receptor
+            path = from_container_path(receptor, self.controller.output_base)
             background_tasks.create(self._load(receptor, path), name="box picker receptor")
         self._sync_box()
 
+    async def poll(self) -> None:
+        pass  # the receptor is read once, by _load
+
     def _sync_box(self) -> None:
         center, _ = read_box_fields(self.state)
-        box_size = box_picker.drawable_box_size(self.state)
         if center:
             self.caption.set_text(f"Box center: ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})")
         else:
             self.caption.set_text(NO_CENTER)
-        self.placeholder.set_visibility(box_size is None)
+        self.placeholder.set_visibility(box_picker.drawable_box_size(self.state) is None)
         if self.viewer is not None:
             # The placeholder is passed explicitly, so it is the same
             # constant a click or − / + writes into the fields.
-            self.viewer.set_box(center, box_size or [box_picker.PICKER_DEFAULT_BOX_SIZE] * 3)
+            self.viewer.set_box(center, box_picker.viewer_box_size(self.state))
 
     async def _load(self, receptor: str, path: Path) -> None:
         try:
             pdb_text = await run.io_bound(_read_text, path)
-        except OSError:
-            pdb_text = None
+        except FileNotFoundError:
+            pdb_text, self._failed = None, (receptor, RECEPTOR_GONE)
+        except OSError as exc:
+            # e.g. another uid's 0o600 file. Recorded, so sync() doesn't
+            # start the same failing read again (Review Stage R2).
+            pdb_text, self._failed = None, (receptor, RECEPTOR_UNREADABLE.format(error=exc))
         if self._loading != receptor:
             return  # another receptor was loaded meanwhile
         self._loading = None
         if pdb_text is None or self.state.box_picker_receptor_pdb != receptor:
-            self.sync()  # gone from disk, or discarded meanwhile
+            self.controller.sync()  # unreadable, or discarded meanwhile
             return
         self._drop_viewer()
         center, _ = read_box_fields(self.state)
-        box_size = box_picker.drawable_box_size(self.state) or [box_picker.PICKER_DEFAULT_BOX_SIZE] * 3
         with self.viewer_box:
-            self.viewer = MolViewer(pdb_text, mode="box_picker", center=center, box_size=box_size).classes(
+            self.viewer = MolViewer(
+                pdb_text, mode="box_picker", center=center, box_size=box_picker.viewer_box_size(self.state),
+            ).classes(
                 "w-full h-full"
             ).mark("box-picker-viewer")
         self.viewer.on("atom_click", self._on_atom_click)
         self._shown = receptor
-        self.sync()
+        self.controller.sync()
 
     def _drop_viewer(self) -> None:
         if self.viewer is not None:
@@ -162,16 +175,16 @@ class BoxPickerView:
     # ── Handlers (widgets -> state) ─────────────────────────────────────────
 
     def _on_load(self) -> None:
-        self.load_message = None
+        self.controller.start_action()
         started, message, severity = box_picker.start_box_picker_prep(
             self.state, self.controller.output_base, self.controller.bridge_factory
         )
         if not started:
-            self.load_message = (message, severity)
+            self.controller.picker_message = (message, severity)
         self.controller.sync()
 
     def _on_discard(self) -> None:
-        self.load_message = None
+        self.controller.start_action()
         clear_box_picker_state(self.state)
         self.controller.sync()
 

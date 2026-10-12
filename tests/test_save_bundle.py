@@ -320,3 +320,15 @@ def test_saved_results_dir_is_writable_by_every_uid(job_dir, umask_022):
     result = save_results_bundle(job_dir, "trial_a", "all", 5, PARAMS)
     assert result["success"] is True
     assert (job_dir / "saved_results").stat().st_mode & 0o777 == 0o777
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_bundle_directories_are_writable_by_every_uid(job_dir, umask_022):
+    # Review Stage R2: replacing a bundle deletes its files, so a bundle one
+    # GUI's uid saved (0o755 copytree dirs) blocked the other's overwrite --
+    # and the silently failed cleanup then blocked every later one.
+    result = save_results_bundle(job_dir, "trial_a", "all", 5, PARAMS)
+    bundle = Path(result["bundle_path"])
+    dirs = [bundle, *(d for d in bundle.rglob("*") if d.is_dir())]
+    assert len(dirs) >= 3  # the bundle, docking_results/, visualization/
+    assert all(d.stat().st_mode & 0o777 == 0o777 for d in dirs)

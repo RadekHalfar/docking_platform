@@ -40,9 +40,13 @@ def ensure_shared_directory(path: str) -> Path:
     producing mode 755), which blocks a different, non-root uid from
     creating files inside it — this explicitly ``chmod``s to 0o777 after
     creation, bypassing umask, so any container/uid can write into it.
-    Directories used only by the single process that creates them (e.g.
-    ``WorkflowStateManager``'s checkpoints, a saved-results bundle) don't
-    need this — plain :func:`ensure_directory` is correct there.
+
+    That includes directories two GUI processes with different uids write
+    into (Phase 16: the root Streamlit UI and the uid-1000 NiceGUI UI share
+    sessions): the job dir and ``WorkflowStateManager``'s ``checkpoints/``,
+    ``saved_results/`` and each bundle's directories, and ``uploads/``.
+    Only a directory that one process alone ever writes into can use plain
+    :func:`ensure_directory`.
     """
     dir_path = Path(path)
     dir_path.mkdir(parents=True, exist_ok=True)

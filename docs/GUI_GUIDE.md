@@ -17,6 +17,12 @@ right side has the 3D box picker. Results (16.6) and Sessions with Load
 work until then. Where the two
 differ, this guide says so.
 
+Uploaded files (either GUI) are each saved in a folder of their own under
+`orchestrator_output/uploads/`, so uploading another file with the same
+name, from another tab or the other GUI, never changes the file an earlier
+session docked. In the NiceGUI GUI each drop of ligand files adds to the
+list ("N ligand file(s) ready"); **Clear** empties it.
+
 Whenever a session is active, the Chat panel shows a small **Session:
 name (`job_id`)** line above the "Chat" title, so it stays clear which
 session you're currently in — this disappears once you click **New
@@ -276,6 +282,12 @@ Bundle names start with a letter or digit and contain only letters, digits,
 In chat, without an LLM call: `save results as trial_a`, `save docking as
 trial_a` or `save visualization as trial_a`. If the name exists, the chat
 points you to the same Overwrite / Save as buttons.
+
+Copying a session's results can take a while (half a minute for a large
+session on a Docker Desktop bind mount). The NiceGUI GUI copies in the
+background: the chat shows "Saving results...", and the chat input,
+**Run Docking**, **New Session** and **Reset** are off until the reply
+comes, while other tabs keep working.
 
 Not to be confused with **Save Session** (next section), which saves the
 form's *parameters* as a draft, not results.
@@ -633,8 +645,9 @@ rather than rewriting it:
   - `form.py`: form ↔ workflow parameters, the "Current parameters"
     summary, the worker-count bound, Protein/Ligand ID commits, New Session
     and Reset.
-  - `uploads.py`: saving an uploaded file (basename only, into the shared
-    upload dir) and taking uploads into the parameters.
+  - `uploads.py`: saving an uploaded file (basename only, in a new
+    directory of its own under the shared upload dir) and taking uploads
+    into the parameters (NiceGUI appends each drop: `append=True`).
   - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session,
     bridge polling. A run's log lines go to `state.run_log`, a fresh list
     per run, never into the chat messages.
@@ -644,10 +657,18 @@ rather than rewriting it:
     state, so a GUI with an event loop can run it on a worker thread and
     then apply the result with `apply_parsed_message()`. Passing it the
     `parse_context()` taken before the call drops a result whose session
-    changed meanwhile.
+    (or job) changed meanwhile. `submit()` takes `apply_geometry` and
+    `run_save`, so a GUI with an event loop can do the geometry command's
+    receptor read and the save's copy off it; by default both run inline.
   - `box_picker.py`: the box picker (receptor prep job, viewer click, − / +
-    steps) and protein geometry.
-  - `save_results.py`: Save results as…, its guard and the name-clash flow.
+    steps) and protein geometry, split into `read_protein_geometry()` (the
+    file read, no state) and `set_protein_geometry()`.
+    `process_box_picker_bridge()`, like `run_control.process_docking_bridge()`,
+    returns whether it changed the state.
+  - `save_results.py`: Save results as…, its guard and the name-clash flow,
+    in three steps: `plan_save()` (checks), `write_bundle()` (the copy, no
+    GUI state, so it can run on a worker thread) and `finish_save()` (the
+    reply and the name clash). `save_results()` runs all three.
   - `results_view.py`: what the results panel shows, as data: progress,
     poses, download lists, the job log.
 
@@ -676,10 +697,21 @@ rather than rewriting it:
     `output_base` and the bridge class, and runs the 1 s `ui.timer` that
     folds the background jobs into the state. Every handler calls a
     `ui/core` action and then `sync()`, which has each view update only
-    the widgets whose value changed.
+    the widgets whose value changed. All clients share one event loop, so
+    (Review Stage R2):
+    - `sync()` does no file I/O. A view's `poll()` reads what it shows
+      from disk in `run.io_bound` (the run's progress), on timer ticks.
+    - The timer redraws while a job runs and whenever processing a job
+      changed the state, so a run that ends within a second is drawn too.
+    - `apply_geometry()` and `run_save()` run the geometry command's
+      receptor read and the save's copy in `run.io_bound`. While a save
+      runs, `busy` holds the session (chat input, Run, New Session, Reset).
+    - `syncing` is set while views write widgets: NiceGUI fires change
+      handlers on those writes too, and the handlers ignore them.
   - `box_picker_panel.py` (Stage 16.5): the box picker on the Setup tab's
-    right side. It reads the receptor in `run.io_bound` and draws the
-    Docking Box fields on every `sync()`.
+    right side. It reads the receptor in `run.io_bound`, once per
+    receptor; a receptor that can't be read is shown with a Reload button
+    and not read again. It draws the Docking Box fields on every `sync()`.
   - `mol_viewer.py` + `mol_viewer.js` (Stage 16.5): the 3Dmol.js viewer
     as a custom element, with the scene code ported from
     `ui/components/mol_viewer/index.html`. One viewer per element: the

@@ -601,10 +601,12 @@ docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orch
   `cache/`. Since Stage 16.3 the directories either GUI creates there (job
   dirs, `checkpoints/`, `saved_results/`, `uploads/`) are writable by every
   uid (`ensure_shared_directory()`), so is each job's `job.log`, and the
-  JSON files and uploads are replaced rather than rewritten, which needs
-  only the directory's permission. So uploading a file again under the same
-  name works whoever uploaded it first. That covers sessions created from
-  16.3 on. Files the root GUI created **before** 16.3, and deleting a job
+  JSON files are replaced rather than rewritten, which needs only the
+  directory's permission. Since Review Stage R2, each upload goes into a
+  new directory of its own (`uploads/upload_<random>/<name>`), so no upload
+  is ever written over, and a saved bundle's own directories are writable
+  by every uid, so either GUI can overwrite a bundle the other saved. That
+  covers sessions created from 16.3 on (bundles: saved from R2 on). Files the root GUI created **before** 16.3, and deleting a job
   dir the root GUI created, still need root's files handed to uid 1000,
   once:
   ```bash

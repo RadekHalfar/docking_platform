@@ -61,6 +61,15 @@ def any_bridge_running(state) -> bool:
 def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outcome:
     """"Run Docking": start a new job, or -- with a session active -- stage
     a redock plan for confirmation (:func:`plan_redock`)."""
+    # DEFERRED (Review Stage R2, docs/reviews/stage_16_r2.md, Deferred #1):
+    # this, confirm_redock() and save_session() do their file work
+    # (validation's file checks, WorkflowStateManager init, checkpoint,
+    # job.log) inline: 150-600 ms per click on a Docker Desktop bind mount,
+    # which NiceGUI runs on the event loop every client shares. Fix if the
+    # GUI serves more than one user, or a stall is noticed: split each like
+    # ui.core.save_results (plan on the loop -> file work in run.io_bound ->
+    # apply on the loop), with PageController.busy holding the session
+    # meanwhile.
     params = sync_form_into_params(state)
 
     session = state.interactive_session
@@ -246,13 +255,17 @@ def save_session(state) -> Outcome:
     return Outcome()
 
 
-def process_docking_bridge(state) -> None:
+def process_docking_bridge(state) -> bool:
     """Collect a running job's log lines into ``state.run_log`` and, once
     it has finished, record the outcome and post the reply -- exactly once
-    (``state.job_done``). Called on every page update / poll tick."""
+    (``state.job_done``). Called on every page update / poll tick.
+
+    Returns whether the state changed (new log lines, or the outcome
+    recorded), so a GUI that redraws only on change (NiceGUI's timer) also
+    draws a run that ended before any tick saw it running."""
     bridge = state.bridge
     if not bridge:
-        return
+        return False
 
     # Drained once more after the job ends, or its last lines ("WORKFLOW
     # COMPLETED SUCCESSFULLY") are lost. is_running() is read *before*
@@ -260,12 +273,10 @@ def process_docking_bridge(state) -> None:
     # already queued. The log is the run's own, not the last chat message's
     # (Review Stage R1, deferred #1): a chat sent mid-run stays as typed.
     running = bridge.is_running()
-    state.run_log.extend(bridge.get_log_lines())
-    if running:
-        return
-
-    if state.job_done:
-        return
+    lines = bridge.get_log_lines()
+    state.run_log.extend(lines)
+    if running or state.job_done:
+        return bool(lines)
     result = bridge.get_result()
     error = bridge.get_error()
     # Sync the session's view of "what's been run" from the already-merged
@@ -294,6 +305,7 @@ def process_docking_bridge(state) -> None:
     elif status == "failed":
         outcome_message = "Workflow failed: " + ("; ".join(result.get("errors", [])) or "unknown error")
     else:
-        return
+        return bool(lines)
     state.job_done = True
     reply(state, outcome_message)
+    return True

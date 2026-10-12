@@ -22,7 +22,8 @@ def test_save_upload_keeps_only_the_basename(tmp_path):
 
     dest = uploads.save_upload("../../etc/receptor.pdb", b"ATOM", upload_dir)
 
-    assert dest == upload_dir / "receptor.pdb"
+    assert dest.name == "receptor.pdb"
+    assert dest.parent.parent == upload_dir
     assert dest.read_bytes() == b"ATOM"
 
 
@@ -36,24 +37,25 @@ def test_save_upload_refuses_an_unusable_name(tmp_path, name):
 def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_022):
     # The root Streamlit UI and the uid-1000 NiceGUI UI share it (Stage 16.3).
     upload_dir = tmp_path / "uploads"
-    uploads.save_upload("a.sdf", b"x", upload_dir)
+    dest = uploads.save_upload("a.sdf", b"x", upload_dir)
     assert stat.S_IMODE(upload_dir.stat().st_mode) == 0o777
+    assert stat.S_IMODE(dest.parent.stat().st_mode) == 0o777
 
 
-def test_save_upload_replaces_an_existing_file_rather_than_writing_into_it(tmp_path):
-    # A same-named upload owned by the other GUI's user (root Streamlit vs
-    # uid-1000 NiceGUI) can't be written in place: "[Errno 13] Permission
-    # denied" (found 2026-10-12). Replacing it needs only the directory.
+def test_a_same_named_upload_leaves_the_earlier_file_alone(tmp_path):
+    # Another tab (or the other GUI) uploading its own ligand.sdf must not
+    # change the molecule an earlier session's parameters point to
+    # (Review Stage R2). It also never writes over another uid's file, the
+    # "[Errno 13] Permission denied" found 2026-10-12.
     upload_dir = tmp_path / "uploads"
-    old = uploads.save_upload("crystal_ligand.mol2", b"old", upload_dir)
-    old_inode = old.stat().st_ino
-    old.chmod(0o444)
+    first = uploads.save_upload("ligand.sdf", b"first", upload_dir)
+    first.chmod(0o444)
 
-    dest = uploads.save_upload("crystal_ligand.mol2", b"new", upload_dir)
+    second = uploads.save_upload("ligand.sdf", b"second", upload_dir)
 
-    assert dest.read_bytes() == b"new"
-    assert dest.stat().st_ino != old_inode
-    assert sorted(p.name for p in upload_dir.iterdir()) == ["crystal_ligand.mol2"]  # no temp file left
+    assert second != first and second.name == first.name == "ligand.sdf"
+    assert first.read_bytes() == b"first"
+    assert second.read_bytes() == b"second"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
@@ -62,19 +64,19 @@ def test_saved_upload_is_readable_and_replaceable_by_every_uid(tmp_path, umask_0
     assert stat.S_IMODE(dest.stat().st_mode) == 0o666
 
 
-def test_failed_upload_write_leaves_no_temp_file(tmp_path, monkeypatch):
+def test_failed_upload_write_leaves_nothing_behind(tmp_path, monkeypatch):
     upload_dir = tmp_path / "uploads"
-    uploads.save_upload("a.sdf", b"old", upload_dir)
+    kept = uploads.save_upload("a.sdf", b"old", upload_dir)
 
-    def fail(src, dst):
+    def fail(self, data):
         raise OSError("disk full")
 
-    monkeypatch.setattr(uploads.os, "replace", fail)
+    monkeypatch.setattr(uploads.Path, "write_bytes", fail)
     with pytest.raises(OSError, match="disk full"):
         uploads.save_upload("a.sdf", b"new", upload_dir)
 
-    assert sorted(p.name for p in upload_dir.iterdir()) == ["a.sdf"]
-    assert (upload_dir / "a.sdf").read_bytes() == b"old"
+    assert list(upload_dir.iterdir()) == [kept.parent]
+    assert kept.read_bytes() == b"old"
 
 
 def test_protein_upload_replaces_the_pdb_id(state, tmp_path):
@@ -96,6 +98,16 @@ def test_ligand_uploads_replace_ligand_ids(state, tmp_path, folder_mode, folder_
     assert state.params["ligand_files"] == [str(p) for p in paths]
     assert "ligand_ids" not in state.params
     assert ("ligand_folder" in state.params) is folder_kept
+    assert state.messages[-1]["content"] == "2 local ligand file(s) set: **a.sdf, b.mol2**"
+
+
+def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_path):
+    # NiceGUI hands over one drop at a time; Streamlit's uploader kept every
+    # file it had been given, so a second drop adds (Review Stage R2).
+    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "1" / "a.sdf"], append=True)
+    uploads.apply_ligand_uploads(state, ["b.mol2"], [tmp_path / "2" / "b.mol2"], append=True)
+
+    assert state.params["ligand_files"] == [str(tmp_path / "1" / "a.sdf"), str(tmp_path / "2" / "b.mol2")]
     assert state.messages[-1]["content"] == "2 local ligand file(s) set: **a.sdf, b.mol2**"
 
 

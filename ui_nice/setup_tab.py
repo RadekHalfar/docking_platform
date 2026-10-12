@@ -7,13 +7,18 @@ The widgets and ``state.form`` are kept in step explicitly: each widget's
 change handler writes its form key, and :meth:`SetupView.sync` writes the
 form back into any widget whose value differs (after a chat command, a
 reset, a geometry command's deferred apply). Writing an equal value is a
-no-op, so a sync never fights the user's typing.
+no-op, so a sync never fights the user's typing. NiceGUI fires the change
+handlers on those writes too; they return at once while
+``controller.syncing``, so a sync never starts another.
+
+The running session's progress is read off the event loop by
+:meth:`SetupView.poll`, on timer ticks only.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import PurePath
-from typing import Any, Callable, Optional
+from pathlib import Path, PurePath
+from typing import Any, Callable, Optional, Sequence
 
 from nicegui import run, ui
 
@@ -26,9 +31,10 @@ from ui_nice.widgets import markdown
 
 INPUT_MODES = {"rcsb": "RCSB IDs", "local_files": "Local Files", "folder": "Batch Processing"}
 LIGAND_UPLOAD_LABEL = (
-    "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt). "
-    "A multi-molecule .sdf is split into one ligand per molecule."
+    "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt). Each drop adds to the list; "
+    "Clear empties it. A multi-molecule .sdf is split into one ligand per molecule."
 )
+LIGAND_ACCEPT = ".sdf,.mol,.mol2,.pdbqt"
 VINA_CPU_CAPTION = (
     "Vina's search is multithreaded: more CPUs per ligand or a lower "
     "exhaustiveness make each ligand finish sooner. Workers × CPUs per "
@@ -39,6 +45,11 @@ STOP_REQUESTED = "Stop requested — stopping (docking halts within a few second
 
 _CENTER_FIELDS = (("param_center_x", "Center X"), ("param_center_y", "Center Y"), ("param_center_z", "Center Z"))
 _BOX_FIELDS = (("param_box_x", "Box X"), ("param_box_y", "Box Y"), ("param_box_z", "Box Z"))
+
+
+def _save_uploads(files: Sequence[tuple[str, bytes]], upload_dir: Path) -> list[Path]:
+    """One drop's files, saved in one trip off the event loop."""
+    return [uploads.save_upload(name, data, upload_dir) for name, data in files]
 
 
 def _as_int(value: Any) -> Optional[int]:
@@ -54,6 +65,9 @@ class SetupView:
         self.state = controller.state
         # form key -> the widgets showing it (Protein ID appears in two input modes)
         self._fields: dict[str, list] = {}
+        # (job_id, its docking_progress.json) as the last poll read it.
+        self._progress: tuple[Optional[str], Optional[dict]] = (None, None)
+        self._docking_labels: list[ui.label] = []
 
         with ui.column().classes("w-full p-2 gap-2"):
             ui.label("Input & Parameters").classes("text-lg font-medium")
@@ -120,20 +134,20 @@ class SetupView:
             with ui.row().classes("items-center") as self.protein_row:
                 self.protein_caption = ui.label().classes("text-caption")
                 ui.button("Clear", on_click=self._on_clear_protein).props("flat dense size=sm")
-            ui.upload(
-                label=LIGAND_UPLOAD_LABEL, multiple=True, auto_upload=True,
-                on_multi_upload=lambda e: self._on_ligand_upload(e, folder_mode=False),
-            ).props('accept=".sdf,.mol,.mol2,.pdbqt"').classes("w-full").mark("upload-ligands")
+            self._ligand_upload("upload-ligands", folder_mode=False)
             self.local_ligand_row = self._ligand_caption_row()
 
         with ui.column().classes("w-full") as self.folder_panel:
             self._text("param_protein_id", "Protein ID (PDB)", placeholder="e.g. 6lu7",
                        commit=form.commit_protein_id).classes("w-full")
-            ui.upload(
-                label=LIGAND_UPLOAD_LABEL, multiple=True, auto_upload=True,
-                on_multi_upload=lambda e: self._on_ligand_upload(e, folder_mode=True),
-            ).props('accept=".sdf,.mol,.mol2,.pdbqt"').classes("w-full").mark("upload-folder-ligands")
+            self._ligand_upload("upload-folder-ligands", folder_mode=True)
             self.folder_ligand_row = self._ligand_caption_row()
+
+    def _ligand_upload(self, marker: str, *, folder_mode: bool) -> ui.upload:
+        return ui.upload(
+            label=LIGAND_UPLOAD_LABEL, multiple=True, auto_upload=True,
+            on_multi_upload=lambda e: self._on_ligand_upload(e, folder_mode=folder_mode),
+        ).props(f'accept="{LIGAND_ACCEPT}"').classes("w-full").mark(marker)
 
     def _ligand_caption_row(self) -> tuple[ui.row, ui.label]:
         with ui.row().classes("items-center") as row:
@@ -233,6 +247,14 @@ class SetupView:
         self._sync_run_card()
         self._sync_redock_dialog()
 
+    async def poll(self) -> None:
+        job_id = run_control.active_bridge_job_id(self.state)
+        progress = (
+            await run.io_bound(results_view.read_docking_progress, self.controller.output_base, job_id)
+            if job_id else None
+        )
+        self._progress = (job_id, progress)
+
     def _sync_inputs(self) -> None:
         mode = self.state.form.get("input_mode")
         self.rcsb_panel.set_visibility(mode == "rcsb")
@@ -281,32 +303,40 @@ class SetupView:
 
     def _sync_actions(self) -> None:
         state = self.state
-        running_job = run_control.active_bridge_job_id(state)
         has_job = state.interactive_session.has_active_job()
-        idle = running_job is None
+        blocked = self._blocked()
+        idle = blocked is None
 
         # Unlike Streamlit, Run Docking is off while this client's run is
         # going: a redock confirmed then would replace the running bridge
-        # and orphan its job.
+        # and orphan its job. The same while a save copies the results.
         self.run_button.set_enabled(idle)
         self.run_tip.set_text(
             "Start docking, or redock the active session with the changed parameters."
-            if idle else "A session is running — Stop it before docking again."
+            if idle else f"{blocked} before docking again."
         )
         self.save_button.set_enabled(has_job)
         self.new_button.set_enabled(has_job and idle)
         self.new_tip.set_text(
             "Keep your parameters, start a fresh session."
-            if idle else "A session is running — Stop it before starting a new one."
+            if idle else f"{blocked} before starting a new one."
         )
         self.reset_button.set_enabled(idle)
         self.reset_tip.set_text(
             "Clear everything, including entered parameters."
-            if idle else "A session is running — Stop it before resetting."
+            if idle else f"{blocked} before resetting."
         )
         error = self.controller.error
         self.error_label.set_text(error or "")
         self.error_label.set_visibility(bool(error))
+
+    def _blocked(self) -> Optional[str]:
+        """Why Run, New Session and Reset are off, or None."""
+        if run_control.active_bridge_job_id(self.state) is not None:
+            return "A session is running — Stop it"
+        if self.controller.busy is not None:
+            return "Results are being saved — wait for that"
+        return None
 
     def _sync_run_card(self) -> None:
         state = self.state
@@ -316,7 +346,9 @@ class SetupView:
             return
         self.run_label.set_content(f"Session {results_view.job_label(job_id, state.job_name)} is running...")
 
-        progress = results_view.read_docking_progress(self.controller.output_base, job_id)
+        polled_job, progress = self._progress
+        if polled_job != job_id:
+            progress = None  # a new run, not polled yet
         running = bool(progress) and progress.get("status") == "running"
         total = (progress or {}).get("total") or 0
         completed = (progress or {}).get("completed") or 0
@@ -325,12 +357,22 @@ class SetupView:
         if running and total:
             self.progress.set_value(completed / total)
             self.progress_label.set_text(f"{completed} / {total} ligands docked")
-        self.docking_now.clear()
-        if running:
+        texts = [
+            f"Currently docking: {ligand}" + (f" (running {elapsed}s)" if elapsed is not None else "")
+            for ligand, elapsed in (
+                results_view.currently_docking(progress, datetime.now(timezone.utc)) if running else ()
+            )
+        ]
+        # The labels are kept and retexted; only a changed count adds or
+        # removes one (the elapsed time changes every tick).
+        labels = self._docking_labels
+        while len(labels) < len(texts):
             with self.docking_now:
-                for ligand, elapsed in results_view.currently_docking(progress, datetime.now(timezone.utc)):
-                    elapsed_str = f" (running {elapsed}s)" if elapsed is not None else ""
-                    ui.label(f"Currently docking: {ligand}{elapsed_str}").classes("text-caption")
+                labels.append(ui.label().classes("text-caption"))
+        while len(labels) > len(texts):
+            labels.pop().delete()
+        for label, text in zip(labels, texts):
+            label.set_text(text)
 
         stop_requested = state.bridge.stop_requested()
         self.stop_button.set_visibility(not stop_requested)
@@ -348,6 +390,8 @@ class SetupView:
     # ── Handlers (widgets -> state) ─────────────────────────────────────────
 
     def _on_text(self, key: str, value: Optional[str]) -> None:
+        if self.controller.syncing:
+            return
         self.state.form[key] = value or ""
         if key in form.BOX_FORM_KEYS:
             # The box picker draws these fields: move its box too.
@@ -360,64 +404,66 @@ class SetupView:
         self.controller.sync()
 
     def _on_input_mode(self, event) -> None:
+        if self.controller.syncing:
+            return
         if event.value:
             self.state.form["input_mode"] = event.value
         self._sync_inputs()
 
     def _on_algorithm(self, event) -> None:
+        if self.controller.syncing:
+            return
         if event.value:
-            # Returns early when the selector already holds it (a sync after
-            # a chat "use vina"), so the workers aren't reset twice.
             form.set_docking_algorithm(self.state, event.value)
         self.controller.sync()
 
     def _on_cpu(self, event) -> None:
         # A cleared field is not written: the user is typing a new number.
-        if event.value is None:
+        if self.controller.syncing or event.value is None:
             return
         self.state.form["param_cpu"] = max(1, int(event.value))
         self._sync_advanced()
         self._sync_summary()
 
     def _on_parallel(self, event) -> None:
+        if self.controller.syncing:
+            return
         self.state.form["param_parallel"] = bool(event.value)
         self.workers.set_enabled(bool(event.value))
 
     def _on_workers(self, event) -> None:
-        if event.value is None:
+        if self.controller.syncing or event.value is None:
             return
         # Above the bound while typing; leaving the field clamps the widget.
         self.state.form["param_max_workers"] = max(1, min(int(event.value), int(self.workers.max)))
 
-    async def _on_protein_upload(self, event) -> None:
+    async def _save_files(self, files, failure: str) -> Optional[list[Path]]:
+        """Save one drop's files, or set the action error and return None."""
         controller = self.controller
         controller.start_action()
-        name = event.file.name
         try:
-            data = await event.file.read()
-            path = await run.io_bound(uploads.save_upload, name, data, controller.upload_dir)
+            named = [(file.name, await file.read()) for file in files]
+            return await run.io_bound(_save_uploads, named, controller.upload_dir)
         except (OSError, ValueError) as exc:
-            controller.error = f"Could not save {name}: {exc}"
-        else:
-            uploads.apply_protein_upload(self.state, name, path)
+            controller.error = f"{failure}: {exc}"
+            return None
+
+    async def _on_protein_upload(self, event) -> None:
+        name = event.file.name
+        paths = await self._save_files([event.file], f"Could not save {name}")
+        if paths:
+            uploads.apply_protein_upload(self.state, name, paths[0])
         event.sender.reset()
-        controller.sync()
+        self.controller.sync()
 
     async def _on_ligand_upload(self, event, *, folder_mode: bool) -> None:
-        controller = self.controller
-        controller.start_action()
-        names, paths = [], []
-        try:
-            for file in event.files:
-                data = await file.read()
-                paths.append(await run.io_bound(uploads.save_upload, file.name, data, controller.upload_dir))
-                names.append(file.name)
-        except (OSError, ValueError) as exc:
-            controller.error = f"Could not save the ligand files: {exc}"
-        else:
-            uploads.apply_ligand_uploads(self.state, names, paths, folder_mode=folder_mode)
+        paths = await self._save_files(event.files, "Could not save the ligand files")
+        if paths:
+            uploads.apply_ligand_uploads(
+                self.state, [file.name for file in event.files], paths, folder_mode=folder_mode, append=True,
+            )
         event.sender.reset()
-        controller.sync()
+        self.controller.sync()
 
     def _on_clear_protein(self) -> None:
         uploads.clear_protein_upload(self.state)
@@ -430,7 +476,7 @@ class SetupView:
     def _on_run(self) -> None:
         controller = self.controller
         controller.start_action()
-        if run_control.active_bridge_job_id(self.state) is not None:
+        if self._blocked() is not None:
             controller.sync()
             return
         controller.show_outcome(run_control.run_docking(self.state, controller.output_base, controller.bridge_factory))
@@ -441,13 +487,13 @@ class SetupView:
 
     def _on_new_session(self) -> None:
         self.controller.start_action()
-        if run_control.active_bridge_job_id(self.state) is None:
+        if self._blocked() is None:
             form.start_new_session(self.state)
         self.controller.sync()
 
     def _on_reset(self) -> None:
         self.controller.start_action()
-        if run_control.active_bridge_job_id(self.state) is None:
+        if self._blocked() is None:
             form.reset_session(self.state)
         self.controller.sync()
 

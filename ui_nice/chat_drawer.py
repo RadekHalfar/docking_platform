@@ -1,10 +1,12 @@
 """The chat drawer (Phase 16, Stage 16.4): the session label, the messages,
 the docking run's log and the chat input.
 
-Commands are answered at once by ``ui.core.chat.submit``. Any other
-message goes to the LLM: the blocking call runs in ``run.io_bound`` with
-the input disabled, and its result is applied only if the session hasn't
-changed meanwhile (``chat.parse_context``).
+Commands are answered by ``ui.core.chat.submit``; the two that do slow
+file work (geometry, ``save ... as``) run it off the event loop through the
+controller. Any other message goes to the LLM: the blocking call runs in
+``run.io_bound`` with the input disabled, and its result is applied only if
+the session hasn't changed meanwhile (``chat.parse_context``). A save
+disables the input the same way (``controller.busy``).
 """
 from __future__ import annotations
 
@@ -12,12 +14,12 @@ from nicegui import run, ui
 
 from services.llm_orchestrator import workflow_llm_parser
 from ui.core import chat, results_view
-from ui.core.state import reply
 from ui_nice.controller import PageController
 from ui_nice.widgets import markdown
 
 # The Run log keeps this many of the run's last lines, like the Session Log.
 RUN_LOG_LINES = results_view.JOB_LOG_TAIL_LINES
+PARSING = "Parsing with LLM..."
 
 
 class ChatView:
@@ -50,7 +52,7 @@ class ChatView:
         self.spinner_row = ui.row().classes("items-center")
         with self.spinner_row:
             ui.spinner(size="sm")
-            ui.label("Parsing with LLM...").classes("text-grey-7")
+            self.spinner_label = ui.label(PARSING).classes("text-grey-7").mark("chat-busy")
         controller.add_view(self)
         self.sync()
 
@@ -61,9 +63,14 @@ class ChatView:
         self.session_label.set_visibility(bool(state.job_id))
         self._sync_messages()
         self._sync_log()
-        self.input.set_enabled(not self.parsing)
-        self.send.set_enabled(not self.parsing)
-        self.spinner_row.set_visibility(self.parsing)
+        busy = PARSING if self.parsing else self.controller.busy
+        self.input.set_enabled(busy is None)
+        self.send.set_enabled(busy is None)
+        self.spinner_label.set_text(busy or "")
+        self.spinner_row.set_visibility(busy is not None)
+
+    async def poll(self) -> None:
+        pass  # draws only the state
 
     def _sync_messages(self) -> None:
         messages = self.state.messages
@@ -91,12 +98,15 @@ class ChatView:
 
     async def _on_send(self) -> None:
         message = (self.input.value or "").strip()
-        if not message or self.parsing:
+        controller, state = self.controller, self.state
+        if not message or self.parsing or controller.busy:
             return
         self.input.value = ""
-        controller, state = self.controller, self.state
         controller.start_action()
-        if chat.submit(state, message, controller.output_base, controller.bridge_factory):
+        if chat.submit(
+            state, message, controller.output_base, controller.bridge_factory,
+            apply_geometry=controller.apply_geometry, run_save=controller.run_save,
+        ):
             controller.sync()
             return
 
@@ -116,7 +126,7 @@ class ChatView:
             chat.apply_parsed_message(state, parsed, named, context=context)
         except Exception as exc:
             # As chat.answer_with_llm: any parse failure is the reply.
-            reply(state, f"Sorry, I couldn't parse that: {exc}")
+            chat.parse_failed(state, exc)
         finally:
             self.parsing = False
         controller.sync()

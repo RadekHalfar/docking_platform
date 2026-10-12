@@ -390,3 +390,16 @@ def test_finished_run_of_another_job_does_not_overwrite_last_results(state, tmp_
 def test_no_bridge_is_a_noop(state):
     run_control.process_docking_bridge(state)
     assert len(state.messages) == 1
+
+
+def test_process_docking_bridge_reports_whether_the_state_changed(state):
+    # NiceGUI redraws on this (Review Stage R2): a run that ended before
+    # any tick saw it running must still count as a change.
+    assert run_control.process_docking_bridge(state) is False  # no bridge
+    state.bridge = FakeBridge(running=True)
+    assert run_control.process_docking_bridge(state) is False  # running, no news
+    state.bridge = FakeBridge(running=True, lines=["step 1"])
+    assert run_control.process_docking_bridge(state) is True
+    state.bridge = FakeBridge(result={"status": "completed", "results": {}})
+    assert run_control.process_docking_bridge(state) is True
+    assert run_control.process_docking_bridge(state) is False  # already handled

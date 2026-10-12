@@ -703,9 +703,12 @@ def _render_rcsb_inputs() -> None:
 def _on_protein_upload_change() -> None:
     uploaded = st.session_state.get("upload_protein")
     if uploaded is not None:
-        path = _save_upload(uploaded, UPLOAD_DIR)
-        # Streamlit can re-fire this callback for the same file: reply once.
+        # Streamlit can re-fire this callback for the same file: reply once,
+        # and keep the copy already saved (each save is a new directory).
         announce = st.session_state.get("_last_protein_file") != uploaded.name
+        if not announce and st.session_state.params.get("protein_file"):
+            return
+        path = _save_upload(uploaded, UPLOAD_DIR)
         st.session_state["_last_protein_file"] = uploaded.name
         uploads.apply_protein_upload(gui_session(), uploaded.name, path, announce=announce)
     else:
@@ -753,9 +756,12 @@ def _apply_ligand_upload_widget(widget_key: str, last_key: str, *, folder_mode: 
         uploads.clear_ligand_uploads(gui_session())
         st.session_state.pop(last_key, None)
         return
-    paths = [_save_upload(f, UPLOAD_DIR) for f in uploaded_list]
-    # Streamlit can re-fire this callback for the same files: reply once.
+    # Streamlit can re-fire this callback for the same files: reply once,
+    # and keep the copies already saved (each save is a new directory).
     announce = names != tuple(st.session_state.get(last_key, ()))
+    if not announce and st.session_state.params.get("ligand_files"):
+        return
+    paths = [_save_upload(f, UPLOAD_DIR) for f in uploaded_list]
     st.session_state[last_key] = names
     uploads.apply_ligand_uploads(gui_session(), names, paths, folder_mode=folder_mode, announce=announce)
 

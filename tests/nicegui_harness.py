@@ -122,6 +122,16 @@ async def eventually(predicate: Callable[[], bool], timeout: float = 5.0) -> Non
         await asyncio.sleep(0.02)
 
 
+def on_event_loop() -> bool:
+    """Whether the caller runs on the event loop (not in ``run.io_bound``'s
+    thread pool): for patched slow functions to record where they ran."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def element(user, marker: str):
     """The (first) element with this marker, hidden or not -- unlike
     ``user.find``, which sees only visible ones (not e.g. the contents of a
@@ -146,11 +156,12 @@ def open_advanced(user) -> None:
 
 async def send_chat(user, page: Page, text: str) -> None:
     """Send *text* from the chat input and wait for its reply (an LLM
-    parse runs off the event loop)."""
+    parse, a geometry read and a save run off the event loop)."""
     set_value(user, "chat-input", text)
     user.find(marker="chat-send").click()
     await eventually(
         lambda: not page.chat.parsing
+        and page.chat.controller.busy is None
         and any(m["role"] == "user" and m["content"] == text for m in page.state.messages)
         and page.state.messages[-1]["role"] == "assistant"
     )

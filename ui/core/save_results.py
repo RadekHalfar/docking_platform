@@ -6,11 +6,19 @@ panel's controls and the chat's ``save results/docking/visualization as
 <name>`` command. A name that already exists is not an error: it records
 ``state.save_conflict``, which the panel offers to resolve as Overwrite /
 Save as ``<name>_HHMMSS``.
+
+Copying a real session's results takes tens of seconds on a Docker Desktop
+bind mount (34-37 s for 17 MB of docking results, Review Stage R2). So a
+save is three steps, and a GUI with an event loop runs only the middle one
+off it: :func:`plan_save` (checks, on the state), :func:`write_bundle` (the
+copy; touches no GUI state), :func:`finish_save` (the reply and the
+conflict, on the state). :func:`save_results` does all three inline.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from services.llm_orchestrator.interactive_session import (
     save_results_bundle,
@@ -59,37 +67,60 @@ def save_block_reason(state, output_base: Path) -> Optional[str]:
     return None
 
 
-def save_results(state, output_base: Path, name: str, scope: str, *, overwrite: bool = False) -> str:
-    """Save the active session's results as bundle *name* (the GUI's
-    ``save results as``) and return the reply to show.
+@dataclass(frozen=True)
+class SaveJob:
+    """A save :func:`plan_save` cleared: what :func:`write_bundle` copies."""
+
+    job_id: str
+    state_manager: Any  # the session's WorkflowStateManager
+    name: str
+    scope: str
+    overwrite: bool
+
+
+def plan_save(
+    state, output_base: Path, name: str, scope: str, *, overwrite: bool = False
+) -> tuple[Optional[str], Optional[SaveJob]]:
+    """Check a save of the active session's results as bundle *name*:
+    ``(reply, None)`` if it can't be done, else ``(None, job)``."""
+    reason = save_block_reason(state, output_base)
+    if reason:
+        return f"Cannot save: {reason}", None
+    err = validate_bundle_name(name)
+    if err:
+        return f"Invalid bundle name: {err}", None
+    session = state.interactive_session
+    return None, SaveJob(session.job_id, session.state_manager, name, scope, overwrite)
+
+
+def write_bundle(job: SaveJob) -> dict:
+    """Copy the results into the bundle (slow; reads and writes only the
+    job dir, so it may run on another thread)."""
+    state_manager = job.state_manager
+    return save_results_bundle(
+        state_manager.job_dir,
+        job.name,
+        job.scope,
+        state_manager.get_current_revision(),
+        state_manager.load_latest_parameters() or {},
+        overwrite=job.overwrite,
+    )
+
+
+def finish_save(state, job: SaveJob, result: dict) -> str:
+    """Record a :func:`write_bundle` result and return the reply to show.
 
     A name that already exists records ``state.save_conflict`` (see the
     module docstring); a successful save clears it.
     """
-    reason = save_block_reason(state, output_base)
-    if reason:
-        return f"Cannot save: {reason}"
-    err = validate_bundle_name(name)
-    if err:
-        return f"Invalid bundle name: {err}"
-
-    session = state.interactive_session
-    state_manager = session.state_manager
-    result = save_results_bundle(
-        state_manager.job_dir,
-        name,
-        scope,
-        state_manager.get_current_revision(),
-        state_manager.load_latest_parameters() or {},
-        overwrite=overwrite,
-    )
+    job_dir = job.state_manager.job_dir
     if result["error"] == "exists":
-        suggested = timestamped_bundle_name(state_manager.job_dir, name)
+        suggested = timestamped_bundle_name(job_dir, job.name)
         state.save_conflict = {
-            "job_id": session.job_id, "name": name, "scope": scope, "suggested": suggested,
+            "job_id": job.job_id, "name": job.name, "scope": job.scope, "suggested": suggested,
         }
         return (
-            f"A bundle named `{name}` already exists — choose **Overwrite** or "
+            f"A bundle named `{job.name}` already exists — choose **Overwrite** or "
             f"**Save as {suggested}** under *Save results as…* in the results panel."
         )
     if not result["success"]:
@@ -97,7 +128,7 @@ def save_results(state, output_base: Path, name: str, scope: str, *, overwrite: 
 
     state.save_conflict = None
     final_name = Path(result["bundle_path"]).name
-    lines = [f"Saved bundle `{final_name}` (scope: {scope}) to `{result['bundle_path']}`."]
+    lines = [f"Saved bundle `{final_name}` (scope: {job.scope}) to `{result['bundle_path']}`."]
     if result["artifacts"]:
         lines.append(f"Artifacts: {', '.join(result['artifacts'])}.")
     else:
@@ -105,16 +136,39 @@ def save_results(state, output_base: Path, name: str, scope: str, *, overwrite: 
     return "\n\n".join(lines)
 
 
+def save_results(state, output_base: Path, name: str, scope: str, *, overwrite: bool = False) -> str:
+    """Save the active session's results as bundle *name* (the GUI's
+    ``save results as``) and return the reply to show -- all inline."""
+    message, job = plan_save(state, output_base, name, scope, overwrite=overwrite)
+    if job is None:
+        return message
+    return finish_save(state, job, write_bundle(job))
+
+
+def plan_chat_save(state, output_base: Path, intent: dict) -> tuple[Optional[str], Optional[SaveJob]]:
+    """:func:`plan_save` for a deterministic ``save results/docking/visualization as <name>``."""
+    if not intent.get("name"):
+        return "Give the bundle a name, e.g. `save results as run1`.", None
+    return plan_save(state, output_base, intent["name"], intent.get("scope") or "all")
+
+
 def save_chat_reply(state, output_base: Path, intent: dict) -> str:
     """The reply to a deterministic ``save results/docking/visualization as <name>``."""
-    if not intent.get("name"):
-        return "Give the bundle a name, e.g. `save results as run1`."
-    return save_results(state, output_base, intent["name"], intent.get("scope") or "all")
+    message, job = plan_chat_save(state, output_base, intent)
+    if job is None:
+        return message
+    return finish_save(state, job, write_bundle(job))
 
 
 def resolve_save_conflict(state, output_base: Path, *, overwrite: bool) -> Optional[str]:
     """The conflict's Overwrite (*overwrite*) or "Save as <suggested>"
     button: save again and return the reply, or None with no conflict."""
+    # TRIGGER (Review Stage R2, docs/reviews/stage_16_r2.md, Deferred #2):
+    # this copies the bundle inline, as the chat command did -- 34-37 s on
+    # a Docker Desktop bind mount with every NiceGUI client frozen. When
+    # Stage 16.6 wires the conflict buttons (and its Save results panel),
+    # run them like PageController.run_save: plan_save() on the loop,
+    # write_bundle() in run.io_bound, finish_save() on the loop.
     conflict = state.save_conflict
     if not conflict:
         return None

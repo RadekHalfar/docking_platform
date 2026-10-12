@@ -11,6 +11,8 @@ Runs in the ui-nice tier only:
 ``page.seed(...)`` sets up the client's GuiSession before the page is
 drawn, as the AppTest cases set ``app.session_state``.
 """
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("nicegui")
@@ -31,6 +33,7 @@ from tests.nicegui_harness import (  # noqa: E402
     click,
     element,
     eventually,
+    on_event_loop,
     open_advanced,
     set_value,
     validated,
@@ -387,8 +390,10 @@ async def test_protein_upload_is_saved_and_docked_against(user: User, page, outp
 
     await upload.handle_uploads([SmallFileUpload("../receptor.pdb", "chemical/x-pdb", b"ATOM\n")])
 
-    saved = output_base / "uploads" / "receptor.pdb"
-    await eventually(lambda: page.state.params.get("protein_file") == str(saved))
+    await eventually(lambda: "protein_file" in page.state.params)
+    saved = Path(page.state.params["protein_file"])
+    # In a directory of its own under uploads/ (Review Stage R2).
+    assert saved.name == "receptor.pdb" and saved.parent.parent == output_base / "uploads"
     assert saved.read_bytes() == b"ATOM\n"
     assert "protein_id" not in page.state.params
     assert page.chat_texts()[-1] == "Local protein file set: **../receptor.pdb**"
@@ -552,3 +557,95 @@ async def test_progress_shows_the_ligands_docked(user: User, page, output_base):
 
     await user.should_see("1 / 4 ligands docked")
     await user.should_see("Currently docking: ATP")
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R2
+# ---------------------------------------------------------------------------
+
+async def test_a_run_that_ends_before_the_first_tick_is_drawn(user: User, page, monkeypatch):
+    # The timer redrew only after seeing a bridge *running*; a run that
+    # failed or finished within one poll interval was processed but never
+    # shown (the reply missing, the page as before).
+    monkeypatch.setattr(
+        "ui.orchestrator_bridge.OrchestratorBridge",
+        lambda: FakeBridge(result={"status": "completed", "results": {}}),
+    )
+
+    def seed(state):
+        state.form.update(input_mode="rcsb", param_protein_id="6lu7", param_ligand_ids_text="ATP")
+        state.form.update(zip(BOX_FORM_KEYS, ("1", "2", "3", "20", "20", "20")))
+
+    page.seed(seed)
+    await user.open("/")
+
+    click(user, "run-docking")
+
+    await user.should_see("Workflow completed successfully!")
+
+
+async def test_progress_is_read_off_the_event_loop(user: User, page, monkeypatch):
+    # All clients share one event loop; on a Docker Desktop bind mount this
+    # read takes ~10 ms, per client, every second (Review Stage R2).
+    from ui.core import results_view
+
+    where = []
+    real = results_view.read_docking_progress
+
+    def read(*args):
+        where.append(on_event_loop())
+        return real(*args)
+
+    monkeypatch.setattr(results_view, "read_docking_progress", read)
+
+    def seed(state):
+        state.bridge = RunningBridge()
+        state.job_id = "job_20260930_000000_abcdef"
+
+    page.seed(seed)
+    await user.open("/")
+
+    await eventually(lambda: len(where) >= 2)
+    assert not any(where)
+
+
+async def test_a_sync_does_not_start_another_sync(user: User, page):
+    # NiceGUI fires a field's change handler when sync() writes it; the box
+    # fields' handler then synced the whole page again from inside the sync,
+    # one level deeper per field.
+    await user.open("/")
+    controller = page.parts[-1].controller
+    calls = []
+    real = controller.sync
+
+    def counting():
+        calls.append(1)
+        real()
+
+    controller.sync = counting
+    page.state.form.update(zip(BOX_FORM_KEYS, ("1", "2", "3", "21", "22", "23")))
+
+    controller.sync()
+
+    assert len(calls) == 1
+    assert element(user, "param_box_z").value == "23"
+
+
+async def test_a_second_ligand_drop_adds_to_the_list(user: User, page):
+    # Streamlit's uploader kept the files it had; NiceGUI's resets after
+    # each drop, so a second drop replaced the first (Review Stage R2).
+    page.seed(lambda state: state.form.update(input_mode="local_files"))
+    await user.open("/")
+    upload = element(user, "upload-ligands")
+
+    await upload.handle_uploads([
+        SmallFileUpload("a.sdf", "chemical/x-mdl-sdfile", b"a"),
+        SmallFileUpload("b.mol2", "chemical/x-mol2", b"b"),
+    ])
+    await eventually(lambda: len(page.state.params.get("ligand_files", [])) == 2)
+    await upload.handle_uploads([SmallFileUpload("c.sdf", "chemical/x-mdl-sdfile", b"c")])
+
+    await eventually(lambda: len(page.state.params.get("ligand_files", [])) == 3)
+    assert page.chat_texts()[-1] == "3 local ligand file(s) set: **a.sdf, b.mol2, c.sdf**"
+    await user.should_see("3 ligand file(s) ready")
+

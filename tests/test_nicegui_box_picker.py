@@ -27,6 +27,7 @@ from tests.nicegui_harness import (  # noqa: E402
     element,
     eventually,
     load_picker_receptor,
+    on_event_loop,
     send_chat,
     set_value,
     viewer,
@@ -95,7 +96,8 @@ async def test_deferred_geometry_command_applies_and_shows_reply(user: User, pag
 
     assert page.state.box_picker_bridge is None
     assert page.state.pending_geometry_targets is None
-    assert page.chat_texts()[-1].startswith("Protein center set to")
+    # The receptor is read off the event loop (Review Stage R2).
+    await eventually(lambda: page.chat_texts()[-1].startswith("Protein center set to"))
     assert float(_field(user, "param_center_x")) == expected_center[0]
     assert (await viewer(user)).center == expected_center
 
@@ -383,3 +385,60 @@ async def test_set_box_sends_only_a_changed_box(user: User, monkeypatch):
 def test_unknown_viewer_mode_is_rejected():
     with pytest.raises(ValueError):
         MolViewer("", mode="picker")
+
+
+# ---------------------------------------------------------------------------
+# Review Stage R2
+# ---------------------------------------------------------------------------
+
+async def test_an_unreadable_receptor_is_read_once_and_reported(user: User, page, monkeypatch):
+    # An OSError other than "not found" (e.g. another uid's 0o600 file) made
+    # sync() start the same failing read again at once, forever, with
+    # nothing shown.
+    reads = []
+
+    def unreadable(path):
+        reads.append(path)
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("ui_nice.box_picker_panel._read_text", unreadable)
+    page.seed(lambda state: setattr(state, "box_picker_receptor_pdb", str(FIXTURE_PDB)))
+    await user.open("/")
+
+    await user.should_see("Could not read the prepared receptor")
+    await _settle()
+    assert len(reads) == 1
+    assert element(user, "reload-receptor").visible
+    assert not viewer_shown(user)
+
+
+async def test_a_load_message_is_cleared_by_reset(user: User, page):
+    await user.open("/")
+    click(user, "load-receptor")
+    assert element(user, "box-picker-message").visible
+
+    click(user, "reset")
+
+    assert not element(user, "box-picker-message").visible
+
+
+async def test_a_geometry_command_reads_the_receptor_off_the_event_loop(user: User, page, monkeypatch):
+    # 35-80 ms per command on a Docker Desktop bind mount, more for a large
+    # protein, with every client's page frozen meanwhile (Review Stage R2).
+    import ui.core.box_picker as core_box_picker
+
+    where = []
+    real = core_box_picker.compute_protein_center_and_box
+
+    def compute(text):
+        where.append(on_event_loop())
+        return real(text)
+
+    monkeypatch.setattr(core_box_picker, "compute_protein_center_and_box", compute)
+    load_picker_receptor(page, ("1.0", "2.0", "3.0"), ("20.0", "20.0", "20.0"))
+    await user.open("/")
+
+    await send_chat(user, page, "set box center as protein center")
+
+    assert where == [False]
+    assert page.chat_texts()[-1].startswith("Protein center set to")

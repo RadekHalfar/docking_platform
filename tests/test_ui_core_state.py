@@ -300,6 +300,7 @@ def test_start_new_session_detaches_but_keeps_the_form(state):
     state.messages.append({"role": "user", "content": "hi"})
     state.box_picker_receptor_pdb = "/x/a.pdb"
     state.form["param_protein_id"] = "6lu7"
+    state.run_log.append("a line")
 
     form.start_new_session(state)
 
@@ -309,4 +310,83 @@ def test_start_new_session_detaches_but_keeps_the_form(state):
     assert state.job_done is False and state.pending_rerun is None
     assert state.messages == [GREETING_MESSAGE]
     assert state.box_picker_receptor_pdb is None
+    assert state.run_log == []
     assert state.form["param_protein_id"] == "6lu7"
+
+
+# ---------------------------------------------------------------------------
+# Stage 16.4: helpers both GUIs share (moved from ui/app.py)
+# ---------------------------------------------------------------------------
+
+def test_reset_session_restores_a_fresh_session_but_keeps_llm_settings(state):
+    state.settings = {"provider": "ollama", "api_key": "typed-this-session"}
+    state.llm_client = client = object()
+    state.job_id = "job_x"
+    state.params["protein_id"] = "6lu7"
+    state.form["param_center_x"] = "1.0"
+    state.form["input_mode"] = "rcsb"
+    state.messages.append({"role": "user", "content": "hi"})
+    form_dict = state.form
+
+    form.reset_session(state)
+
+    fresh = GuiSession(worker_cap=CAP10)
+    assert state.job_id is None and state.params == {}
+    assert state.form == fresh.form and state.form is not form_dict
+    assert state.messages == [GREETING_MESSAGE]
+    assert state.settings == {"provider": "ollama", "api_key": "typed-this-session"}
+    assert state.llm_client is client
+    assert state.worker_cap is CAP10
+
+
+@pytest.mark.parametrize("commit, key, text, params_key, expected, message", [
+    (form.commit_protein_id, "param_protein_id", " 6lu7 ", "protein_id", "6lu7", "Updated protein ID: **6lu7**"),
+    (form.commit_ligand_ids, "param_ligand_ids_text", "ATP, ,HEM", "ligand_ids", ["ATP", "HEM"],
+     "Updated ligands: **ATP, HEM**"),
+])
+def test_committing_an_id_field_replies_only_when_it_changed(state, commit, key, text, params_key, expected, message):
+    state.form[key] = text
+
+    commit(state)
+    commit(state)
+
+    assert state.params[params_key] == expected
+    assert [m["content"] for m in state.messages].count(message) == 1
+
+
+def test_committing_an_empty_id_field_changes_nothing(state):
+    form.commit_protein_id(state)
+    form.commit_ligand_ids(state)
+    assert state.params == {} and state.messages == [GREETING_MESSAGE]
+
+
+def test_params_summary_is_none_until_there_is_something_to_show(state):
+    assert form.params_summary(state) is None
+    state.form["param_center_x"] = "1.0"
+    assert form.params_summary(state) is not None
+
+
+def test_params_summary_reads_the_box_fields_and_the_selector(state):
+    state.params = {"protein_file": "/up/receptor.pdb", "ligand_files": ["/up/a.sdf", "/up/b.mol2"],
+                    "center": [9.0, 9.0, 9.0]}
+    state.form.update(param_center_x="1.0", param_box_z="30", param_docking_algorithm="vina")
+
+    summary = form.params_summary(state)
+
+    assert "**Protein:** receptor.pdb" in summary
+    assert "**Ligands:** a.sdf, b.mol2" in summary
+    assert "**Center:** 1.0 / — / —" in summary
+    assert "**Box:** — / — / 30" in summary
+    assert "**Algorithm:** Vina (Monte Carlo)" in summary
+    assert "9.0" not in summary
+
+
+@pytest.mark.parametrize("algorithm, cpu, workers, expected_max, expected_workers", [
+    ("vina", "4", 10, 2, 2),       # clamped to 10 CPUs // 4
+    ("vina", "4", 1, 2, 1),        # below the max: kept
+    ("moldina", "4", 10, 10, 10),  # PSO docks with 1 CPU whatever the field says
+])
+def test_max_workers_bounds_and_clamps_the_field(state, algorithm, cpu, workers, expected_max, expected_workers):
+    state.form.update(param_docking_algorithm=algorithm, param_cpu=cpu, param_max_workers=workers)
+    assert form.max_workers(state) == expected_max
+    assert state.form["param_max_workers"] == expected_workers

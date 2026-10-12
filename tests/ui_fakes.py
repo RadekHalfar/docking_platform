@@ -48,3 +48,42 @@ def prep_done_bridge():
             "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
         }
     )
+
+
+class RunningBridge(FakeBridge):
+    """A docking run that stays running; records Stop and streams *lines*
+    once."""
+
+    def __init__(self, lines=()):
+        super().__init__()
+        self._lines = list(lines)
+        self.stop_calls = 0
+
+    def is_running(self):
+        return True
+
+    def request_stop(self):
+        self.stop_calls += 1
+
+    def stop_requested(self):
+        return self.stop_calls > 0
+
+    def get_log_lines(self):
+        lines, self._lines = self._lines, []
+        return lines
+
+
+class FinishesWhileStreaming(FakeBridge):
+    """Running when first looked at, finished by the time its log is read --
+    i.e. the job ends in the middle of a poll."""
+
+    def __init__(self, result):
+        super().__init__(result=result)
+        self._finished = False
+
+    def is_running(self):
+        return not self._finished
+
+    def get_log_lines(self):
+        self._finished = True
+        return []

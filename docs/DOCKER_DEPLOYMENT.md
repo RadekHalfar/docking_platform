@@ -464,6 +464,12 @@ docker compose run --rm --no-deps ui-nice \
   AppTest `app` fixture does: `OUTPUT_BASE` in `tmp_path`, Ollama stubbed,
   `ui.settings.SETTINGS_FILE` patched, `OrchestratorBridge` replaced by the
   finished fake from `tests/ui_fakes.py` (shared with the AppTest tier).
+  It also shortens the progress timer to 50 ms, and its `page` fixture
+  seeds each client's `GuiSession` before the page is drawn (what AppTest
+  cases do through `app.session_state`) and keeps every page built.
+  `tests/nicegui_harness.py`'s `element()` finds hidden elements too;
+  `user.find` sees only visible ones (not the contents of a closed
+  expansion).
 - `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
   table: each Streamlit-tier test maps to the stage that ports it, to the
   `tests/test_ui_core_*.py` test that already covers it, or to "N/A" with

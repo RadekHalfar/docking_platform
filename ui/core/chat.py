@@ -8,14 +8,15 @@ otherwise :func:`answer_with_llm` parses it.
 
 The LLM path is split so a GUI can run only the slow part off its event
 loop: :func:`parse_message` makes the LLM call and touches no state;
-:func:`apply_parsed_message` then applies the result to the state. The
-parse functions are passed in, like the bridge class in ``run_control``:
-the Streamlit tests patch them on ``ui.app``.
+:func:`apply_parsed_message` then applies the result to the state, unless
+the session changed meanwhile (:func:`parse_context`). The parse functions
+are passed in, like the bridge class in ``run_control``, so each GUI's
+tests can swap them.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Optional
 
 from common.docking_algorithm import docking_algorithm_label
 from services.llm_orchestrator.workflow_llm_parser import (
@@ -31,6 +32,11 @@ from ui.core.state import reply
 
 # Starts the box picker's receptor prep: () -> (started, message, severity).
 StartPrep = Callable[[], tuple]
+
+STALE_PARSE_REPLY = (
+    "The session changed while I was reading that message, so I didn't "
+    "apply it — please send it again."
+)
 
 
 def submit(state, message: str, output_base: Path, bridge_factory: Callable) -> bool:
@@ -144,16 +150,9 @@ def parse_message(
 
     With a *prior_workflow* (the parser's last result) it is a follow-up:
     only the delta is asked for and merged onto it. Blocking; reads and
-    writes no GUI state, so it may run on a worker thread.
-
-    DEFERRED to Stage 16.4 (Review Stage R1, docs/reviews/stage_16_r1.md,
-    deferred #2): if Load, New Session or ``undo`` replaces the
-    parser's workflow while this call is in flight, apply_parsed_message()
-    validates the merge built on the *old* prior and so overwrites the new
-    session's parser state. Streamlit can't hit it (the call blocks the
-    script). Fix when 16.4 moves the call into ``run.io_bound``: keep the
-    *prior_workflow* object and, before applying, drop the reply if
-    ``state.parser.parsed_workflow is not prior_workflow``.
+    writes no GUI state, so it may run on a worker thread. A GUI that does
+    so takes :func:`parse_context` before the call and passes it to
+    :func:`apply_parsed_message` after it.
     """
     if prior_workflow and prior_workflow.get("parameters"):
         delta = parse_followup(
@@ -171,9 +170,29 @@ def parse_message(
     return parsed, set(parsed.get("parameters") or {})
 
 
-def apply_parsed_message(state, parsed: dict, named: set) -> None:
+def parse_context(state) -> tuple[Any, Any]:
+    """What a :func:`parse_message` result was built on: the parser's
+    workflow (the follow-up's prior) and the active interactive session.
+
+    A Load, ``undo``, Run Docking or New Session while the LLM call is in
+    flight replaces one of the two (by identity), and the result must not
+    be applied then: it was merged onto the *old* prior, and validating it
+    would overwrite the new session's parser state and form (Review Stage
+    R1, deferred #2).
+    """
+    return state.parser.parsed_workflow, state.interactive_session
+
+
+def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[tuple] = None) -> None:
     """Validate a :func:`parse_message` result, apply the parameters the
-    message named to the form, and post the "Got it!" reply."""
+    message named to the form, and post the "Got it!" reply.
+
+    With *context* (:func:`parse_context` taken before the LLM call), a
+    result whose session has changed since is not applied; the reply says
+    so instead."""
+    if context is not None and any(a is not b for a, b in zip(context, parse_context(state))):
+        reply(state, STALE_PARSE_REPLY)
+        return
     validated = state.parser.validate_workflow(parsed)
     # Only what this message named reaches the form. validate_workflow()
     # fills every default (and the prior turn's values ride along in a

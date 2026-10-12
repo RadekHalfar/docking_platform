@@ -267,4 +267,20 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
         and now reports the parameters revision.
     - **Fresh stack:** rebuilt and verified (all images; `down`/`up` under
       the same compose project).
-  - **Next:** Stage 16.3, the NiceGUI service skeleton.
+  - **16.3 (2026-10-12):** the `ui-nice` service (NiceGUI, port 3001,
+    non-root `appuser`) with the page layout, the `ui-nice` test tier, and a
+    parity table mapping every Streamlit test to its NiceGUI replacement.
+    Upload, settings, `saved_results/`, checkpoint dirs and `job.log` became
+    writable by both GUIs' users.
+  - **16.4 (2026-10-12):** NiceGUI's Setup tab (inputs and uploads, Docking
+    Box, Advanced with "CPUs per ligand" as a number field, Run / Save
+    Session / New Session / Reset, a redock confirm dialog, Stop and live
+    progress on a 1 s timer) and the chat drawer (every command; the LLM
+    parse runs off the event loop).
+    - **Both GUIs:** a run's log goes to its own **Run log** expander under
+      the chat. Before, it was appended to the last chat message, so a
+      message sent mid-run got the log attached.
+    - **NiceGUI only:** an LLM answer is not applied if the session changed
+      while it was being parsed, and Run Docking is disabled while a run is
+      going.
+  - **Next:** Stage 16.5, the 3D viewer and box picker.

@@ -179,11 +179,13 @@ def test_confirm_runs_the_staged_plan(state, tmp_path, factory):
     state.job_name = "trial"
     state.form["param_center_x"] = "9.0"
     run_control.run_docking(state, tmp_path, factory)
+    state.run_log.append("the first run's line")
 
     outcome = run_control.confirm_redock(state, tmp_path, factory)
 
     assert outcome == Outcome(refresh=True)
     assert state.pending_rerun is None and state.job_done is False
+    assert state.run_log == []
     args, kwargs = state.bridge.started_with
     assert args[0]["services"] == ["dock", "visualize"]
     assert kwargs == {"job_name": "trial", "state_manager": sm}
@@ -288,27 +290,49 @@ def test_active_bridge_job_id_and_any_bridge_running(state):
 # process_docking_bridge
 # ---------------------------------------------------------------------------
 
-def test_running_bridge_streams_lines_into_last_message(state):
-    state.messages.append({"role": "assistant", "content": "Starting..."})
+def test_running_bridge_collects_lines_into_the_run_log(state):
     state.bridge = FakeBridge(running=True, lines=["step 1", "step 2"])
 
     run_control.process_docking_bridge(state)
+    state.bridge._lines = ["step 3"]
+    run_control.process_docking_bridge(state)
 
-    assert _last_reply(state) == "Starting...\nstep 1\nstep 2"
+    assert state.run_log == ["step 1", "step 2", "step 3"]
     assert state.job_done is False
 
 
-def test_finished_bridge_streams_its_last_lines_before_the_reply(state):
+def test_chat_message_sent_mid_run_gets_no_log_lines(state):
+    # Review Stage R1 (Phase 16), deferred #1: the lines went to whatever
+    # message was posted last, so a chat sent mid-run got the log appended.
+    state.bridge = FakeBridge(running=True, lines=["step 1"])
+    state.messages.append({"role": "user", "content": "show history"})
+
+    run_control.process_docking_bridge(state)
+
+    assert _last_reply(state) == "show history"
+    assert state.run_log == ["step 1"]
+
+
+def test_finished_bridge_collects_its_last_lines_before_the_reply(state):
     # Review Stage R1 (Phase 16): lines queued just before the thread ended
     # were never drained, so "WORKFLOW COMPLETED SUCCESSFULLY" never showed.
-    state.messages.append({"role": "assistant", "content": "Starting..."})
     state.bridge = FakeBridge(result={"status": "completed", "results": {}},
                               lines=["", "WORKFLOW COMPLETED SUCCESSFULLY"])
 
     run_control.process_docking_bridge(state)
 
-    assert state.messages[-2]["content"] == "Starting...\n\nWORKFLOW COMPLETED SUCCESSFULLY"
+    assert state.run_log == ["", "WORKFLOW COMPLETED SUCCESSFULLY"]
     assert _last_reply(state) == "Workflow completed successfully!"
+
+
+def test_each_run_starts_a_new_run_log(state, tmp_path, factory):
+    _fill_form(state)
+    state.run_log.append("an earlier run's line")
+    earlier = state.run_log
+
+    run_control.run_docking(state, tmp_path, factory)
+
+    assert state.run_log == [] and state.run_log is not earlier
 
 
 @pytest.mark.parametrize(

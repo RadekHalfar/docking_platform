@@ -1,27 +1,26 @@
 """The parameter form <-> workflow parameters (Phase 16, Stage 16.1).
 
-Moved unchanged in behaviour from ``ui/session_state.py`` and ``ui/app.py``.
-``state.form`` holds the form's field values under the ``param_*`` keys of
+Moved from ``ui/session_state.py`` and ``ui/app.py``. ``state.form`` holds
+the form's field values under the ``param_*`` keys of
 :func:`ui.core.state.form_defaults` (plus ``input_mode``); ``state.params``
 holds the workflow parameters, including what the form doesn't show
-(upload paths, chat-parsed values).
-
-The Streamlit adapter's ``state.form`` is ``st.session_state`` itself, so
-writing a form key here pre-fills the Streamlit widget of that key. Those
-writes must happen before the widgets render (a callback, or code above
-the panel), as before the extraction.
+(upload paths, chat-parsed values). Each GUI keeps its widgets in step with
+``state.form``.
 """
 from __future__ import annotations
 
+from dataclasses import fields
+from pathlib import Path
 from typing import Optional
 
 from common.docking_algorithm import (
     DEFAULT_DOCKING_ALGORITHM,
     cpus_per_ligand,
+    docking_algorithm_label,
     normalize_docking_algorithm,
 )
 from services.llm_orchestrator.interactive_session import InteractiveSession
-from ui.core.state import GREETING_MESSAGE
+from ui.core.state import GREETING_MESSAGE, GuiSession, reply
 from ui.worker_cap import default_worker_count, max_workers_for
 
 BOX_FORM_KEYS = (
@@ -42,17 +41,27 @@ def effective_cpu(state) -> int:
     Sending 1 for PSO also keeps a cpu left over from Vina mode out of
     parameters.txt.
 
-    NOTE (Review Stage R1, Phase 15): text that isn't a whole number
-    ("four") silently counts as 1, the way the form's other numeric text
-    fields (pH, Exhaustiveness) are read. A number input would remove the
-    fallback; Phase 16 rebuilds this form in NiceGUI, so do it there
-    (Stage 16.4), not twice.
+    NOTE (Review Stage R1, Phase 15): a value that isn't a whole number
+    counts as 1. NiceGUI's field is a number input (min 1, a cleared field
+    is not written) since Stage 16.4, so only Streamlit's text field
+    ("four") reaches the fallback. Remove it with that field in Stage 16.8.
     """
     try:
         cpu = int(state.form.get("param_cpu", "1"))
     except (TypeError, ValueError):
         cpu = 1
     return cpus_per_ligand(selected_docking_algorithm(state), cpu)
+
+
+def max_workers(state) -> int:
+    """The "Max parallel workers" field's upper bound: the docking
+    service's CPU quota // CPUs per ligand. A field value above it (e.g.
+    after raising CPUs per ligand) is clamped to it here, as the server
+    would clamp it anyway."""
+    upper = max_workers_for(state.worker_cap, effective_cpu(state))
+    if state.form.get("param_max_workers", 1) > upper:
+        state.form["param_max_workers"] = upper
+    return upper
 
 
 def reset_workers_to_algorithm_default(state) -> None:
@@ -264,4 +273,79 @@ def start_new_session(state) -> None:
     state.job_done = False
     state.pending_rerun = None
     state.messages = [dict(GREETING_MESSAGE)]
+    state.run_log = []
     clear_box_picker_state(state)
+
+
+def reset_session(state) -> None:
+    """"Reset": everything back to a fresh session's values -- job, chat,
+    parameters and the whole form -- except the LLM settings and client.
+
+    The state object itself is kept (a GUI's views hold it); every field
+    is replaced by a fresh :class:`GuiSession`'s. The caller must make sure
+    no bridge is running (``run_control.active_bridge_job_id``)."""
+    fresh = GuiSession(worker_cap=state.worker_cap, settings=state.settings, llm_client=state.llm_client)
+    for f in fields(GuiSession):
+        setattr(state, f.name, getattr(fresh, f.name))
+
+
+def commit_protein_id(state) -> None:
+    """The Protein ID field was committed (Enter / leaving the field): take
+    it into ``state.params`` and confirm in chat, if it changed."""
+    pid = str(state.form.get("param_protein_id", "")).strip()
+    if pid and pid != state.params.get("protein_id", ""):
+        state.params["protein_id"] = pid
+        reply(state, f"Updated protein ID: **{pid}**")
+
+
+def commit_ligand_ids(state) -> None:
+    """The Ligand IDs field was committed: take the comma-separated IDs
+    into ``state.params`` and confirm in chat, if they changed."""
+    text = str(state.form.get("param_ligand_ids_text", "")).strip()
+    ids = [l.strip() for l in text.split(",") if l.strip()]
+    if ids and ids != state.params.get("ligand_ids"):
+        state.params["ligand_ids"] = ids
+        reply(state, f"Updated ligands: **{', '.join(ids)}**")
+
+
+def params_summary(state) -> Optional[str]:
+    """The "Current parameters" summary as markdown, or None while there
+    is nothing to show (no parameters and empty Docking Box fields).
+
+    The docking box and algorithm come from the form, not from
+    ``params["center"]`` / ``params["box_size"]``: the form is what
+    :func:`collect_form_params` docks with, and every writer updates it
+    (typing, a box-picker click or size step, a chat parse, a geometry
+    command), whereas the params lists only change on a chat parse or a
+    run -- preferring them left the summary stale after a visual pick.
+    """
+    params = state.params
+    form = state.form
+    if not params and not any(str(form.get(k, "")).strip() for k in BOX_FORM_KEYS):
+        return None
+
+    if params.get("protein_id"):
+        protein = params["protein_id"]
+    elif params.get("protein_file"):
+        protein = Path(params["protein_file"]).name
+    else:
+        protein = "—"
+
+    if params.get("ligand_ids"):
+        ligands = ", ".join(params["ligand_ids"])
+    elif params.get("ligand_files"):
+        ligands = ", ".join(Path(p).name for p in params["ligand_files"])
+    else:
+        ligands = "—"
+
+    def coord(keys: tuple) -> str:
+        parts = [str(form.get(k, "")).strip() for k in keys]
+        return " / ".join(p if p else "—" for p in parts)
+
+    return (
+        f"**Protein:** {protein}  \n"
+        f"**Ligands:** {ligands}  \n"
+        f"**Center:** {coord(BOX_FORM_KEYS[:3])}  \n"
+        f"**Box:** {coord(BOX_FORM_KEYS[3:])}  \n"
+        f"**Algorithm:** {docking_algorithm_label(selected_docking_algorithm(state))}"
+    )

@@ -30,8 +30,7 @@ def load_workflow_results(output_base: Path, job_id: str) -> Optional[dict]:
 def load_params_into_form(state, params: dict) -> None:
     """Make *params* the form's full parameter state: ``state.params``, every
     form field (load_session_params) and the chat parser. Shared by a Load
-    and a revision restore. In Streamlit it must run before the parameter
-    widgets render (sidebar/chat code, or an on_click callback).
+    and a revision restore.
     """
     # A receptor loaded for box picking belongs to the previous protein; kept
     # across a Load or restore that changes the protein, a geometry chat
@@ -79,6 +78,8 @@ def resume_session(state, job: dict, output_base: Path) -> None:
         session.pending_changed_params |= CORE_PARAMS
     state.job_id = job["job_id"]
     state.job_name = job.get("job_name", "")
+    # The run log shown belongs to the previous session's last run.
+    state.run_log = []
     # Keeps process_docking_bridge()'s completion sync from overwriting
     # session.last_results with a previous bridge's result (it only runs
     # while job_done is False, i.e. for a run it's actively tracking).
@@ -121,8 +122,7 @@ def undo_to_revision(state, revision: int) -> str:
     and return the reply to show.
 
     Shared by the revision history panel's button and the chat command.
-    In Streamlit it must run before the parameter widgets render, since it
-    rewrites their keys.
+    It rewrites the form, so the GUI redraws the form's fields afterwards.
     """
     session = state.interactive_session
     if not session.has_active_job():

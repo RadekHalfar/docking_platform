@@ -96,6 +96,10 @@ class GuiSession:
     viewed_job_id: Optional[str] = None
     # The finished docking run has been handled (reply posted, results synced).
     job_done: bool = False
+    # The docking run's streamed log lines. A fresh list per run (run_docking,
+    # confirm_redock), so a GUI can tell a new run's log by its identity; the
+    # chat messages never carry it.
+    run_log: List[str] = field(default_factory=list)
     # A staged redock awaiting confirmation: {"job_id", "steps", "params"}.
     pending_rerun: Optional[dict] = None
     comparison: Optional[dict] = None

@@ -9,12 +9,11 @@ existing entry points, now thin delegations to ``ui/core``.
 """
 import streamlit as st
 
-from services.llm_orchestrator import create_llm_client
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from ui.core import form
 from ui.core.state import DEFAULT_INPUT_MODE, GREETING_MESSAGE, form_defaults
-from ui.settings import load_settings, save_settings
+from ui.settings import build_llm_client, load_settings, save_settings
 from ui.worker_cap import detect_moldina_worker_cap
 
 # Detected once at import time — the docking service's worker ceiling (and
@@ -53,6 +52,7 @@ _STATE_KEYS = {
     "job_name": ("job_name", "", False),
     "viewed_job_id": ("viewed_job_id", None, False),
     "job_done": ("_job_done", False, False),
+    "run_log": ("_run_log", None, False),
     "pending_rerun": ("_pending_rerun", None, True),
     "comparison": ("comparison", None, False),
     "save_conflict": ("_save_conflict", None, True),
@@ -126,7 +126,7 @@ def init() -> None:
         st.session_state.settings = load_settings()
 
     if "llm_client" not in st.session_state:
-        st.session_state.llm_client = _build_llm_client(st.session_state.settings)
+        st.session_state.llm_client = build_llm_client(st.session_state.settings)
 
     if "params" not in st.session_state:
         st.session_state.params = {}
@@ -149,6 +149,9 @@ def init() -> None:
     if "interactive_session" not in st.session_state:
         st.session_state.interactive_session = InteractiveSession()
 
+    if "_run_log" not in st.session_state:
+        st.session_state["_run_log"] = []
+
     for key, default in _WIDGET_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = default
@@ -167,16 +170,6 @@ def init() -> None:
             st.session_state[key] = st.session_state[key]
 
 
-def _build_llm_client(settings: dict):
-    return create_llm_client(
-        provider=settings["provider"],
-        endpoint=settings["endpoint"],
-        model=settings["model"],
-        api_key=settings.get("api_key"),
-        base_url=settings.get("base_url"),
-    )
-
-
 def apply_settings(new_settings: dict) -> None:
     """Persist settings to disk and rebuild the LLM client for the current session.
 
@@ -184,7 +177,7 @@ def apply_settings(new_settings: dict) -> None:
     """
     st.session_state.settings = new_settings
     save_settings(new_settings)
-    st.session_state.llm_client = _build_llm_client(new_settings)
+    st.session_state.llm_client = build_llm_client(new_settings)
 
 
 def clear_box_picker_state() -> None:

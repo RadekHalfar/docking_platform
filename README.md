@@ -362,7 +362,7 @@ docking_platform/
 │
 ├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
-│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, run_control, sessions, chat, box_picker, save_results, results_view (Phase 16)
+│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view (Phase 16)
 │   ├── session_state.py        # Streamlit adapter: st.session_state as a GuiSession view, init
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-run log sink (no stdout capture)
@@ -372,11 +372,14 @@ docking_platform/
 │   ├── mol_viewer.py           # Python wrapper for the 3Dmol.js viewer/box-picker component
 │   ├── components/mol_viewer/  # Vendored 3Dmol.js + vanilla-JS Streamlit component (no build step)
 │   ├── results.py              # Results/comparison rendering
-│   └── settings.py             # Persisted LLM provider settings
+│   └── settings.py             # Persisted LLM provider settings, LLM client builder
 │
 ├── ui_nice/                     # NiceGUI web UI on port 3001 (Phase 16; replaces ui/app.py at Stage 16.8)
 │   ├── app.py                  # Entry point: the page (one GuiSession per client) and /health
 │   ├── layout.py               # Header, settings dialog, chat drawer, Setup/Results/Sessions tabs
+│   ├── controller.py           # Per-client page controller: progress timer, sync of the views
+│   ├── setup_tab.py            # Setup tab: inputs, Docking Box, Advanced, actions, redock dialog, progress
+│   ├── chat_drawer.py          # Chat drawer: messages, Run log, input (LLM parse via run.io_bound)
 │   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)
 │
 ├── installer/                   # Standalone PyInstaller installer

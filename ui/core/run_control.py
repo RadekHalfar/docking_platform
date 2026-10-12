@@ -1,10 +1,8 @@
 """Run, redock, stop and save-session actions (Phase 16, Stage 16.1).
 
-Moved unchanged in behaviour from ``ui/app.py``. Replies go into
-``state.messages``; what else the page must do comes back as an
-:class:`~ui.core.state.Outcome` (``refresh``: Streamlit's ``st.rerun()``;
-``error``: an inline error), one for one with what the Streamlit callbacks
-did before the extraction.
+Moved from ``ui/app.py``. Replies go into ``state.messages``; what else
+the page must do comes back as an :class:`~ui.core.state.Outcome`
+(``refresh``: redraw now; ``error``: an inline error next to the control).
 
 The bridge class is passed in (*bridge_factory*), never imported here: the
 GUI tests swap it for a fake, and each GUI owns which class it runs.
@@ -95,6 +93,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
     state.job_name = job_name
     state.viewed_job_id = job_id
     state.job_done = False
+    state.run_log = []
 
     state_manager = WorkflowStateManager(Path(output_base) / job_id)
     state_manager.save_parameters_checkpoint(validated["parameters"], source="initial_parse")
@@ -193,6 +192,7 @@ def confirm_redock(state, output_base: Path, bridge_factory: BridgeFactory) -> O
     rerun_workflow = {"services": pending["steps"], "parameters": pending["params"]}
 
     state.job_done = False
+    state.run_log = []
     state.viewed_job_id = session.job_id
 
     bridge = bridge_factory()
@@ -247,28 +247,20 @@ def save_session(state) -> Outcome:
 
 
 def process_docking_bridge(state) -> None:
-    """Stream a running job's log lines into the chat and, once it has
-    finished, record the outcome and post the reply -- exactly once
+    """Collect a running job's log lines into ``state.run_log`` and, once
+    it has finished, record the outcome and post the reply -- exactly once
     (``state.job_done``). Called on every page update / poll tick."""
     bridge = state.bridge
     if not bridge:
         return
 
-    # Stream progress lines into the last assistant message -- also once
-    # more after the job ends, or its last lines ("WORKFLOW COMPLETED
-    # SUCCESSFULLY") are lost. is_running() is read *before* draining: once
-    # the thread is seen finished, everything it printed is already queued.
-    # DEFERRED to Stage 16.4 (Review Stage R1, docs/reviews/stage_16_r1.md,
-    # deferred #1; part (a), the lost last lines, fixed in the review):
-    # (b) "the last message" is whatever was posted last, so a chat sent
-    # mid-run gets the log appended to it; (c) the += rebuilds an
-    # ever-growing string each tick. Fix when live progress moves to a
-    # ui.timer: give the run its own log (a field set by
-    # run_docking/confirm_redock) and render it next to the chat.
+    # Drained once more after the job ends, or its last lines ("WORKFLOW
+    # COMPLETED SUCCESSFULLY") are lost. is_running() is read *before*
+    # draining: once the thread is seen finished, everything it printed is
+    # already queued. The log is the run's own, not the last chat message's
+    # (Review Stage R1, deferred #1): a chat sent mid-run stays as typed.
     running = bridge.is_running()
-    new_lines = bridge.get_log_lines()
-    if new_lines and state.messages:
-        state.messages[-1]["content"] += "\n" + "\n".join(new_lines)
+    state.run_log.extend(bridge.get_log_lines())
     if running:
         return
 

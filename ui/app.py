@@ -7,7 +7,6 @@ import streamlit as st
 
 from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label
 from common.path_utils import from_container_path
-from common.utils import ensure_shared_directory
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.rerun_planner import describe_rerun_plan
 from services.llm_orchestrator.workflow_llm_parser import (
@@ -15,7 +14,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_workflow_with_llm,
 )
 from ui.core import form as gui_form
-from ui.core import box_picker, chat, results_view, run_control, sessions
+from ui.core import box_picker, chat, results_view, run_control, sessions, uploads
 from ui.core import save_results as gui_save
 from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs
 from ui.mol_viewer import render_mol_viewer
@@ -26,14 +25,12 @@ from ui.session_state import (
     WORKER_CAP,
     apply_settings,
     clear_box_picker_state,
-    effective_cpu,
     gui_session,
     init,
     reset_workers_to_algorithm_default,
-    selected_docking_algorithm,
     start_new_session,
 )
-from ui.worker_cap import describe_worker_cap, max_workers_for
+from ui.worker_cap import describe_worker_cap
 
 st.set_page_config(
     layout="wide",
@@ -50,21 +47,8 @@ UPLOAD_DIR = OUTPUT_BASE / "uploads"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _save_upload(uploaded_file, upload_dir: Path) -> str:
-    """Save an uploaded file under upload_dir, using only its basename.
-
-    Streamlit's upload endpoint is a plain HTTP POST exposing whatever
-    filename the client sends; without stripping directory components a
-    crafted name (e.g. "../../etc/x") could write outside upload_dir.
-    """
-    safe_name = Path(uploaded_file.name).name
-    if not safe_name or safe_name in (".", ".."):
-        raise ValueError(f"Unusable uploaded filename: {uploaded_file.name!r}")
-
-    # Shared: the root Streamlit UI and the non-root NiceGUI UI (Phase 16)
-    # both upload into this one directory.
-    dest = ensure_shared_directory(upload_dir) / safe_name
-    dest.write_bytes(uploaded_file.getbuffer())
-    return str(dest)
+    """See :func:`ui.core.uploads.save_upload`."""
+    return str(uploads.save_upload(uploaded_file.name, uploaded_file.getbuffer(), upload_dir))
 
 
 def _collect_form_params() -> dict:
@@ -474,6 +458,11 @@ def _render_chat_history(container) -> None:
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+        # The docking run's streamed log (ui.core.run_control.process_docking_bridge).
+        run_log = st.session_state.get("_run_log")
+        if run_log:
+            with st.expander("Run log", expanded=_any_bridge_running()):
+                st.code("\n".join(run_log[-results_view.JOB_LOG_TAIL_LINES:]))
 
 
 # ── Parameters panel ──────────────────────────────────────────────────────────
@@ -484,51 +473,12 @@ _BOX_WIDGET_KEYS = gui_form.BOX_FORM_KEYS
 
 
 def _render_params_summary() -> None:
-    params = st.session_state.params
-    box_fields_set = any(str(st.session_state.get(k, "")).strip() for k in _BOX_WIDGET_KEYS)
-    if not params and not box_fields_set:
-        return
-
-    # Protein
-    if params.get("protein_id"):
-        protein = params["protein_id"]
-    elif params.get("protein_file"):
-        protein = Path(params["protein_file"]).name
-    else:
-        protein = "—"
-
-    # Ligands
-    if params.get("ligand_ids"):
-        ligands = ", ".join(params["ligand_ids"])
-    elif params.get("ligand_files"):
-        ligands = ", ".join(Path(p).name for p in params["ligand_files"])
-    else:
-        ligands = "—"
-
-    # Docking box — read from the Docking Box fields, not params["center"] /
-    # params["box_size"]: the fields are what _collect_form_params() actually
-    # docks with, and every writer updates them (manual entry, box-picker
-    # click/size step, chat-parsed values, geometry commands), whereas the
-    # params lists only change on chat parsing or a run -- preferring them
-    # left the summary stale after a visual pick or resize.
-    def _coord(widget_keys: tuple) -> str:
-        parts = [str(st.session_state.get(k, "")).strip() for k in widget_keys]
-        return " / ".join(p if p else "—" for p in parts)
-
-    center = _coord(_BOX_WIDGET_KEYS[:3])
-    box = _coord(_BOX_WIDGET_KEYS[3:])
-
-    # The selector, not params: like the box fields, it is what docks.
-    algorithm = selected_docking_algorithm()
-
-    with st.expander("Current parameters", expanded=True):
-        st.markdown(
-            f"**Protein:** {protein}  \n"
-            f"**Ligands:** {ligands}  \n"
-            f"**Center:** {center}  \n"
-            f"**Box:** {box}  \n"
-            f"**Algorithm:** {docking_algorithm_label(algorithm)}"
-        )
+    """See :func:`ui.core.form.params_summary`. Filled in last in its panel
+    (see render_parameters_panel), so a box-picker click this run shows."""
+    summary = gui_form.params_summary(gui_session())
+    if summary is not None:
+        with st.expander("Current parameters", expanded=True):
+            st.markdown(summary)
 
 
 def _on_restore_revision_click() -> None:
@@ -646,12 +596,9 @@ def render_parameters_panel() -> None:
             )
 
         st.checkbox("Parallel ligand docking", key="param_parallel")
-        # The server clamps workers to its CPU quota // CPUs per ligand; a
-        # value above the widget's max would make st.number_input raise, so
-        # clamp it first (e.g. after raising CPUs per ligand).
-        max_workers = max_workers_for(WORKER_CAP, effective_cpu())
-        if st.session_state.get("param_max_workers", 1) > max_workers:
-            st.session_state["param_max_workers"] = max_workers
+        # Clamped before the widget renders: a value above its max would
+        # make st.number_input raise (e.g. after raising CPUs per ligand).
+        max_workers = gui_form.max_workers(gui_session())
         st.number_input(
             "Max parallel workers",
             key="param_max_workers",
@@ -731,23 +678,11 @@ def render_parameters_panel() -> None:
 
 
 def _on_protein_id_change() -> None:
-    pid = st.session_state.get("param_protein_id", "").strip()
-    old = st.session_state.params.get("protein_id", "")
-    if pid and pid != old:
-        st.session_state.params["protein_id"] = pid
-        st.session_state.messages.append(
-            {"role": "assistant", "content": f"Updated protein ID: **{pid}**"}
-        )
+    gui_form.commit_protein_id(gui_session())
 
 
 def _on_ligand_ids_change() -> None:
-    text = st.session_state.get("param_ligand_ids_text", "").strip()
-    ids = [l.strip() for l in text.split(",") if l.strip()]
-    if ids and ids != st.session_state.params.get("ligand_ids"):
-        st.session_state.params["ligand_ids"] = ids
-        st.session_state.messages.append(
-            {"role": "assistant", "content": f"Updated ligands: **{', '.join(ids)}**"}
-        )
+    gui_form.commit_ligand_ids(gui_session())
 
 
 def _render_rcsb_inputs() -> None:
@@ -769,36 +704,17 @@ def _on_protein_upload_change() -> None:
     uploaded = st.session_state.get("upload_protein")
     if uploaded is not None:
         path = _save_upload(uploaded, UPLOAD_DIR)
-        st.session_state.params["protein_file"] = str(path)
-        st.session_state.params.pop("protein_id", None)
-        if st.session_state.get("_last_protein_file") != uploaded.name:
-            st.session_state["_last_protein_file"] = uploaded.name
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"Local protein file set: **{uploaded.name}**"}
-            )
+        # Streamlit can re-fire this callback for the same file: reply once.
+        announce = st.session_state.get("_last_protein_file") != uploaded.name
+        st.session_state["_last_protein_file"] = uploaded.name
+        uploads.apply_protein_upload(gui_session(), uploaded.name, path, announce=announce)
     else:
-        st.session_state.params.pop("protein_file", None)
+        uploads.clear_protein_upload(gui_session())
         st.session_state.pop("_last_protein_file", None)
 
 
 def _on_ligand_upload_change() -> None:
-    uploaded_list = st.session_state.get("upload_ligands") or []
-    names = tuple(f.name for f in uploaded_list)
-    if names:
-        paths = [str(_save_upload(f, UPLOAD_DIR)) for f in uploaded_list]
-        st.session_state.params["ligand_files"] = paths
-        st.session_state.params.pop("ligand_ids", None)
-        if names != tuple(st.session_state.get("_last_ligand_files", ())):
-            st.session_state["_last_ligand_files"] = names
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": f"{len(uploaded_list)} local ligand file(s) set: **{', '.join(names)}**",
-                }
-            )
-    else:
-        st.session_state.params.pop("ligand_files", None)
-        st.session_state.pop("_last_ligand_files", None)
+    _apply_ligand_upload_widget("upload_ligands", "_last_ligand_files", folder_mode=False)
 
 
 def _render_local_file_inputs() -> None:
@@ -825,24 +741,23 @@ def _render_local_file_inputs() -> None:
 
 
 def _on_folder_ligand_upload_change() -> None:
-    uploaded_list = st.session_state.get("upload_folder_ligands") or []
+    _apply_ligand_upload_widget("upload_folder_ligands", "_last_folder_ligand_files", folder_mode=True)
+
+
+def _apply_ligand_upload_widget(widget_key: str, last_key: str, *, folder_mode: bool) -> None:
+    """Shared by both ligand uploaders: save the files and take them into
+    the parameters (:mod:`ui.core.uploads`)."""
+    uploaded_list = st.session_state.get(widget_key) or []
     names = tuple(f.name for f in uploaded_list)
-    if names:
-        paths = [str(_save_upload(f, UPLOAD_DIR)) for f in uploaded_list]
-        st.session_state.params["ligand_files"] = paths
-        st.session_state.params.pop("ligand_ids", None)
-        st.session_state.params.pop("ligand_folder", None)
-        if names != tuple(st.session_state.get("_last_folder_ligand_files", ())):
-            st.session_state["_last_folder_ligand_files"] = names
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": f"{len(uploaded_list)} local ligand file(s) set: **{', '.join(names)}**",
-                }
-            )
-    else:
-        st.session_state.params.pop("ligand_files", None)
-        st.session_state.pop("_last_folder_ligand_files", None)
+    if not names:
+        uploads.clear_ligand_uploads(gui_session())
+        st.session_state.pop(last_key, None)
+        return
+    paths = [_save_upload(f, UPLOAD_DIR) for f in uploaded_list]
+    # Streamlit can re-fire this callback for the same files: reply once.
+    announce = names != tuple(st.session_state.get(last_key, ()))
+    st.session_state[last_key] = names
+    uploads.apply_ligand_uploads(gui_session(), names, paths, folder_mode=folder_mode, announce=announce)
 
 
 def _render_folder_inputs() -> None:

@@ -160,9 +160,8 @@ def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
 def process_box_picker_bridge(state, output_base: Path) -> None:
     """Handle a finished "Load receptor for box picking" job: record the
     receptor, apply a geometry chat command that was waiting for it, and
-    clear the bridge. In Streamlit it runs before the layout, so the form
-    keys it writes are set before their widgets exist, and its chat reply
-    is drawn this same run."""
+    clear the bridge. Called on every page update / poll tick, like
+    ``run_control.process_docking_bridge``."""
     bridge = state.box_picker_bridge
     if not bridge or bridge.is_running():
         return

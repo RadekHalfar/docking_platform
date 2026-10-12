@@ -1,19 +1,27 @@
-"""The NiceGUI page layout (Phase 16, Stage 16.3).
+"""The NiceGUI page layout (Phase 16).
 
 One page: a header (title, chat toggle, settings), a collapsible chat drawer
 on the right, and the main-area tabs Setup / Results / Sessions. Setup holds
 a resizable splitter, form on the left and viewer on the right.
 
-Stage 16.3 builds the shell only. Each region shows which stage fills it,
-and :class:`PageParts` hands those stages the elements to fill.
+Stage 16.3 built the shell; Stage 16.4 fills the chat drawer
+(:mod:`ui_nice.chat_drawer`) and Setup's form side (:mod:`ui_nice.setup_tab`),
+both driven by one :class:`~ui_nice.controller.PageController` per client.
+The regions still to come say which stage fills them, and
+:class:`PageParts` hands those stages what they need.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from nicegui import ui
 
 from ui.core.state import GuiSession
+from ui_nice import controller as controller_module
+from ui_nice.chat_drawer import ChatView
+from ui_nice.controller import PageController
+from ui_nice.setup_tab import SetupView
 
 PAGE_TITLE = "Molecular Docking Platform"
 TAB_SETUP = "Setup"
@@ -23,23 +31,30 @@ TAB_SESSIONS = "Sessions"
 
 @dataclass
 class PageParts:
-    """The page's containers, for the stages that fill them."""
+    """The page's controller, views and containers, for the stages that fill them."""
 
+    controller: PageController
     chat_drawer: ui.right_drawer
-    chat_messages: ui.column
+    chat: ChatView
     settings_dialog: ui.dialog
     tabs: ui.tabs
     tab_panels: ui.tab_panels
     setup_splitter: ui.splitter
+    setup: SetupView
 
 
-def build_page(state: GuiSession) -> PageParts:
+def build_page(state: GuiSession, output_base: Path) -> PageParts:
     """Draw the whole page for one client. ``state`` is that client's own."""
+    controller = PageController(state, output_base)
+    # A job that finished before this page was built is handled before the
+    # first draw, as Streamlit handles it at the top of the script.
+    controller.tick()
     settings_dialog = _settings_dialog()
-    chat_drawer, chat_messages = _chat_drawer(state)
+    chat_drawer, chat = _chat_drawer(controller)
     _header(chat_drawer, settings_dialog)
-    tabs, tab_panels, setup_splitter = _main_tabs()
-    return PageParts(chat_drawer, chat_messages, settings_dialog, tabs, tab_panels, setup_splitter)
+    tabs, tab_panels, setup_splitter, setup = _main_tabs(controller)
+    ui.timer(controller_module.POLL_INTERVAL_S, controller.tick)
+    return PageParts(controller, chat_drawer, chat, settings_dialog, tabs, tab_panels, setup_splitter, setup)
 
 
 def _header(chat_drawer: ui.right_drawer, settings_dialog: ui.dialog) -> None:
@@ -55,7 +70,7 @@ def _header(chat_drawer: ui.right_drawer, settings_dialog: ui.dialog) -> None:
 
 
 def _settings_dialog() -> ui.dialog:
-    with ui.dialog() as dialog, ui.card().classes("min-w-80"):
+    with ui.dialog().mark("settings-dialog") as dialog, ui.card().classes("min-w-80"):
         ui.label("LLM settings").classes("text-lg font-medium")
         ui.label("Provider and model settings arrive in Stage 16.7.").classes("text-grey-7")
         with ui.row().classes("w-full justify-end"):
@@ -63,19 +78,13 @@ def _settings_dialog() -> ui.dialog:
     return dialog
 
 
-def _chat_drawer(state: GuiSession) -> tuple[ui.right_drawer, ui.column]:
+def _chat_drawer(controller: PageController) -> tuple[ui.right_drawer, ChatView]:
     with ui.right_drawer(value=True).props("bordered width=420") as drawer:
-        ui.label("Chat").classes("text-lg font-medium")
-        with ui.column().classes("w-full") as messages:
-            for message in state.messages:
-                # Markdown, as Streamlit's st.chat_message renders it.
-                with ui.chat_message(sent=message["role"] == "user").classes("w-full"):
-                    ui.markdown(message["content"])
-        ui.label("The chat input arrives in Stage 16.4.").classes("text-grey-7")
-    return drawer, messages
+        chat = ChatView(controller)
+    return drawer, chat
 
 
-def _main_tabs() -> tuple[ui.tabs, ui.tab_panels, ui.splitter]:
+def _main_tabs(controller: PageController) -> tuple[ui.tabs, ui.tab_panels, ui.splitter, SetupView]:
     with ui.tabs().classes("w-full") as tabs:
         ui.tab(TAB_SETUP)
         ui.tab(TAB_RESULTS)
@@ -84,11 +93,11 @@ def _main_tabs() -> tuple[ui.tabs, ui.tab_panels, ui.splitter]:
         with ui.tab_panel(TAB_SETUP):
             with ui.splitter(value=45).classes("w-full").style("min-height: 70vh") as splitter:
                 with splitter.before:
-                    ui.label("Input, parameters and docking box arrive in Stage 16.4.").classes("p-4")
+                    setup = SetupView(controller)
                 with splitter.after:
                     ui.label("The 3D viewer and box picker arrive in Stage 16.5.").classes("p-4")
         with ui.tab_panel(TAB_RESULTS):
             ui.label("Results arrive in Stage 16.6.")
         with ui.tab_panel(TAB_SESSIONS):
             ui.label("Session history arrives in Stage 16.7.")
-    return tabs, panels, splitter
+    return tabs, panels, splitter, setup

@@ -1491,3 +1491,24 @@ def test_results_name_the_algorithm_that_docked(app, output_base, algorithm, lab
 
     assert not at.exception
     assert f"Docked with {label}" in [c.value for c in at.caption]
+
+
+# ---------------------------------------------------------------------------
+# Stage 16.4: a run's log has its own expander (Review Stage R1, deferred #1)
+# ---------------------------------------------------------------------------
+
+def test_run_log_is_shown_apart_from_the_chat(app):
+    # The log used to be appended to the last chat message, so a message
+    # sent mid-run got it attached.
+    app.session_state["bridge"] = FakeBridge(result={"status": "completed", "results": {}})
+    app.session_state["job_id"] = "job_20260930_000000_abcdef"
+    app.session_state["_run_log"] = ["STEP 1: Getting input files...", "WORKFLOW COMPLETED SUCCESSFULLY"]
+    app.session_state["messages"] = [{"role": "user", "content": "show history"}]
+
+    at = app.run()
+
+    assert not at.exception
+    run_log = next(e for e in at.expander if e.label == "Run log")
+    assert "WORKFLOW COMPLETED SUCCESSFULLY" in run_log.code[0].value
+    assert "show history" in _chat_texts(at)
+    assert not [t for t in _chat_texts(at) if "STEP 1" in t]

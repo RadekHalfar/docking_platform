@@ -7,10 +7,14 @@ LLM settings and session history.
 
 Phase 16 is moving the GUI to NiceGUI. Until that is finished (Stage 16.8),
 the NiceGUI version runs alongside as the `ui-nice` service at
-http://localhost:3001. So far it is only the page layout: a header with
-Settings, a collapsible chat drawer on the right, and the tabs Setup /
-Results / Sessions, which Stages 16.4–16.7 fill in. Use the Streamlit GUI
-on port 3000 for real work until then.
+http://localhost:3001: a header with Settings, a collapsible chat drawer on
+the right, and the tabs Setup / Results / Sessions. Since Stage 16.4 the
+chat drawer takes every command and LLM message, and the Setup tab has the
+whole form (inputs, Docking Box, Advanced, Run / Save Session / New
+Session / Reset, Stop and live progress). The 3D viewer and box picker
+(16.5), Results (16.6) and Sessions with Load (16.7) are still to come, so
+use the Streamlit GUI on port 3000 for real work until then. Where the two
+differ, this guide says so.
 
 Whenever a session is active, the Chat panel shows a small **Session:
 name (`job_id`)** line above the "Chat" title, so it stays clear which
@@ -75,6 +79,14 @@ one. This follow-up parsing only kicks in once something has already
 been extracted in the current chat — the very first message in a chat is
 always parsed as a complete, standalone request.
 
+While a session runs, its step-by-step log streams into a **Run log**
+expander under the chat, not into the chat messages themselves, so a
+message you send mid-run stays as you typed it. In the NiceGUI GUI the chat
+input is disabled while the LLM reads a message ("Parsing with LLM...").
+If you Load a session, restore a revision, click **Run Docking** or start a
+**New Session** before it answers, the answer is not applied: it says the
+session changed and asks you to send the message again.
+
 ### Auto-Filling the Docking Box from the Protein
 
 Once a protein has been loaded (via **Run Docking**, or the box picker's
@@ -121,7 +133,8 @@ algorithm** selector:
 - **Vina (Monte Carlo)** — AutoDock Vina's own search in the same binary.
   Much slower per ligand (about 1.5 minutes for 6lu7/ATP at the defaults),
   but its search is more thorough. A **CPUs per ligand** field appears, and
-  both it and Exhaustiveness change how long each ligand takes.
+  both it and Exhaustiveness change how long each ligand takes. In the
+  NiceGUI GUI it is a number field that takes whole numbers from 1 up.
 
 The chat commands "use vina", "switch to PSO" and "set algorithm to vina" move
 the selector too, without an LLM call (see
@@ -569,18 +582,27 @@ What the numbers say about Streamlit:
 
 ## Code Structure (for developers)
 
-Since Phase 16 (Stages 16.1–16.2) the GUI's logic is split from Streamlit,
-so the NiceGUI port (`ui_nice/`, below) reuses it rather than rewriting it:
+Since Phase 16 (Stages 16.1–16.2, plus 16.4's additions) the GUI's logic is
+split from Streamlit, so the NiceGUI port (`ui_nice/`, below) reuses it
+rather than rewriting it:
 
 - **`ui/core/`** — framework-free, no `streamlit` or `nicegui` import:
   - `state.py`: `GuiSession`, one browser client's state, never module-global.
-  - `form.py`: form ↔ workflow parameters.
-  - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session, bridge polling.
+  - `form.py`: form ↔ workflow parameters, the "Current parameters"
+    summary, the worker-count bound, Protein/Ligand ID commits, New Session
+    and Reset.
+  - `uploads.py`: saving an uploaded file (basename only, into the shared
+    upload dir) and taking uploads into the parameters.
+  - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session,
+    bridge polling. A run's log lines go to `state.run_log`, a fresh list
+    per run, never into the chat messages.
   - `sessions.py`: Load, rename, delete, revision history and undo.
   - `chat.py`: chat commands (geometry, algorithm, history, save) and the
     LLM parse. `parse_message()` is the blocking LLM call and touches no
     state, so a GUI with an event loop can run it on a worker thread and
-    then apply the result with `apply_parsed_message()`.
+    then apply the result with `apply_parsed_message()`. Passing it the
+    `parse_context()` taken before the call drops a result whose session
+    changed meanwhile.
   - `box_picker.py`: the box picker (receptor prep job, viewer click, − / +
     steps) and protein geometry.
   - `save_results.py`: Save results as…, its guard and the name-clash flow.
@@ -602,11 +624,21 @@ so the NiceGUI port (`ui_nice/`, below) reuses it rather than rewriting it:
   functions draw `ui/core`'s data with Streamlit widgets.
 - **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui-nice`
   service on port 3001 as the non-root `appuser`:
-  - `app.py`: the `/` page, which gives each client its own `GuiSession`,
-    and the `/health` route the compose healthcheck uses.
-  - `layout.py`: `build_page(state)` draws the header, settings dialog,
-    chat drawer, tabs and the Setup splitter, and returns them as
-    `PageParts` for the stages that fill them.
+  - `app.py`: the `/` page, which gives each client its own `GuiSession`
+    (with the LLM settings and client), and the `/health` route the compose
+    healthcheck uses.
+  - `layout.py`: `build_page(state, output_base)` draws the header,
+    settings dialog, chat drawer, tabs and the Setup splitter, and returns
+    them as `PageParts` for the stages that fill them.
+  - `controller.py`: `PageController`, one per client. It holds the state,
+    `output_base` and the bridge class, and runs the 1 s `ui.timer` that
+    folds the background jobs into the state. Every handler calls a
+    `ui/core` action and then `sync()`, which has each view update only
+    the widgets whose value changed.
+  - `setup_tab.py` and `chat_drawer.py`: the Setup form and the chat
+    drawer. Widgets and `state.form` are kept in step explicitly (change
+    handlers write the form; `sync()` writes it back), not with
+    `bind_value`. The LLM parse runs in `run.io_bound`.
   - `pytest.ini`: the `ui-nice` test tier (see
     [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#gui-nicegui-tests)).
 - **`ui/orchestrator_bridge.py`** gives each run its own log. The bridge

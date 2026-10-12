@@ -264,3 +264,43 @@ def test_answer_with_llm_reports_a_missing_parser(state):
     state.parser = None
     chat.answer_with_llm(state, "dock 6lu7", parse_workflow=_boom, parse_followup=_boom)
     assert state.messages[-1]["content"].startswith("Sorry, I couldn't parse that:")
+
+
+# ---------------------------------------------------------------------------
+# Stage 16.4: a parse that ran off the event loop is applied only to the
+# session it was built on (Review Stage R1, deferred #2)
+# ---------------------------------------------------------------------------
+
+_PARSED = {"services": ["dock"], "parameters": {"protein_id": "1abc"}}
+
+
+def test_parse_applied_when_the_session_is_unchanged(state):
+    context = chat.parse_context(state)
+    chat.apply_parsed_message(state, copy.deepcopy(_PARSED), {"protein_id"}, context=context)
+    assert state.form["param_protein_id"] == "1abc"
+
+
+def test_parse_dropped_when_the_parser_moved_on(state):
+    # e.g. a Load or `undo` re-seeded the parser while the LLM call ran.
+    context = chat.parse_context(state)
+    state.parser.validate_workflow({"services": ["dock"], "parameters": {"protein_id": "6lu7"}})
+    seeded = state.parser.parsed_workflow
+
+    chat.apply_parsed_message(state, copy.deepcopy(_PARSED), {"protein_id"}, context=context)
+
+    assert state.parser.parsed_workflow is seeded
+    assert state.form["param_protein_id"] == ""
+    assert _contents(state) == [chat.STALE_PARSE_REPLY]
+
+
+def test_parse_dropped_after_a_new_session(state):
+    # New Session replaces the interactive session but not the parser.
+    from ui.core.form import start_new_session
+
+    context = chat.parse_context(state)
+    start_new_session(state)
+
+    chat.apply_parsed_message(state, copy.deepcopy(_PARSED), {"protein_id"}, context=context)
+
+    assert state.params == {}
+    assert _contents(state)[-1] == chat.STALE_PARSE_REPLY

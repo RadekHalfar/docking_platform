@@ -35,10 +35,10 @@ OTHER_DOWNLOAD_SUFFIXES = {".pml", ".json", ".png"}
 
 def _read_path(path: Path) -> bytes:
     # Uncached. Streamlit passes its mtime-keyed st.cache_data reader. DEFERRED
-    # to Stages 16.4/16.6 (Review Stage R1, docs/reviews/stage_16_r1.md,
+    # to Stage 16.6 (Review Stage R1, docs/reviews/stage_16_r1.md,
     # deferred #3): a NiceGUI ui.timer that calls pose_records() or
     # read_job_log() with this default re-reads every SDF / the whole job.log
-    # per client per tick. Fix when wiring the timer: pass a reader cached
+    # per client per tick (16.4's timer reads neither). Fix in 16.6: pass a reader cached
     # on (path, mtime), and redo pose/log reads only when the job's result
     # or the file's size changes.
     return path.read_bytes()

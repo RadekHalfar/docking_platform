@@ -1,6 +1,6 @@
-"""Persisted LLM provider settings for the Streamlit UI (no Streamlit dependency).
+"""Persisted LLM provider settings for the GUIs (no GUI framework dependency).
 
-Settings survive a browser refresh (which resets Streamlit's session_state) by
+Settings survive a browser refresh (which resets the GUI's per-tab state) by
 being written to a small JSON file on disk. API keys are never written to that
 file — they always come from the LLM_API_KEY env var or are re-entered in the
 UI for the current session only.
@@ -57,3 +57,17 @@ def save_settings(settings: Dict[str, Any]) -> None:
     # Replaced, not rewritten in place: no half-written file, and the
     # non-root NiceGUI UI can update a file the root Streamlit UI created.
     atomic_write_json(SETTINGS_FILE, to_save)
+
+
+def build_llm_client(settings: Dict[str, Any]):
+    """The LLM client for *settings* (as :func:`load_settings` returns them).
+    Shared by both GUIs; building it makes no network call."""
+    from services.llm_orchestrator import create_llm_client
+
+    return create_llm_client(
+        provider=settings["provider"],
+        endpoint=settings["endpoint"],
+        model=settings["model"],
+        api_key=settings.get("api_key"),
+        base_url=settings.get("base_url"),
+    )

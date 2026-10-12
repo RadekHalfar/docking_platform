@@ -50,7 +50,7 @@ async def test_settings_button_opens_the_dialog(user: User):
     # Asserted on the dialog's value: the User fixture's visibility check
     # reads element.visible, which a closed (but once opened) dialog keeps.
     await user.open("/")
-    dialog = next(iter(user.find(ui.dialog).elements))
+    dialog = next(iter(user.find(marker="settings-dialog").elements))
     assert dialog.value is False
     user.find(marker="settings-button").click()
     assert dialog.value is True
@@ -69,27 +69,14 @@ async def test_chat_toggle_collapses_and_reopens_the_drawer(user: User):
     assert drawer.value is True
 
 
-@pytest.fixture
-def built_states(monkeypatch):
-    """Record the GuiSession each page build gets. Requested before ``user``
-    so the patch is in place when NiceGUI runs ui_nice/app.py."""
-    states = []
-    real_build_page = layout.build_page
-
-    def recording_build_page(state):
-        states.append(state)
-        return real_build_page(state)
-
-    monkeypatch.setattr(layout, "build_page", recording_build_page)
-    return states
-
-
-async def test_each_client_gets_its_own_state(built_states, create_user):
+async def test_each_client_gets_its_own_state(page, create_user):
+    # tests/nicegui_harness.py's page fixture records each page build.
     first, second = create_user(), create_user()
     await first.open("/")
     await second.open("/")
-    assert len(built_states) == 2
-    a, b = built_states
+    assert len(page.states) == 2
+    a, b = page.states
     assert a is not b
+    assert a.form is not b.form and a.run_log is not b.run_log
     a.messages.append({"role": "user", "content": "only for the first client"})
     assert b.messages == [GREETING_MESSAGE]

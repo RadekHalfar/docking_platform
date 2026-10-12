@@ -23,7 +23,7 @@ from ui.worker_cap import WorkerCap, default_worker_count
 GREETING_MESSAGE = {
     "role": "assistant",
     "content": (
-        "Hello! Describe your docking workflow or use the form on the right.\n\n"
+        "Hello! Describe your docking workflow or use the form on the left.\n\n"
         "Example: *Download 6lu7 and dock ATP with center 10 20 30 box 25 30 35*"
     ),
 }

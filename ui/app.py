@@ -7,6 +7,7 @@ import streamlit as st
 
 from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label
 from common.path_utils import from_container_path
+from common.utils import ensure_shared_directory
 from services.llm_orchestrator.job_comparator import compare_jobs
 from services.llm_orchestrator.rerun_planner import describe_rerun_plan
 from services.llm_orchestrator.workflow_llm_parser import (
@@ -59,8 +60,9 @@ def _save_upload(uploaded_file, upload_dir: Path) -> str:
     if not safe_name or safe_name in (".", ".."):
         raise ValueError(f"Unusable uploaded filename: {uploaded_file.name!r}")
 
-    dest = upload_dir / safe_name
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Shared: the root Streamlit UI and the non-root NiceGUI UI (Phase 16)
+    # both upload into this one directory.
+    dest = ensure_shared_directory(upload_dir) / safe_name
     dest.write_bytes(uploaded_file.getbuffer())
     return str(dest)
 

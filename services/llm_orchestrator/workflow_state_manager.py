@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.job_log import append_job_log
 from common.param_diff import changed_parameter_keys
+from common.utils import ensure_shared_directory
 
 from .workflow_definition import with_default_parameters
 
@@ -44,7 +45,12 @@ class WorkflowStateManager:
 
     def __init__(self, job_dir: Path):
         self.job_dir = Path(job_dir)
-        self.job_dir.mkdir(parents=True, exist_ok=True)
+        # Shared, not plain mkdir: two GUIs running as different uids (root
+        # Streamlit, non-root NiceGUI, Phase 16) write the same session.
+        # Every write below is tmp + os.replace, which needs only write
+        # permission on the directory, so this is enough for either uid to
+        # update files the other created.
+        ensure_shared_directory(self.job_dir)
 
         self.parameters_file = self.job_dir / "workflow_parameters.json"
         self.draft_parameters_file = self.job_dir / "draft_parameters.json"
@@ -52,7 +58,7 @@ class WorkflowStateManager:
         self.manifest_file = self.job_dir / "workflow_manifest.json"
         self.manifest_lock_file = self.job_dir / ".workflow_manifest.lock"
         self.checkpoints_dir = self.job_dir / "checkpoints"
-        self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        ensure_shared_directory(self.checkpoints_dir)
 
         if not self.manifest_file.exists():
             self._write_manifest({"current_revision": 0, "events": []})

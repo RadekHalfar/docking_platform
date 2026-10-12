@@ -91,3 +91,16 @@ class TestSaveSettings:
         save_settings({"provider": "ollama", "model": "llama3", "endpoint": "", "base_url": ""})
 
         assert nested.exists()
+
+    def test_replaces_the_file_rather_than_rewriting_it(self, _isolated_settings_file):
+        # Phase 16, Stage 16.3: a new file swapped in needs write permission
+        # on the directory only, so the non-root NiceGUI UI can update a file
+        # the root Streamlit UI created. Also: never a half-written file.
+        _isolated_settings_file.write_text("{}")
+        old_inode = _isolated_settings_file.stat().st_ino
+
+        save_settings({"provider": "ollama", "model": "llama3", "endpoint": "", "base_url": ""})
+
+        assert _isolated_settings_file.stat().st_ino != old_inode
+        assert json.loads(_isolated_settings_file.read_text())["model"] == "llama3"
+        assert list(_isolated_settings_file.parent.glob("*.tmp")) == []

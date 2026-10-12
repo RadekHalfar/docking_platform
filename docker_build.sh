@@ -39,7 +39,7 @@ done
 
 # Default to building all services
 if [ ${#SERVICES[@]} -eq 0 ]; then
-    SERVICES=("base" "rcsb-downloader" "ligand-preparer" "protein-preparer" "moldina-runner" "pymol-visualizer" "pymol-interactive" "ui")
+    SERVICES=("base" "rcsb-downloader" "ligand-preparer" "protein-preparer" "moldina-runner" "pymol-visualizer" "pymol-interactive" "ui" "ui-nice")
 fi
 
 echo -e "${GREEN}Building services: ${SERVICES[*]}${NC}"
@@ -104,6 +104,9 @@ for service in "${SERVICES[@]}"; do
             ;;
         ui)
             build_image "ui" "Dockerfile.ui" "mcp-docking-ui:latest" "Streamlit web UI"
+            ;;
+        ui-nice)
+            build_image "ui-nice" "Dockerfile.ui_nice" "mcp-docking-ui-nice:latest" "NiceGUI web UI (Phase 16, port 3001)"
             ;;
         *)
             echo -e "${RED}Unknown service: $service${NC}"

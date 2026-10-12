@@ -410,3 +410,29 @@ def test_on_chat_submit_first_parse_without_algorithm_keeps_choice(monkeypatch):
 
     assert st.session_state.params["docking_algorithm"] == "vina"
     assert st.session_state.params["protein_id"] == "6lu7"
+
+
+# ---------------------------------------------------------------------------
+# _save_upload (Phase 16, Stage 16.3: shared upload dir)
+# ---------------------------------------------------------------------------
+
+class _Upload:
+    def __init__(self, name, data):
+        self.name = name
+        self._data = data
+
+    def getbuffer(self):
+        return memoryview(self._data)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_022):
+    # The root Streamlit UI and the non-root NiceGUI UI upload into the
+    # same directory.
+    upload_dir = tmp_path / "uploads"
+
+    saved = app._save_upload(_Upload("../../receptor.pdb", b"ATOM"), upload_dir)
+
+    assert saved == str(upload_dir / "receptor.pdb")
+    assert (upload_dir / "receptor.pdb").read_bytes() == b"ATOM"
+    assert upload_dir.stat().st_mode & 0o777 == 0o777

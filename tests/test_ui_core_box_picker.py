@@ -82,8 +82,11 @@ def test_viewer_click_writes_center_and_keeps_a_drawable_size(state):
     assert _box(state) == ["1.000", "2.500", "-3.250", "30", "31", "32"]
 
 
-def test_viewer_click_fills_in_the_placeholder_size(state):
-    _set_size(state, "0", "20", "20")
+@pytest.mark.parametrize("sizes", [("", "", ""), ("0", "20", "20")])
+def test_viewer_click_fills_in_the_placeholder_size(state, sizes):
+    # Unset or undrawable: the viewer draws the placeholder, so that is
+    # what a click must dock (Phase 14 R1).
+    _set_size(state, *sizes)
     box_picker.apply_viewer_click(state, [1.0, 2.0, 3.0])
     assert _box(state)[3:] == ["20.000"] * 3
 

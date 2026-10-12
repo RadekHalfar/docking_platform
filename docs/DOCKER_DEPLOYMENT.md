@@ -444,6 +444,35 @@ logic in `ui/core/` (Phase 16) is tested by `tests/test_ui_core_*.py`, and
 `OrchestratorBridge` by `tests/test_ui_orchestrator_bridge.py`. Both run
 for real in the default hermetic suite (and CI) as well as in this tier.
 
+### GUI (NiceGUI) Tests
+
+Phase 16 moves the GUI to NiceGUI. Until the Stage 16.8 cutover it runs as
+a separate service, `ui-nice` (http://localhost:3001), next to the
+Streamlit `ui`. `nicegui` and `pytest-asyncio` are only in its image
+(`Dockerfile.ui_nice`), so `tests/test_nicegui_*.py` files that need them
+`pytest.importorskip("nicegui")` and skip under the default suite. Run them
+for real via the `ui-nice` image, with their own pytest config:
+
+```bash
+docker compose run --rm --no-deps ui-nice \
+  python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
+```
+
+- `ui_nice/pytest.ini` loads NiceGUI's `user_plugin` (the `user` /
+  `create_user` fixtures, which simulate a browser without one) and
+  `tests/nicegui_harness.py`. The harness isolates every test the way the
+  AppTest `app` fixture does: `OUTPUT_BASE` in `tmp_path`, Ollama stubbed,
+  `ui.settings.SETTINGS_FILE` patched, `OrchestratorBridge` replaced by the
+  finished fake from `tests/ui_fakes.py` (shared with the AppTest tier).
+- `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
+  table: each Streamlit-tier test maps to the stage that ports it, to the
+  `tests/test_ui_core_*.py` test that already covers it, or to "N/A" with
+  a reason. It needs no GUI framework, so it runs in the hermetic suite and
+  CI, and fails when a Streamlit-tier test has no row. A new Streamlit-tier
+  test therefore needs a row too.
+- The test IDs print as `ui_nice::test_...`: with `-c`, pytest takes the
+  config's directory as its rootdir. Cosmetic only.
+
 ### Manual Health Checks
 
 ```powershell
@@ -552,6 +581,22 @@ directory:
 ```bash
 docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orchestrator_output/job_<id>
 ```
+- **Linux hosts, NiceGUI GUI (`ui-nice`, Phase 16): `Permission denied` on a
+  session, upload or settings file the Streamlit GUI created.** The
+  Streamlit `ui` container runs as root; `ui-nice` runs as the non-root
+  `appuser` (uid 1000) and works on the same `orchestrator_output/` and
+  `cache/`. Since Stage 16.3 the directories either GUI creates there (job
+  dirs, `checkpoints/`, `saved_results/`, `uploads/`) are writable by every
+  uid (`ensure_shared_directory()`), so is each job's `job.log`, and the
+  JSON files are replaced rather than rewritten. That covers sessions
+  created from 16.3 on. Files the root GUI created **before** 16.3, an
+  uploaded file overwritten under the same name, and deleting a job dir the
+  root GUI created still need root's files handed to uid 1000, once:
+  ```bash
+  sudo chown -R 1000:1000 orchestrator_output cache
+  ```
+  Docker Desktop on Windows/macOS doesn't enforce these permission bits on
+  bind mounts, so it is unaffected.
 - Settings → Resources → File Sharing
 
 ### Network Issues
@@ -714,7 +759,7 @@ jobs:
 
 **This platform ships with no authentication on any service.** Every MCP service
 (`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
-`pymol-visualizer`, `pymol-interactive`), the Streamlit UI, and Ollama accept
+`pymol-visualizer`, `pymol-interactive`), both GUIs (`ui`, `ui-nice`), and Ollama accept
 requests from anyone who can reach their port — there is no API key, login, or
 per-request auth check anywhere in `common/mcp_base.py` or the service servers.
 
@@ -781,7 +826,7 @@ services:
   grafana:
     image: grafana/grafana
     ports:
-      - "3001:3000"  # host 3001 -- 3000 is already used by this platform's own GUI (the `ui` service)
+      - "3002:3000"  # host 3002 -- 3000 and 3001 are this platform's GUIs (`ui`, `ui-nice`)
 ```
 
 ---

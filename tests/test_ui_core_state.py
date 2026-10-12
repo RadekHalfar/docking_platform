@@ -36,6 +36,7 @@ def test_new_session_has_greeting_empty_params_and_default_form(state):
     assert state.params == {}
     assert state.form == {**form_defaults(CAP10), "input_mode": "local_files"}
     assert state.form["param_max_workers"] == min(MEASURED_BEST_WORKERS["moldina"], 10)
+    assert state.form["param_docking_algorithm"] == "moldina"
     assert state.job_id is None and state.bridge is None and not state.job_done
     assert not state.interactive_session.has_active_job()
 
@@ -150,6 +151,33 @@ def test_apply_parsed_params_writes_params_and_form(state):
     assert state.form["param_cpu"] == "2"
 
 
+def test_apply_parsed_params_keeps_values_parsed_as_none(state):
+    state.params = {"protein_id": "6lu7"}
+    form.apply_parsed_params(state, {"protein_id": None, "ligand_ids": None})
+    assert state.params == {"protein_id": "6lu7"}
+
+
+@pytest.mark.parametrize("key, value, field", [
+    ("center", [1.0, 2.0], "param_center_x"),
+    ("box_size", [1.0, 2.0, 3.0, 4.0], "param_box_x"),
+])
+def test_apply_parsed_params_skips_a_box_field_group_without_three_values(state, key, value, field):
+    state.form[field] = "unchanged"
+    form.apply_parsed_params(state, {key: value})
+    assert state.form[field] == "unchanged"
+    # The raw value is still stored: apply_parsed_params() mirrors, it
+    # doesn't validate.
+    assert state.params[key] == value
+
+
+def test_apply_parsed_params_without_algorithm_keeps_the_selector(state):
+    # Phase 15 finding 8: a chat parse that didn't name the algorithm must
+    # not reset a chosen one.
+    state.form["param_docking_algorithm"] = "vina"
+    form.apply_parsed_params(state, {"protein_id": "6lu7", "center": [1, 2, 3]})
+    assert state.form["param_docking_algorithm"] == "vina"
+
+
 @pytest.mark.parametrize("value", ["gnina", "", None])
 def test_apply_parsed_params_ignores_an_unrecognised_algorithm(state, value):
     form.apply_parsed_params(state, {"docking_algorithm": value})
@@ -179,6 +207,15 @@ def test_load_session_params_clamps_workers_to_cap_divided_by_cpu(state):
     )
     assert state.form["param_parallel"] is True
     assert state.form["param_max_workers"] == 10 // 4
+
+
+def test_load_of_vina_session_keeps_its_saved_workers(state):
+    form.load_session_params(
+        state, {"protein_id": "6lu7", "docking_algorithm": "vina", "cpu": 2, "parallel": True, "max_workers": 3}
+    )
+    assert state.form["param_docking_algorithm"] == "vina"
+    assert state.form["param_cpu"] == "2"
+    assert state.form["param_max_workers"] == 3
 
 
 def test_load_of_session_without_algorithm_reads_as_moldina(state):
@@ -246,6 +283,11 @@ def test_clear_box_picker_state_keeps_the_box(state):
     assert (state.box_picker_receptor_pdb, state.box_picker_last_click,
             state.pending_geometry_targets, state.box_picker_error) == (None, None, None, None)
     assert state.form["param_center_x"] == "1.0"
+
+
+def test_clear_box_picker_state_is_a_noop_when_nothing_to_clear(state):
+    form.clear_box_picker_state(state)
+    assert state.box_picker_receptor_pdb is None and state.pending_geometry_targets is None
 
 
 def test_start_new_session_detaches_but_keeps_the_form(state):

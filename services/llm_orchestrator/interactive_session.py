@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set, cast
 from common.file_io import atomic_write_json
 from common.job_log import append_job_log
 from common.param_diff import changed_parameter_keys
+from common.utils import ensure_shared_directory
 from .workflow_definition import get_ligand_display_names, get_protein_display_name, with_default_parameters
 from .workflow_state_manager import WorkflowStateManager
 
@@ -173,7 +174,10 @@ def save_results_bundle(
     try:
         for leftover in (staging_dir, replaced_dir):
             shutil.rmtree(leftover, ignore_errors=True)
-        staging_dir.mkdir(parents=True)
+        # Shared: two GUIs running as different uids (root Streamlit,
+        # non-root NiceGUI, Phase 16) save bundles into the same session.
+        ensure_shared_directory(bundle_dir.parent)
+        staging_dir.mkdir()
         included = _write_bundle_contents(job_dir, staging_dir, name, scope, revision, parameters)
         # Overwrite replaces the whole bundle: merging would keep e.g. an
         # older "all" save's visualization/ under metadata that now says

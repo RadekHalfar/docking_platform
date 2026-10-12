@@ -353,6 +353,66 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # NiceGUI GUI (Port 3001) -- Phase 16 migration target, runs next to the
+  # Streamlit `ui` until the Stage 16.8 cutover moves it to port 3000.
+  # Same mounts and environment as `ui`, but runs as the non-root appuser
+  # (Dockerfile.ui_nice); see docs/DOCKER_DEPLOYMENT.md for the one-time
+  # chown Linux hosts need for sessions the root Streamlit UI created.
+  ui-nice:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui_nice
+    image: mcp-docking-ui-nice:latest
+    container_name: mcp-ui-nice
+    ports:
+      - "127.0.0.1:3001:3001"
+    networks:
+      - mcp-network
+    volumes:
+      # Read-only source, rw writes -- as for `ui` above.
+      - ./:/workspace:ro
+      - ./cache:/workspace/cache
+      - ./orchestrator_output:/workspace/orchestrator_output
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/workspace
+      - OUTPUT_BASE=/workspace/orchestrator_output
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-http://ollama:11434}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - DOCKING_PLATFORM_SETTINGS_FILE=/workspace/cache/.docking_platform_settings.json
+      - MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
+      - MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
+      - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
+      - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
+      - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
+      - PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
+      - PYMOL_NOVNC_URL=http://localhost:6080
+    depends_on:
+      rcsb-downloader:
+        condition: service_healthy
+      ligand-preparer:
+        condition: service_healthy
+      protein-preparer:
+        condition: service_healthy
+      moldina-runner:
+        condition: service_healthy
+      pymol-visualizer:
+        condition: service_healthy
+      pymol-interactive:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
 # Network configuration
 networks:
   mcp-network:

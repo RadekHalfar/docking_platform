@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from services.llm_orchestrator.workflow_definition import with_default_parameters
@@ -465,3 +467,25 @@ def test_saved_parameters_are_stored_full(mgr):
     mgr.save_draft_parameters(PARAMS_B)
     assert json.loads(mgr.parameters_file.read_text())["parameters"] == with_default_parameters(PARAMS_A)
     assert json.loads(mgr.draft_parameters_file.read_text())["parameters"] == with_default_parameters(PARAMS_B)
+
+
+# ---------------------------------------------------------------------------
+# Shared directories (Phase 16, Stage 16.3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_job_and_checkpoint_dirs_are_writable_by_every_uid(tmp_path, umask_022):
+    # Two GUIs running as different uids (root Streamlit, non-root NiceGUI)
+    # write the same session's checkpoints.
+    mgr = WorkflowStateManager(tmp_path / "job_shared")
+    assert mgr.job_dir.stat().st_mode & 0o777 == 0o777
+    assert mgr.checkpoints_dir.stat().st_mode & 0o777 == 0o777
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_job_log_is_writable_by_every_uid(mgr, umask_022):
+    # job.log is appended to in place, so a directory's permissions alone
+    # don't let the other GUI's uid log to it (Phase 16, Stage 16.3).
+    mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
+    log = mgr.job_dir / "job.log"
+    assert log.stat().st_mode & 0o777 == 0o666

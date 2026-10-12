@@ -79,7 +79,8 @@ message rather than doing anything unexpected.
   elsewhere) — stop it first with `docker compose down`.
 - *Port 3000 already in use*: stop whatever else is bound to it, or edit
   `docker-compose.yml`'s `ui.ports` mapping and re-run
-  `docker compose up -d`.
+  `docker compose up -d`. The same goes for port 3001 and `ui-nice.ports`
+  (the NiceGUI GUI that runs next to it during Phase 16).
 - *Ollama not running / chat parsing fails*: the bundled `ollama` service
   should start automatically with the stack; check `docker compose logs
   ollama` if it doesn't.

@@ -5,6 +5,13 @@ served at http://localhost:3000 by the `ui` service in `docker-compose.yml`.
 It has three panels — Chat, Input & Parameters, Results — plus a sidebar for
 LLM settings and session history.
 
+Phase 16 is moving the GUI to NiceGUI. Until that is finished (Stage 16.8),
+the NiceGUI version runs alongside as the `ui-nice` service at
+http://localhost:3001. So far it is only the page layout: a header with
+Settings, a collapsible chat drawer on the right, and the tabs Setup /
+Results / Sessions, which Stages 16.4–16.7 fill in. Use the Streamlit GUI
+on port 3000 for real work until then.
+
 Whenever a session is active, the Chat panel shows a small **Session:
 name (`job_id`)** line above the "Chat" title, so it stays clear which
 session you're currently in — this disappears once you click **New
@@ -563,7 +570,7 @@ What the numbers say about Streamlit:
 ## Code Structure (for developers)
 
 Since Phase 16 (Stages 16.1–16.2) the GUI's logic is split from Streamlit,
-so the NiceGUI port reuses it rather than rewriting it:
+so the NiceGUI port (`ui_nice/`, below) reuses it rather than rewriting it:
 
 - **`ui/core/`** — framework-free, no `streamlit` or `nicegui` import:
   - `state.py`: `GuiSession`, one browser client's state, never module-global.
@@ -593,6 +600,15 @@ so the NiceGUI port reuses it rather than rewriting it:
 - **`ui/app.py`** — the Streamlit page; its handlers are thin wrappers that
   carry out an `Outcome` with `st.error` / `st.rerun()`, and its render
   functions draw `ui/core`'s data with Streamlit widgets.
+- **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui-nice`
+  service on port 3001 as the non-root `appuser`:
+  - `app.py`: the `/` page, which gives each client its own `GuiSession`,
+    and the `/health` route the compose healthcheck uses.
+  - `layout.py`: `build_page(state)` draws the header, settings dialog,
+    chat drawer, tabs and the Setup splitter, and returns them as
+    `PageParts` for the stages that fill them.
+  - `pytest.ini`: the `ui-nice` test tier (see
+    [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#gui-nicegui-tests)).
 - **`ui/orchestrator_bridge.py`** gives each run its own log. The bridge
   passes `WorkflowOrchestrator` an `on_message` sink that queues the step
   messages line by line (the CLI keeps the default, `print`), and nothing

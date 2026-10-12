@@ -35,50 +35,9 @@ AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 import ui.session_state as session_state
 from common.pdb_geometry import compute_protein_center_and_box
 from ui.worker_cap import MEASURED_BEST_WORKERS, WorkerCap, default_worker_count
+from tests.ui_fakes import FIXTURE_PDB, FakeBridge, prep_done_bridge as _prep_done_bridge
 
 APP_PATH = Path(__file__).resolve().parents[1] / "ui" / "app.py"
-FIXTURE_PDB = Path(__file__).parent / "fixtures" / "mini_protein.pdb"
-
-
-class FakeBridge:
-    """Stand-in for ui.orchestrator_bridge.OrchestratorBridge -- always
-    finished, never starts a thread."""
-
-    def __init__(self, result=None, error=None):
-        self._result = result
-        self._error = error
-        self.started_with = None
-
-    def start_workflow(self, *args, **kwargs):
-        self.started_with = (args, kwargs)
-
-    def is_running(self):
-        return False
-
-    def request_stop(self):
-        pass
-
-    def stop_requested(self):
-        return False
-
-    def get_log_lines(self):
-        return []
-
-    def get_result(self):
-        return self._result
-
-    def get_error(self):
-        return self._error
-
-
-def _prep_done_bridge():
-    """A finished "Load receptor for box picking" job that prepared FIXTURE_PDB."""
-    return FakeBridge(
-        result={
-            "status": "completed",
-            "results": {"prepare_protein": {"prepared_proteins": [{"pdb_path": str(FIXTURE_PDB)}]}},
-        }
-    )
 
 
 class ViewerRecorder:

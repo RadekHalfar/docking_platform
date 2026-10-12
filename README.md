@@ -158,6 +158,8 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 # GUI (Streamlit) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-streamlit-unit-tests):
 docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
+# NiceGUI GUI tests (Phase 16) need the ui-nice image (see docs/DOCKER_DEPLOYMENT.md#gui-nicegui-tests):
+docker compose run --rm --no-deps ui-nice python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
 
 # 6. Interactive PyMOL in browser is already running (started in step 2 along
 #    with everything else -- no extra flag or command needed)
@@ -372,6 +374,11 @@ docking_platform/
 │   ├── results.py              # Results/comparison rendering
 │   └── settings.py             # Persisted LLM provider settings
 │
+├── ui_nice/                     # NiceGUI web UI on port 3001 (Phase 16; replaces ui/app.py at Stage 16.8)
+│   ├── app.py                  # Entry point: the page (one GuiSession per client) and /health
+│   ├── layout.py               # Header, settings dialog, chat drawer, Setup/Results/Sessions tabs
+│   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)
+│
 ├── installer/                   # Standalone PyInstaller installer
 │   ├── install.py              # Installer entry point (Docker check/install, build, launch)
 │   └── build.sh                # Freezes install.py into a single-file executable
@@ -423,7 +430,8 @@ docking_platform/
 │
 ├── docker-compose.yml           # Multi-service Docker orchestration
 ├── Dockerfile.ui                # Streamlit UI image
-├── docker_build.ps1/.sh         # Docker build scripts (incl. ui image)
+├── Dockerfile.ui_nice           # NiceGUI UI image (non-root appuser, Phase 16)
+├── docker_build.ps1/.sh         # Docker build scripts (incl. ui and ui-nice images)
 ├── docking-platform-installer.spec  # PyInstaller-generated (not committed, see installer/build.sh)
 │
 ├── requirements.txt             # Python dependencies

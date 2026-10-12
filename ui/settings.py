@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 
+from common.file_io import atomic_write_json
+
 # Overridable so a container deployment can point this at a mounted volume
 # (see docker-compose.yml) and have settings survive container recreation,
 # not just a browser refresh.
@@ -52,5 +54,6 @@ def load_settings() -> Dict[str, Any]:
 def save_settings(settings: Dict[str, Any]) -> None:
     """Persist provider/model/endpoint/base_url to disk. Never writes api_key."""
     to_save = {key: settings[key] for key in _PERSISTABLE_KEYS if key in settings}
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps(to_save, indent=2))
+    # Replaced, not rewritten in place: no half-written file, and the
+    # non-root NiceGUI UI can update a file the root Streamlit UI created.
+    atomic_write_json(SETTINGS_FILE, to_save)

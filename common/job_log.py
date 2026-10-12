@@ -9,6 +9,8 @@ call.
 """
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from common.file_io import FileLock
 
 _LOG_FILENAME = "job.log"
 _LOCK_FILENAME = ".job_log.lock"
+
+logger = logging.getLogger(__name__)
 
 
 def append_job_log(job_dir: "str | Path", level: str, message: str) -> None:
@@ -28,7 +32,18 @@ def append_job_log(job_dir: "str | Path", level: str, message: str) -> None:
     job_dir = Path(job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
     line = f"{datetime.now(timezone.utc).isoformat()} [{level}] {message}\n"
+    log_path = job_dir / _LOG_FILENAME
 
     with FileLock(job_dir / _LOCK_FILENAME):
-        with open(job_dir / _LOG_FILENAME, "a", encoding="utf-8") as f:
+        created = not log_path.exists()
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(line)
+        if created:
+            # Appended to in place, unlike the job's JSON files (tmp +
+            # os.replace): writable by every uid, so the non-root NiceGUI UI
+            # can log to a session the root Streamlit UI started (Phase 16).
+            # Best-effort, as in common.utils.ensure_shared_directory.
+            try:
+                os.chmod(log_path, 0o666)
+            except OSError:
+                logger.debug("append_job_log: chmod not supported for %s", log_path)

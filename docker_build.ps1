@@ -67,6 +67,12 @@ $allServices = @{
         description = "Streamlit web UI"
         depends = @("base")
     }
+    "ui-nice" = @{
+        dockerfile = "Dockerfile.ui_nice"
+        tag = "mcp-docking-ui-nice:latest"
+        description = "NiceGUI web UI (Phase 16, port 3001)"
+        depends = @("base")
+    }
 }
 
 # Determine which services to build

@@ -69,9 +69,12 @@ class PageController:
         prep (which a geometry chat command can start). Redraws only while
         a job is running, and once more after it ended."""
         running = run_control.any_bridge_running(self.state)
+        # A receptor prep is dropped once processed, so one still here is
+        # news even if it finished before any tick saw it running.
+        prep_pending = self.state.box_picker_bridge is not None
         run_control.process_docking_bridge(self.state)
         box_picker.process_box_picker_bridge(self.state, self.output_base)
-        active = running or self._poll_once_more
+        active = running or prep_pending or self._poll_once_more
         self._poll_once_more = running or run_control.any_bridge_running(self.state)
         if active:
             self.sync()

@@ -283,4 +283,14 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
     - **NiceGUI only:** an LLM answer is not applied if the session changed
       while it was being parsed, and Run Docking is disabled while a run is
       going.
-  - **Next:** Stage 16.5, the 3D viewer and box picker.
+  - **16.5 (2026-10-12):** NiceGUI's box picker on the Setup tab's right
+    side (Load receptor, atom click → box center, − / + size steps,
+    Discard), with the 3Dmol.js viewer ported as a custom element.
+    - **The viewer keeps its camera:** the scene is built once, and a box
+      change redraws only the box. Streamlit rebuilt everything and reset
+      the view on every change.
+    - **The box redraw is cheaper:** about 143 ms, against Streamlit's
+      184 ms rebuild, because the axis labels are made once and then moved.
+    - **The viewer element also has a results mode** (affinity-coloured
+      poses, swappable without moving the camera), for Stage 16.6.
+  - **Next:** Stage 16.6, the Results tab.

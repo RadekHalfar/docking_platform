@@ -470,6 +470,13 @@ docker compose run --rm --no-deps ui-nice \
   `tests/nicegui_harness.py`'s `element()` finds hidden elements too;
   `user.find` sees only visible ones (not the contents of a closed
   expansion).
+- The 3Dmol viewer can't render without a browser, but it needs no
+  recorder. The `MolViewer` element keeps what it last sent (`center`,
+  `box_size`, `receptor_pdb`, ...), and tests read that through the
+  harness's `viewer(user)`. That helper waits until the receptor has been
+  read, which happens off the event loop. `atom_click(user, center)` fires
+  the event that a click on a receptor atom sends, and
+  `load_picker_receptor(page, center, size)` seeds a loaded receptor.
 - `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
   table: each Streamlit-tier test maps to the stage that ports it, to the
   `tests/test_ui_core_*.py` test that already covers it, or to "N/A" with
@@ -594,15 +601,21 @@ docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orch
   `cache/`. Since Stage 16.3 the directories either GUI creates there (job
   dirs, `checkpoints/`, `saved_results/`, `uploads/`) are writable by every
   uid (`ensure_shared_directory()`), so is each job's `job.log`, and the
-  JSON files are replaced rather than rewritten. That covers sessions
-  created from 16.3 on. Files the root GUI created **before** 16.3, an
-  uploaded file overwritten under the same name, and deleting a job dir the
-  root GUI created still need root's files handed to uid 1000, once:
+  JSON files and uploads are replaced rather than rewritten, which needs
+  only the directory's permission. So uploading a file again under the same
+  name works whoever uploaded it first. That covers sessions created from
+  16.3 on. Files the root GUI created **before** 16.3, and deleting a job
+  dir the root GUI created, still need root's files handed to uid 1000,
+  once:
   ```bash
   sudo chown -R 1000:1000 orchestrator_output cache
   ```
-  Docker Desktop on Windows/macOS doesn't enforce these permission bits on
-  bind mounts, so it is unaffected.
+  On Docker Desktop (Windows/macOS) files created now on a bind mount
+  show up as owned by the container's user. But files that already
+  carry root ownership are enforced: a root-owned 0644 upload from
+  2026-10-02 refused NiceGUI's in-place write with `Errno 13`. If that
+  happens there, run the same `chown` inside a root container, e.g.
+  `docker exec -u root mcp-ui-nice chown -R 1000:1000 /workspace/orchestrator_output /workspace/cache`.
 - Settings → Resources → File Sharing
 
 ### Network Issues

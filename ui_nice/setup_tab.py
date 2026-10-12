@@ -349,7 +349,11 @@ class SetupView:
 
     def _on_text(self, key: str, value: Optional[str]) -> None:
         self.state.form[key] = value or ""
-        self._sync_summary()
+        if key in form.BOX_FORM_KEYS:
+            # The box picker draws these fields: move its box too.
+            self.controller.sync()
+        else:
+            self._sync_summary()
 
     def _on_commit(self, commit: Callable[[Any], None]) -> None:
         commit(self.state)

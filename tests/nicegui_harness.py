@@ -15,7 +15,11 @@ threads, nothing written outside tmp_path.
   ``GuiSession`` before its page is drawn -- what AppTest tests do through
   ``app.session_state`` -- and keeps every page built.
 
-The 3Dmol viewer recorder joins in Stage 16.5, with the viewer itself.
+The 3Dmol viewer needs no recorder (Stage 16.5): a
+:class:`~ui_nice.mol_viewer.MolViewer` keeps what it last sent to the
+browser (``receptor_pdb``, ``center``, ``box_size``, ...), and tests read
+that from the element (:func:`viewer`). :func:`atom_click` fires the event
+a click on a receptor atom sends.
 """
 from __future__ import annotations
 
@@ -33,7 +37,7 @@ from services.llm_orchestrator.workflow_parser import WorkflowParser
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.core.form import BOX_FORM_KEYS
 from ui.worker_cap import WorkerCap, default_worker_count
-from tests.ui_fakes import FakeBridge
+from tests.ui_fakes import FIXTURE_PDB, FakeBridge
 
 
 @pytest.fixture
@@ -154,6 +158,37 @@ async def send_chat(user, page: Page, text: str) -> None:
 
 def click(user, marker: str) -> None:
     user.find(marker=marker).click()
+
+
+BOX_PICKER_VIEWER = "box-picker-viewer"
+
+
+def viewer_shown(user) -> bool:
+    with user.client:
+        return bool(list(ElementFilter(marker=BOX_PICKER_VIEWER, local_scope=False)))
+
+
+async def viewer(user):
+    """The box picker's viewer, once its receptor has been read (that read
+    runs off the event loop)."""
+    await eventually(lambda: viewer_shown(user))
+    return element(user, BOX_PICKER_VIEWER)
+
+
+def atom_click(user, center) -> None:
+    """A click on a receptor atom at *center*, as the viewer reports it."""
+    user.find(marker=BOX_PICKER_VIEWER).trigger("atom_click", {"center": list(center)})
+
+
+def load_picker_receptor(page: Page, center, size) -> None:
+    """A receptor loaded for box picking, with these Docking Box fields
+    (strings, as typed)."""
+    def seed(state):
+        state.box_picker_receptor_pdb = str(FIXTURE_PDB)
+        for key, value in zip(BOX_FORM_KEYS, (*center, *size)):
+            state.form[key] = value
+
+    page.seed(seed)
 
 
 def with_worker_cap(page: Page, cap: WorkerCap) -> None:

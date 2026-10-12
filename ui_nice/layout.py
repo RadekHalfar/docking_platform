@@ -6,7 +6,9 @@ a resizable splitter, form on the left and viewer on the right.
 
 Stage 16.3 built the shell; Stage 16.4 fills the chat drawer
 (:mod:`ui_nice.chat_drawer`) and Setup's form side (:mod:`ui_nice.setup_tab`),
-both driven by one :class:`~ui_nice.controller.PageController` per client.
+and Stage 16.5 Setup's viewer side, the box picker
+(:mod:`ui_nice.box_picker_panel`). All are driven by one
+:class:`~ui_nice.controller.PageController` per client.
 The regions still to come say which stage fills them, and
 :class:`PageParts` hands those stages what they need.
 """
@@ -19,6 +21,7 @@ from nicegui import ui
 
 from ui.core.state import GuiSession
 from ui_nice import controller as controller_module
+from ui_nice.box_picker_panel import BoxPickerView
 from ui_nice.chat_drawer import ChatView
 from ui_nice.controller import PageController
 from ui_nice.setup_tab import SetupView
@@ -41,6 +44,7 @@ class PageParts:
     tab_panels: ui.tab_panels
     setup_splitter: ui.splitter
     setup: SetupView
+    box_picker: BoxPickerView
 
 
 def build_page(state: GuiSession, output_base: Path) -> PageParts:
@@ -52,9 +56,11 @@ def build_page(state: GuiSession, output_base: Path) -> PageParts:
     settings_dialog = _settings_dialog()
     chat_drawer, chat = _chat_drawer(controller)
     _header(chat_drawer, settings_dialog)
-    tabs, tab_panels, setup_splitter, setup = _main_tabs(controller)
+    tabs, tab_panels, setup_splitter, setup, box_picker = _main_tabs(controller)
     ui.timer(controller_module.POLL_INTERVAL_S, controller.tick)
-    return PageParts(controller, chat_drawer, chat, settings_dialog, tabs, tab_panels, setup_splitter, setup)
+    return PageParts(
+        controller, chat_drawer, chat, settings_dialog, tabs, tab_panels, setup_splitter, setup, box_picker
+    )
 
 
 def _header(chat_drawer: ui.right_drawer, settings_dialog: ui.dialog) -> None:
@@ -84,7 +90,9 @@ def _chat_drawer(controller: PageController) -> tuple[ui.right_drawer, ChatView]
     return drawer, chat
 
 
-def _main_tabs(controller: PageController) -> tuple[ui.tabs, ui.tab_panels, ui.splitter, SetupView]:
+def _main_tabs(
+    controller: PageController,
+) -> tuple[ui.tabs, ui.tab_panels, ui.splitter, SetupView, BoxPickerView]:
     with ui.tabs().classes("w-full") as tabs:
         ui.tab(TAB_SETUP)
         ui.tab(TAB_RESULTS)
@@ -95,9 +103,9 @@ def _main_tabs(controller: PageController) -> tuple[ui.tabs, ui.tab_panels, ui.s
                 with splitter.before:
                     setup = SetupView(controller)
                 with splitter.after:
-                    ui.label("The 3D viewer and box picker arrive in Stage 16.5.").classes("p-4")
+                    box_picker = BoxPickerView(controller)
         with ui.tab_panel(TAB_RESULTS):
             ui.label("Results arrive in Stage 16.6.")
         with ui.tab_panel(TAB_SESSIONS):
             ui.label("Session history arrives in Stage 16.7.")
-    return tabs, panels, splitter, setup
+    return tabs, panels, splitter, setup, box_picker

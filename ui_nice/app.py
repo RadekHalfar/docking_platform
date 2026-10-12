@@ -16,6 +16,7 @@ from ui.core.state import GuiSession
 from ui.settings import build_llm_client, load_settings
 from ui.worker_cap import detect_moldina_worker_cap
 from ui_nice.layout import PAGE_TITLE, build_page
+from ui_nice.mol_viewer import serve_vendor_files
 
 PORT = 3001
 
@@ -23,6 +24,8 @@ PORT = 3001
 # per-user state.
 WORKER_CAP = detect_moldina_worker_cap()
 OUTPUT_BASE = Path(os.getenv("OUTPUT_BASE", "/workspace/orchestrator_output"))
+
+serve_vendor_files()
 
 
 @app.get("/health")

@@ -380,6 +380,9 @@ docking_platform/
 │   ├── controller.py           # Per-client page controller: progress timer, sync of the views
 │   ├── setup_tab.py            # Setup tab: inputs, Docking Box, Advanced, actions, redock dialog, progress
 │   ├── chat_drawer.py          # Chat drawer: messages, Run log, input (LLM parse via run.io_bound)
+│   ├── box_picker_panel.py     # Setup tab's right side: the visual box picker
+│   ├── mol_viewer.py           # 3Dmol.js viewer element (camera kept; box/poses redrawn in place)
+│   ├── mol_viewer.js           # Its Vue component (scene code ported from ui/components/mol_viewer)
 │   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)
 │
 ├── installer/                   # Standalone PyInstaller installer

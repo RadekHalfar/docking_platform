@@ -6,7 +6,7 @@ check that. They read the test files with ``ast`` and import no GUI
 framework, so they run in the hermetic suite and in CI.
 
 Targets:
-- ``16.5`` ... ``16.7``: to be ported as a NiceGUI User-fixture test in that
+- ``16.6`` ... ``16.7``: to be ported as a NiceGUI User-fixture test in that
   stage (pending). When ported, the row changes to ``ported: <file>::<test>``.
 - ``ported: <file>::<test>``: the NiceGUI test that replaces it.
 - ``core: <file>::<test>``: the case tests the Streamlit wrapper or adapter
@@ -19,17 +19,17 @@ Targets:
 | test_ui_apptest.py::test_fresh_page_renders_without_exception | ported: test_nicegui_layout.py::test_page_shows_title_tabs_and_greeting | |
 | test_ui_apptest.py::test_worker_cap_from_compose_shows_limit_caption | ported: test_nicegui_setup.py::test_worker_cap_from_compose_shows_limit_caption |  |
 | test_ui_apptest.py::test_worker_cap_fallback_shows_warning_with_reason | ported: test_nicegui_setup.py::test_worker_cap_fallback_shows_warning_with_reason |  |
-| test_ui_apptest.py::test_box_picker_passes_center_and_size_to_viewer | 16.5 | |
-| test_ui_apptest.py::test_box_picker_without_receptor_offers_load_button | 16.5 | |
-| test_ui_apptest.py::test_deferred_geometry_command_applies_and_shows_reply | 16.5 | |
-| test_ui_apptest.py::test_deferred_geometry_command_reports_failed_fetch | 16.5 | |
+| test_ui_apptest.py::test_box_picker_passes_center_and_size_to_viewer | ported: test_nicegui_box_picker.py::test_box_picker_passes_center_and_size_to_viewer |  |
+| test_ui_apptest.py::test_box_picker_without_receptor_offers_load_button | ported: test_nicegui_box_picker.py::test_box_picker_without_receptor_offers_load_button |  |
+| test_ui_apptest.py::test_deferred_geometry_command_applies_and_shows_reply | ported: test_nicegui_box_picker.py::test_deferred_geometry_command_applies_and_shows_reply |  |
+| test_ui_apptest.py::test_deferred_geometry_command_reports_failed_fetch | ported: test_nicegui_box_picker.py::test_deferred_geometry_command_reports_failed_fetch | Streamlit shows the error for one rerun; NiceGUI keeps it until the next Load |
 | test_ui_apptest.py::test_summary_shows_docking_box_fields_not_stale_parsed_params | ported: test_nicegui_setup.py::test_summary_shows_docking_box_fields_not_stale_parsed_params |  |
-| test_ui_apptest.py::test_box_size_step_updates_summary_and_viewer | 16.5 | |
-| test_ui_apptest.py::test_summary_updates_after_visual_center_pick | 16.5 | |
-| test_ui_apptest.py::test_typing_center_in_docking_box_moves_picker_box | 16.5 | |
-| test_ui_apptest.py::test_typing_box_size_in_docking_box_resizes_picker_box | 16.5 | |
-| test_ui_apptest.py::test_undrawable_box_size_shows_placeholder_without_crash | 16.5 | |
-| test_ui_apptest.py::test_small_positive_box_size_is_drawn_as_typed | 16.5 | |
+| test_ui_apptest.py::test_box_size_step_updates_summary_and_viewer | ported: test_nicegui_box_picker.py::test_box_size_step_updates_summary_and_viewer |  |
+| test_ui_apptest.py::test_summary_updates_after_visual_center_pick | ported: test_nicegui_box_picker.py::test_summary_updates_after_visual_center_pick |  |
+| test_ui_apptest.py::test_typing_center_in_docking_box_moves_picker_box | ported: test_nicegui_box_picker.py::test_typing_center_in_docking_box_moves_picker_box |  |
+| test_ui_apptest.py::test_typing_box_size_in_docking_box_resizes_picker_box | ported: test_nicegui_box_picker.py::test_typing_box_size_in_docking_box_resizes_picker_box |  |
+| test_ui_apptest.py::test_undrawable_box_size_shows_placeholder_without_crash | ported: test_nicegui_box_picker.py::test_undrawable_box_size_shows_placeholder_without_crash |  |
+| test_ui_apptest.py::test_small_positive_box_size_is_drawn_as_typed | ported: test_nicegui_box_picker.py::test_small_positive_box_size_is_drawn_as_typed |  |
 | test_ui_apptest.py::test_redock_local_files_session_after_ligand_change | ported: test_nicegui_setup.py::test_redock_local_files_session_after_ligand_change |  |
 | test_ui_apptest.py::test_finished_run_reply_is_rendered_in_chat | ported: test_nicegui_setup.py::test_finished_run_reply_is_rendered_in_chat |  |
 | test_ui_apptest.py::test_completed_session_from_disk_renders_results_and_viewer | 16.6 | |
@@ -66,11 +66,11 @@ Targets:
 | test_ui_apptest.py::test_save_session_replies_without_rerun | ported: test_nicegui_setup.py::test_save_session_replies_without_rerun | the no-rerun part is Streamlit-only |
 | test_ui_apptest.py::test_save_session_saves_a_real_change_with_defaults | 16.7 | its second half needs Load (Sessions tab); the Save Session reply itself: test_save_session_replies_without_rerun |
 | test_ui_apptest.py::test_save_session_with_form_back_at_checkpoint_clears_stale_draft | 16.7 | its second half needs Load (Sessions tab); the Save Session reply itself: test_save_session_replies_without_rerun |
-| test_ui_apptest.py::test_typed_center_survives_after_a_viewer_click | 16.5 | |
-| test_ui_apptest.py::test_clicking_the_same_atom_again_after_typing_is_applied | 16.5 | |
-| test_ui_apptest.py::test_chat_parsed_box_moves_the_picker_box | 16.5 | |
-| test_ui_apptest.py::test_size_step_with_size_unset_draws_the_stepped_box | 16.5 | |
-| test_ui_apptest.py::test_click_on_undrawable_box_docks_the_box_shown | 16.5 | |
+| test_ui_apptest.py::test_typed_center_survives_after_a_viewer_click | ported: test_nicegui_box_picker.py::test_typed_center_survives_after_a_viewer_click | a NiceGUI click is an event, sent once; the typed center must still survive the redraws |
+| test_ui_apptest.py::test_clicking_the_same_atom_again_after_typing_is_applied | ported: test_nicegui_box_picker.py::test_clicking_the_same_atom_again_after_typing_is_applied | no clickId needed: each click is its own event |
+| test_ui_apptest.py::test_chat_parsed_box_moves_the_picker_box | ported: test_nicegui_box_picker.py::test_chat_parsed_box_moves_the_picker_box |  |
+| test_ui_apptest.py::test_size_step_with_size_unset_draws_the_stepped_box | ported: test_nicegui_box_picker.py::test_size_step_with_size_unset_draws_the_stepped_box |  |
+| test_ui_apptest.py::test_click_on_undrawable_box_docks_the_box_shown | ported: test_nicegui_box_picker.py::test_click_on_undrawable_box_docks_the_box_shown |  |
 | test_ui_apptest.py::test_job_finishing_mid_run_is_handled_by_one_more_poll | ported: test_nicegui_setup.py::test_job_finishing_mid_run_is_handled_by_one_more_poll | the poll is the ui.timer |
 | test_ui_apptest.py::test_cpu_field_shows_only_for_vina_and_bounds_workers | ported: test_nicegui_setup.py::test_cpu_field_shows_only_for_vina_and_bounds_workers |  |
 | test_ui_apptest.py::test_switching_algorithm_redocks_dock_and_visualize_only | ported: test_nicegui_setup.py::test_switching_algorithm_redocks_dock_and_visualize_only |  |
@@ -162,7 +162,7 @@ STREAMLIT_TIER_FILES = (
     "test_ui_streamlit_adapter.py",
 )
 
-PENDING_STAGES = {"16.5", "16.6", "16.7"}
+PENDING_STAGES = {"16.6", "16.7"}
 _ROW = re.compile(r"^\| (?P<test>\S+) \| (?P<target>[^|]+?) \| (?P<note>[^|]*?) ?\|$")
 _REFERENCE = re.compile(r"^(?P<kind>ported|core): (?P<file>test_\w+\.py)::(?P<name>test_\w+)$")
 

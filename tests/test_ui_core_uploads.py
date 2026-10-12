@@ -40,6 +40,43 @@ def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_0
     assert stat.S_IMODE(upload_dir.stat().st_mode) == 0o777
 
 
+def test_save_upload_replaces_an_existing_file_rather_than_writing_into_it(tmp_path):
+    # A same-named upload owned by the other GUI's user (root Streamlit vs
+    # uid-1000 NiceGUI) can't be written in place: "[Errno 13] Permission
+    # denied" (found 2026-10-12). Replacing it needs only the directory.
+    upload_dir = tmp_path / "uploads"
+    old = uploads.save_upload("crystal_ligand.mol2", b"old", upload_dir)
+    old_inode = old.stat().st_ino
+    old.chmod(0o444)
+
+    dest = uploads.save_upload("crystal_ligand.mol2", b"new", upload_dir)
+
+    assert dest.read_bytes() == b"new"
+    assert dest.stat().st_ino != old_inode
+    assert sorted(p.name for p in upload_dir.iterdir()) == ["crystal_ligand.mol2"]  # no temp file left
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_saved_upload_is_readable_and_replaceable_by_every_uid(tmp_path, umask_022):
+    dest = uploads.save_upload("a.sdf", b"x", tmp_path / "uploads")
+    assert stat.S_IMODE(dest.stat().st_mode) == 0o666
+
+
+def test_failed_upload_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    upload_dir = tmp_path / "uploads"
+    uploads.save_upload("a.sdf", b"old", upload_dir)
+
+    def fail(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(uploads.os, "replace", fail)
+    with pytest.raises(OSError, match="disk full"):
+        uploads.save_upload("a.sdf", b"new", upload_dir)
+
+    assert sorted(p.name for p in upload_dir.iterdir()) == ["a.sdf"]
+    assert (upload_dir / "a.sdf").read_bytes() == b"old"
+
+
 def test_protein_upload_replaces_the_pdb_id(state, tmp_path):
     state.params["protein_id"] = "6lu7"
 

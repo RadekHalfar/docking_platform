@@ -9,6 +9,8 @@ passes ``announce=False`` the second time, so the chat reply is posted once.
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -29,8 +31,22 @@ def save_upload(name: str, data: bytes, upload_dir: Path) -> Path:
 
     # Shared: the root Streamlit UI and the non-root NiceGUI UI (Phase 16)
     # both upload into this one directory.
-    dest = ensure_shared_directory(Path(upload_dir)) / safe_name
-    dest.write_bytes(data)
+    upload_dir = ensure_shared_directory(Path(upload_dir))
+    dest = upload_dir / safe_name
+    # Written beside it and swapped in: replacing a file needs write access
+    # to the directory only, so a same-named upload the other GUI's user
+    # owns (e.g. 0o644 from the root Streamlit UI) doesn't block this one,
+    # as writing over it in place would.
+    fd, tmp_name = tempfile.mkstemp(dir=upload_dir, prefix=f".{safe_name}.", suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        # mkstemp makes it 0o600; the other GUI and the services read it.
+        os.chmod(tmp_name, 0o666)
+        os.replace(tmp_name, dest)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
     return dest
 
 

@@ -796,7 +796,9 @@ def _apply_viewer_click(center: list) -> None:
 
 
 def _step_box_size(axis: int, delta: float) -> None:
-    """See :func:`ui.core.box_picker.step_box_size` (an on_click callback)."""
+    """See :func:`ui.core.box_picker.step_box_size`. Runs as an on_click
+    callback, i.e. before the Docking Box widgets exist, so writing their
+    keys is allowed."""
     box_picker.step_box_size(gui_session(), axis, delta)
 
 

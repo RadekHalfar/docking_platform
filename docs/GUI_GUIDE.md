@@ -11,9 +11,10 @@ http://localhost:3001: a header with Settings, a collapsible chat drawer on
 the right, and the tabs Setup / Results / Sessions. Since Stage 16.4 the
 chat drawer takes every command and LLM message, and the Setup tab has the
 whole form (inputs, Docking Box, Advanced, Run / Save Session / New
-Session / Reset, Stop and live progress). The 3D viewer and box picker
-(16.5), Results (16.6) and Sessions with Load (16.7) are still to come, so
-use the Streamlit GUI on port 3000 for real work until then. Where the two
+Session / Reset, Stop and live progress). Since Stage 16.5 the Setup tab's
+right side has the 3D box picker. Results (16.6) and Sessions with Load
+(16.7) are still to come, so use the Streamlit GUI on port 3000 for real
+work until then. Where the two
 differ, this guide says so.
 
 Whenever a session is active, the Chat panel shows a small **Session:
@@ -455,6 +456,14 @@ the viewer; a click or a − / + step fills that 20 Å size into all three
 fields (a step then changes its own axis, e.g. **X +** gives 21 / 20 / 20),
 so the box you saw is the box that gets docked.
 
+In the NiceGUI GUI the picker sits on the right of the Setup tab, next to
+the form, and its viewer keeps your camera. Rotate or zoom it, then click
+an atom, press − / + or type in the Docking Box fields: only the box
+redraws, and the view stays where you left it. Streamlit rebuilt the whole
+scene on every change and reset the camera. The clicked atom's label stays
+while the box is centred on that atom. A failed receptor load's error
+stays shown until the next **Load receptor for box picking**.
+
 This is a lighter, purely in-browser alternative to the CLI's
 `pymol-interactive`-based box selection (see
 [docs/PYMOL_INTERACTIVE.md](PYMOL_INTERACTIVE.md)) — it doesn't require that
@@ -500,7 +509,7 @@ the same tools and the same reference session.
 |---|---|
 | Interaction latency: from a click (or Enter in a text field) until the page stops changing for 300 ms | [`benchmark_gui_latency.js`](../benchmark_gui_latency.js), a DevTools console snippet. By hand: paste it into the console (Chrome blocks the first paste into DevTools; type `allow pasting` and press Enter, then paste again), do the action 5+ times, letting the page settle in between, then run `__lat.summary("<label>")`. For chat commands, run `__lat.summary("<label>", "enter")` instead, so the click that focused the chat box is left out. The median is the figure to record. |
 | GUI container CPU% and memory | [`benchmark_gui.py`](../benchmark_gui.py), `docker stats` on `mcp-ui`. Either for a fixed `--duration`, or with `--from-driver` between the driver's `SAMPLE-START` / `SAMPLE-STOP` lines. |
-| Viewer re-render time and render count | `?perf` in `ui/components/mol_viewer/index.html`. With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
+| Viewer re-render time and render count | `?perf` in `ui/components/mol_viewer/index.html` (Streamlit) and `ui_nice/mol_viewer.js` (NiceGUI, `http://localhost:3001/?perf`; there a full scene build logs `mode=box_picker` / `view`, and a box-only redraw `mode=box`). With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
 | All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. |
 
 The scripted measurement is one pipeline, run from the repo root in Git
@@ -580,6 +589,39 @@ What the numbers say about Streamlit:
   899 ms vs 491 ms), most likely because each rerun also redraws the results panel, which is
   now full (not separately verified).
 
+### Stage 16.5 interim: the NiceGUI box picker
+
+Measured 2026-10-12 in the setup phase only (the full re-time is 16.8).
+- **Setup:** headless Chromium 1600 × 1000 (Playwright 1.55), against a
+  side `ui-nice` container on the live stack. Same receptor
+  (`data/benchmark_gui/receptor.pdb`, 2,186 atoms) and box (19.354,
+  16.789, 29.19; 20 Å).
+- **Canvas:** the NiceGUI viewer is 55vh tall, against Streamlit's
+  450 px, so each frame costs a little more.
+
+| Measurement | Streamlit (16.0) | NiceGUI (16.5) |
+|---|---|---|
+| Viewer work per Box X ± click | full rebuild, 184 ms, camera reset | box-only redraw (`mode=box`), median 143 ms, camera kept |
+| Click → fields and summary updated | (inside the 491 ms) | about 94 ms |
+| Click → viewer redrawn, median of 10 | (inside the 491 ms) | 222 ms |
+| `benchmark_gui_latency.js` median (min–max) | 491 ms (186–637) | 726 ms (706–744) |
+| Scene build when the receptor loads (once) | 184 ms, every rerun | 496 ms, once |
+
+- **The latency snippet's NiceGUI figure is mostly animation, not work.**
+  It waits for 300 ms without DOM changes, and Quasar buttons keep
+  changing the DOM after the app is done:
+  - the click ripple ends about 760 ms after the click;
+  - the hover tooltip of the next button appears about 390 ms after it.
+
+  Streamlit's buttons have neither.
+- **For 16.8:** decide whether the snippet should ignore `.q-ripple` and
+  `.q-tooltip` mutations. That would leave the 16.0 baseline valid, since
+  Streamlit has neither.
+- **3Dmol labels are slow:** each `addLabel` draws a texture and
+  re-renders, and `removeLabel` re-renders too. A first version that
+  recreated the X/Y/Z labels on each step took 298 ms per redraw. The
+  viewer now makes them once and only moves them.
+
 ## Code Structure (for developers)
 
 Since Phase 16 (Stages 16.1–16.2, plus 16.4's additions) the GUI's logic is
@@ -635,6 +677,16 @@ rather than rewriting it:
     folds the background jobs into the state. Every handler calls a
     `ui/core` action and then `sync()`, which has each view update only
     the widgets whose value changed.
+  - `box_picker_panel.py` (Stage 16.5): the box picker on the Setup tab's
+    right side. It reads the receptor in `run.io_bound` and draws the
+    Docking Box fields on every `sync()`.
+  - `mol_viewer.py` + `mol_viewer.js` (Stage 16.5): the 3Dmol.js viewer
+    as a custom element, with the scene code ported from
+    `ui/components/mol_viewer/index.html`. One viewer per element: the
+    scene is built once, and `set_box()` / `set_ligands()` redraw only the
+    box or the poses by `run_method`, so the camera is kept. They never
+    use `update()`, which would resend the receptor PDB. The 3Dmol bundle
+    is served from `/mol-viewer-vendor`.
   - `setup_tab.py` and `chat_drawer.py`: the Setup form and the chat
     drawer. Widgets and `state.form` are kept in step explicitly (change
     handlers write the form; `sync()` writes it back), not with

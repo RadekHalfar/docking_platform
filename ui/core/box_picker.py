@@ -53,7 +53,6 @@ def apply_viewer_click(state, center: list) -> None:
     the viewer both read these. If the viewer was showing its placeholder
     (``drawable_box_size()`` is None), fill that in, so the box picked is
     the box docked.
-    In Streamlit it must run before the Docking Box widgets render.
     """
     for key, value in zip(BOX_FORM_KEYS[:3], center):
         state.form[key] = f"{value:.3f}"
@@ -68,8 +67,7 @@ def step_box_size(state, axis: int, delta: float) -> None:
     placeholder (``drawable_box_size()`` is None) the step starts from
     that placeholder and writes all three fields -- stepping one axis alone
     would leave a size the viewer still can't draw, so the button would
-    seem to do nothing. In Streamlit it runs as an on_click callback, i.e.
-    before the Docking Box widgets exist, so writing their keys is allowed.
+    seem to do nothing.
     """
     size = drawable_box_size(state)
     axes = (axis,) if size else range(3)
@@ -197,8 +195,9 @@ def process_box_picker_bridge(state, output_base: Path) -> None:
     # error -- clears a pending geometry command without a chat reply,
     # though the user was told "I'll set this". Unreachable today: nothing
     # stops the prep job, so it never ends "cancelled", and a missing result
-    # always comes with an error. Fix if 16.5 (or later) adds a Stop for the
-    # prep job: add an else branch that sets *failure* (e.g. "Receptor
+    # always comes with an error. Stage 16.5 added no Stop (parity first), so
+    # this stays deferred. Fix if a later stage adds a Stop for the prep
+    # job: add an else branch that sets *failure* (e.g. "Receptor
     # preparation was stopped -- could not set this.") and test it.
     if panel_error:
         state.box_picker_error = panel_error

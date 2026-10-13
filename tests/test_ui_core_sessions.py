@@ -92,6 +92,17 @@ def test_resume_prefers_a_draft(state, tmp_path, job):
     assert state.form["param_center_x"] == "8.5"
 
 
+def test_resume_drops_the_previous_runs_finished_bridge(state, tmp_path, job):
+    # Stage 16.7's real-data check: the finished bridge of the run before
+    # stayed, and both GUIs drew its result as the loaded session's.
+    state.job_id = "job_previous"
+    state.bridge = _Bridge(running=False)
+
+    sessions.resume_session(state, job, tmp_path)
+
+    assert state.bridge is None
+
+
 def test_resume_of_never_run_parameters_marks_all_pending(state, tmp_path, job):
     WorkflowStateManager(tmp_path / JOB_ID).restore_revision(1)
 
@@ -158,6 +169,58 @@ def test_delete_of_another_session_keeps_the_active_one(state, tmp_path, job):
 def test_delete_failure_is_returned(state, tmp_path):
     error = sessions.delete_session(state, {"job_id": "job_x", "job_dir": str(tmp_path / "job_x")})
     assert error.startswith("Delete failed:")
+
+
+def test_rename_and_delete_come_in_two_halves(state, tmp_path, job):
+    # Stage 16.7: NiceGUI runs the file half off its event loop.
+    state.viewed_job_id = JOB_ID
+
+    assert sessions.rename_session_file(job, " new ") is None
+    assert state.job_name == ""  # the state half hasn't run
+    sessions.apply_session_rename(state, job, " new ")
+    assert state.job_name == "new"
+
+    assert sessions.remove_session_dir(job) is None
+    assert not (tmp_path / JOB_ID).exists() and state.viewed_job_id == JOB_ID
+    sessions.forget_session(state, job)
+    assert state.viewed_job_id is None
+
+
+# ---------------------------------------------------------------------------
+# Listing (Stage 16.7)
+# ---------------------------------------------------------------------------
+
+def test_list_sessions_returns_completed_and_failed(tmp_path, job):
+    failed = tmp_path / "job_20261008_000002_beef02"
+    failed.mkdir()
+    (failed / "workflow_results.json").write_text(json.dumps({"status": "cancelled", "errors": ["stopped"]}))
+
+    completed, failed_jobs = sessions.list_sessions(tmp_path)
+
+    assert [j["job_id"] for j in completed] == [JOB_ID]
+    assert [j["job_id"] for j in failed_jobs] == [failed.name]
+
+
+def test_session_row_labels():
+    named = {"job_id": "job_1", "job_name": "my*run", "protein_id": "6LU7", "ligand_count": 2}
+    assert sessions.session_row_label(named, sessions.completed_session_detail(named)) == (
+        "**my\*run**  `job_1`  6LU7 (2 ligand(s))"
+    )
+    unnamed = {"job_id": "job_2", "job_name": "", "protein_id": "?", "first_error": "x" * 100}
+    detail = sessions.failed_session_detail(unnamed)
+    assert detail == "? — " + "x" * 77 + "..."
+    assert sessions.session_row_label(unnamed, detail) == f"job_2  {detail}"
+    assert sessions.failed_session_detail({"protein_id": "?"}) == "? — Unknown error"
+
+
+def test_revision_panel_data(state, tmp_path, job):
+    sessions.resume_session(state, job, tmp_path)
+
+    table, current, restorable = sessions.revision_panel_data(_sm(state))
+
+    assert "| 1 |" in table and "| 3 |" in table
+    assert current == 2
+    assert restorable == [2, 1]  # rev 3 holds only the run's state
 
 
 # ---------------------------------------------------------------------------

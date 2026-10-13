@@ -14,7 +14,8 @@ All clients share one event loop, so slow file work runs off it
 command's receptor read (:meth:`apply_geometry`) and a results bundle copy
 (:meth:`start_save`, from the chat, the Results tab's panel or its conflict
 buttons). Review Stage R2 measured those last two at up to 80 ms and 37 s on
-a Docker Desktop bind mount.
+a Docker Desktop bind mount. A save, and a session's delete (Stage 16.7),
+hold :attr:`PageController.busy` while they run.
 
 When a run finishes, completed or failed, the page switches to the Results
 tab (:attr:`PageController.show_results`); a stopped run leaves it where it is.
@@ -37,8 +38,14 @@ logger = logging.getLogger(__name__)
 # How often a client's timer checks its background jobs. Tests shorten it.
 POLL_INTERVAL_S = 1.0
 
-# controller.busy while a save copies the results.
+# controller.busy while a save copies the results, or a session is deleted.
 SAVING = "Saving results..."
+DELETING = "Deleting session..."
+# Why the actions that change the session are off while busy.
+_BUSY_REASONS = {
+    SAVING: "Results are being saved — wait for that",
+    DELETING: "A session is being deleted — wait for that",
+}
 
 # The finished runs that switch the page to the Results tab.
 SHOW_RESULTS_ON = ("completed", "failed")
@@ -65,13 +72,12 @@ class PageController:
         # Why the box picker's last Load didn't start, (message, severity),
         # shown under its button until the next action.
         self.picker_message: Optional[tuple[str, str]] = None
-        # What runs in the background (SAVING), or None. While set, the
-        # chat input and the actions that would change the session it works
-        # on (Run, New Session, Reset) are off.
-        # TRIGGER (Review Stage R2, docs/reviews/stage_16_r2.md, Deferred #3):
-        # Stage 16.7's Load, Delete and revision restore must check it too
-        # (as SetupView._blocked does), or a Delete during a save removes the
-        # job dir under the copy and a Load swaps the session it reports to.
+        # What runs in the background (SAVING, DELETING), or None. While
+        # set, the chat input and the actions that would change the session
+        # it works on are off: Run, New Session and Reset, and the Sessions
+        # tab's Load, Delete and Restore revision (blocked_reason) -- else a
+        # Delete during a save removes the job dir under the copy, and a Load
+        # swaps the session it reports to (Review Stage R2, Deferred #3).
         self.busy: Optional[str] = None
         # True while views write the state into their widgets: NiceGUI fires
         # a widget's change handler on a programmatic change too, and the
@@ -98,6 +104,15 @@ class PageController:
                 view.sync()
         finally:
             self.syncing = False
+
+    def blocked_reason(self) -> Optional[str]:
+        """Why the actions that change or replace the session are off -- a
+        run going in this client, or background work (:attr:`busy`) -- or None."""
+        if run_control.active_bridge_job_id(self.state) is not None:
+            return "A session is running — Stop it"
+        if self.busy is not None:
+            return _BUSY_REASONS[self.busy]
+        return None
 
     def start_action(self) -> None:
         """Called first by every action handler: an earlier action's

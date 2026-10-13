@@ -6,8 +6,6 @@ check that. They read the test files with ``ast`` and import no GUI
 framework, so they run in the hermetic suite and in CI.
 
 Targets:
-- ``16.7``: to be ported as a NiceGUI User-fixture test in that
-  stage (pending). When ported, the row changes to ``ported: <file>::<test>``.
 - ``ported: <file>::<test>``: the NiceGUI test that replaces it.
 - ``core: <file>::<test>``: the case tests the Streamlit wrapper or adapter
   of ``ui/core`` logic, and that hermetic core test covers the same case.
@@ -33,20 +31,20 @@ Targets:
 | test_ui_apptest.py::test_redock_local_files_session_after_ligand_change | ported: test_nicegui_setup.py::test_redock_local_files_session_after_ligand_change |  |
 | test_ui_apptest.py::test_finished_run_reply_is_rendered_in_chat | ported: test_nicegui_setup.py::test_finished_run_reply_is_rendered_in_chat |  |
 | test_ui_apptest.py::test_completed_session_from_disk_renders_results_and_viewer | ported: test_nicegui_results.py::test_completed_session_from_disk_renders_results_and_viewer |  |
-| test_ui_apptest.py::test_sidebar_lists_completed_and_failed_sessions | 16.7 | Sessions tab, not a sidebar |
-| test_ui_apptest.py::test_revision_history_expander_lists_revisions | 16.7 | |
-| test_ui_apptest.py::test_revision_history_hidden_without_active_session | 16.7 | |
-| test_ui_apptest.py::test_restore_revision_loads_its_params_and_marks_all_pending | 16.7 | |
-| test_ui_apptest.py::test_redock_after_restore_plans_full_rerun | 16.7 | |
+| test_ui_apptest.py::test_sidebar_lists_completed_and_failed_sessions | ported: test_nicegui_sessions.py::test_sidebar_lists_completed_and_failed_sessions | Sessions tab, not a sidebar; it lists every session, not the 10 newest |
+| test_ui_apptest.py::test_revision_history_expander_lists_revisions | ported: test_nicegui_sessions.py::test_revision_history_expander_lists_revisions | on the Sessions tab |
+| test_ui_apptest.py::test_revision_history_hidden_without_active_session | ported: test_nicegui_sessions.py::test_revision_history_hidden_without_active_session |  |
+| test_ui_apptest.py::test_restore_revision_loads_its_params_and_marks_all_pending | ported: test_nicegui_sessions.py::test_restore_revision_loads_its_params_and_marks_all_pending |  |
+| test_ui_apptest.py::test_redock_after_restore_plans_full_rerun | ported: test_nicegui_sessions.py::test_redock_after_restore_plans_full_rerun |  |
 | test_ui_apptest.py::test_cancelled_redock_plan_is_offered_again | ported: test_nicegui_setup.py::test_cancelled_redock_plan_is_offered_again |  |
 | test_ui_apptest.py::test_finished_run_clears_pending_only_when_completed | ported: test_nicegui_setup.py::test_finished_run_clears_pending_only_when_completed |  |
-| test_ui_apptest.py::test_restore_disabled_while_job_runs | 16.7 | |
+| test_ui_apptest.py::test_restore_disabled_while_job_runs | ported: test_nicegui_sessions.py::test_restore_disabled_while_job_runs |  |
 | test_ui_apptest.py::test_chat_undo_refused_while_job_runs | ported: test_nicegui_chat.py::test_chat_undo_refused_while_job_runs |  |
 | test_ui_apptest.py::test_chat_show_history_and_undo | ported: test_nicegui_chat.py::test_chat_show_history_and_undo |  |
 | test_ui_apptest.py::test_param_widgets_survive_early_rerun_in_chat_column | N/A | Streamlit drops widgets a rerun stops before drawing; NiceGUI draws each page once |
 | test_ui_apptest.py::test_chat_history_without_active_session | ported: test_nicegui_chat.py::test_chat_history_without_active_session |  |
 | test_ui_apptest.py::test_save_results_panel_writes_bundle | ported: test_nicegui_results.py::test_save_results_panel_writes_bundle |  |
-| test_ui_apptest.py::test_save_results_blocked_while_parameters_pending | ported: test_nicegui_results.py::test_save_results_blocked_while_parameters_pending | restored through the chat's `undo 1` until 16.7's revision panel |
+| test_ui_apptest.py::test_save_results_blocked_while_parameters_pending | ported: test_nicegui_results.py::test_save_results_blocked_while_parameters_pending | restored through the chat's `undo 1`; the Sessions tab's Restore is tested in test_nicegui_sessions.py |
 | test_ui_apptest.py::test_save_results_blocked_when_parameters_never_ran_after_load | ported: test_nicegui_results.py::test_save_results_blocked_when_parameters_never_ran_after_load |  |
 | test_ui_apptest.py::test_chat_save_refused_while_job_runs | ported: test_nicegui_chat.py::test_chat_save_refused_while_job_runs |  |
 | test_ui_apptest.py::test_save_results_conflict_overwrite_and_new_name | ported: test_nicegui_results.py::test_save_results_conflict_overwrite_and_new_name |  |
@@ -55,17 +53,17 @@ Targets:
 | test_ui_apptest.py::test_save_bundle_name_survives_early_rerun_in_chat_column | N/A | Streamlit drops widgets a rerun stops before drawing; NiceGUI draws each page once |
 | test_ui_apptest.py::test_save_results_sits_between_viewer_and_session_log | ported: test_nicegui_results.py::test_save_results_sits_between_viewer_and_session_log | re-specified for the tab: viewer and pose grids, then Save results as…, then the Session Log, then the downloads |
 | test_ui_apptest.py::test_receptor_load_with_box_fields_set_logs_no_session_state_warning | N/A | Streamlit's warning for a widget given both a default and a Session State value |
-| test_ui_apptest.py::test_redock_after_load_of_never_run_restore_plans_full_rerun | 16.7 | |
+| test_ui_apptest.py::test_redock_after_load_of_never_run_restore_plans_full_rerun | ported: test_nicegui_sessions.py::test_redock_after_load_of_never_run_restore_plans_full_rerun |  |
 | test_ui_apptest.py::test_redock_after_stopped_first_run_docks_again | ported: test_nicegui_setup.py::test_redock_after_stopped_first_run_docks_again |  |
 | test_ui_apptest.py::test_chat_undo_of_state_only_revision_is_refused | ported: test_nicegui_chat.py::test_chat_undo_of_state_only_revision_is_refused |  |
-| test_ui_apptest.py::test_restore_drops_box_picker_receptor_only_for_another_protein | 16.7 | |
+| test_ui_apptest.py::test_restore_drops_box_picker_receptor_only_for_another_protein | ported: test_nicegui_sessions.py::test_restore_drops_box_picker_receptor_only_for_another_protein |  |
 | test_ui_apptest.py::test_finished_run_reply_shows_without_rerun | N/A | Streamlit needs the reply drawn in the same script run; NiceGUI pushes updates. The reply itself: test_nicegui_setup.py::test_finished_run_reply_is_rendered_in_chat |
 | test_ui_apptest.py::test_chat_command_reply_shows_without_rerun | N/A | Streamlit needs the reply drawn in the same script run; NiceGUI pushes updates. The replies themselves: test_nicegui_chat.py |
 | test_ui_apptest.py::test_run_docking_with_missing_params_replies_without_rerun | ported: test_nicegui_setup.py::test_run_docking_with_missing_params_replies_without_rerun | the no-rerun part is Streamlit-only |
 | test_ui_apptest.py::test_redock_with_nothing_changed_replies_without_rerun | ported: test_nicegui_setup.py::test_redock_with_nothing_changed_replies_without_rerun | the no-rerun part is Streamlit-only |
 | test_ui_apptest.py::test_save_session_replies_without_rerun | ported: test_nicegui_setup.py::test_save_session_replies_without_rerun | the no-rerun part is Streamlit-only |
-| test_ui_apptest.py::test_save_session_saves_a_real_change_with_defaults | 16.7 | its second half needs Load (Sessions tab); the Save Session reply itself: test_save_session_replies_without_rerun |
-| test_ui_apptest.py::test_save_session_with_form_back_at_checkpoint_clears_stale_draft | 16.7 | its second half needs Load (Sessions tab); the Save Session reply itself: test_save_session_replies_without_rerun |
+| test_ui_apptest.py::test_save_session_saves_a_real_change_with_defaults | ported: test_nicegui_sessions.py::test_save_session_saves_a_real_change_with_defaults | its Load half through the Sessions tab |
+| test_ui_apptest.py::test_save_session_with_form_back_at_checkpoint_clears_stale_draft | ported: test_nicegui_sessions.py::test_save_session_with_form_back_at_checkpoint_clears_stale_draft | its Load half through the Sessions tab |
 | test_ui_apptest.py::test_typed_center_survives_after_a_viewer_click | ported: test_nicegui_box_picker.py::test_typed_center_survives_after_a_viewer_click | a NiceGUI click is an event, sent once; the typed center must still survive the redraws |
 | test_ui_apptest.py::test_clicking_the_same_atom_again_after_typing_is_applied | ported: test_nicegui_box_picker.py::test_clicking_the_same_atom_again_after_typing_is_applied | no clickId needed: each click is its own event |
 | test_ui_apptest.py::test_chat_parsed_box_moves_the_picker_box | ported: test_nicegui_box_picker.py::test_chat_parsed_box_moves_the_picker_box |  |
@@ -75,7 +73,7 @@ Targets:
 | test_ui_apptest.py::test_cpu_field_shows_only_for_vina_and_bounds_workers | ported: test_nicegui_setup.py::test_cpu_field_shows_only_for_vina_and_bounds_workers |  |
 | test_ui_apptest.py::test_switching_algorithm_redocks_dock_and_visualize_only | ported: test_nicegui_setup.py::test_switching_algorithm_redocks_dock_and_visualize_only |  |
 | test_ui_apptest.py::test_pso_mode_sends_one_cpu_whatever_the_cpu_field_holds | ported: test_nicegui_setup.py::test_pso_mode_sends_one_cpu_whatever_the_cpu_field_holds |  |
-| test_ui_apptest.py::test_loaded_pre_phase15_session_reads_as_moldina_with_nothing_to_redock | 16.7 | |
+| test_ui_apptest.py::test_loaded_pre_phase15_session_reads_as_moldina_with_nothing_to_redock | ported: test_nicegui_sessions.py::test_loaded_pre_phase15_session_reads_as_moldina_with_nothing_to_redock |  |
 | test_ui_apptest.py::test_chat_parse_without_algorithm_keeps_the_selector | ported: test_nicegui_chat.py::test_chat_parse_without_algorithm_keeps_the_selector |  |
 | test_ui_apptest.py::test_chat_parse_naming_an_unknown_algorithm_renders_without_crash | ported: test_nicegui_chat.py::test_chat_parse_naming_an_unknown_algorithm_renders_without_crash |  |
 | test_ui_apptest.py::test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph | ported: test_nicegui_chat.py::test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph |  |
@@ -162,7 +160,9 @@ STREAMLIT_TIER_FILES = (
     "test_ui_streamlit_adapter.py",
 )
 
-PENDING_STAGES = {"16.7"}
+# Every row was ported or classified by Stage 16.7; a new Streamlit test
+# needs a row with a real target.
+PENDING_STAGES: set[str] = set()
 _ROW = re.compile(r"^\| (?P<test>\S+) \| (?P<target>[^|]+?) \| (?P<note>[^|]*?) ?\|$")
 _REFERENCE = re.compile(r"^(?P<kind>ported|core): (?P<file>test_\w+\.py)::(?P<name>test_\w+)$")
 

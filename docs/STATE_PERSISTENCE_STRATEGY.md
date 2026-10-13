@@ -448,7 +448,10 @@ read-only operation over completed jobs.
 Column headers use each job's top-level `job_name` field when present (the optional,
 non-unique display label set from the GUI's **Session name** field or renamed later via the
 sidebar's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)), falling
-back to the job directory basename (i.e. the job ID) when a job has no name.
+back to the job directory basename (i.e. the job ID) when a job has no name. Since the
+label isn't unique, a label shared by several of the compared jobs gets each one's job ID
+appended (`trial_a (job_…)`), in the GUI and the CLI alike. Before Stage 16.7 two
+same-named sessions shared one column label, and the GUI's table failed to draw.
 
 ### CLI usage
 

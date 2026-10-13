@@ -149,6 +149,21 @@ class TestCompareJobs:
 
         assert comparison["jobs"] == ["Wide box", "job_def"]
 
+    def test_compare_jobs_tells_apart_jobs_with_the_same_name(self, tmp_path):
+        # Stage 16.7: two sessions both named "trial" gave the comparison
+        # table two columns with one label, and the GUI failed to draw it.
+        job_a = tmp_path / "job_abc"
+        job_b = tmp_path / "job_def"
+        job_c = tmp_path / "job_ghi"
+        _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -8.4}], job_name="trial")
+        _write_workflow_results(job_b, [{"ligand_id": "ATP", "best_affinity": -7.9}], job_name="trial")
+        _write_workflow_results(job_c, [{"ligand_id": "ATP", "best_affinity": -7.0}], job_name="other")
+
+        comparison = compare_jobs([str(job_a), str(job_b), str(job_c)])
+
+        assert comparison["jobs"] == ["trial (job_abc)", "trial (job_def)", "other"]
+        assert comparison["best_per_ligand"]["ATP"] == ("trial (job_abc)", -8.4)
+
     def test_compare_jobs_records_each_jobs_docking_algorithm(self, tmp_path):
         # Stage 15.3: the comparison names which search produced each column;
         # results written before Phase 15 have no key and were Moldina (PSO).

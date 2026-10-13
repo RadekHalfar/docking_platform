@@ -116,10 +116,10 @@ class ResultsView:
         self.pose_caption: Optional[ui.label] = None
         self._drawn_comparison: Optional[dict] = None
 
-        with ui.tabs().classes("w-full") as tabs:
+        with ui.tabs().classes("w-full") as self.inner_tabs:
             ui.tab(TAB_VIEWER)
             ui.tab(TAB_COMPARE)
-        with ui.tab_panels(tabs, value=TAB_VIEWER).classes("w-full"):
+        with ui.tab_panels(self.inner_tabs, value=TAB_VIEWER).classes("w-full"):
             with ui.tab_panel(TAB_VIEWER):
                 with ui.column().classes("w-full gap-2").mark("session-viewer") as self.viewer_column:
                     self.body = ui.column().classes("w-full gap-2").mark("results-body")
@@ -131,6 +131,14 @@ class ResultsView:
 
         controller.add_view(self)
         self.sync()
+
+    def show_compare(self) -> None:
+        """Open Compare Sessions (the Sessions tab's Compare does)."""
+        self.inner_tabs.set_value(TAB_COMPARE)
+
+    def show_viewer(self) -> None:
+        """Open the Session Viewer (a Load does)."""
+        self.inner_tabs.set_value(TAB_VIEWER)
 
     # ── Building ─────────────────────────────────────────────────────────────
 

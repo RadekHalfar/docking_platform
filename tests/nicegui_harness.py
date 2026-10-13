@@ -7,7 +7,9 @@ threads, nothing written outside tmp_path.
 
 - ``OUTPUT_BASE`` points to a fresh dir in tmp_path. NiceGUI's user_plugin
   runs ui_nice/app.py anew for every test, so the env var is picked up.
-- The LLM endpoint is a dead local port, and Ollama's model list is stubbed.
+- The LLM settings come from fixed env vars: Ollama at a dead local port,
+  a fixed model, and no API key or base URL (``docker compose run`` passes
+  the ``.env`` ones, real key included). Ollama's model list is stubbed.
 - ``ui.settings.SETTINGS_FILE`` is patched directly: it's frozen at import.
 - Any run gets a finished :class:`~tests.ui_fakes.FakeBridge`.
 - The progress timer ticks every 50 ms instead of every second.
@@ -24,6 +26,10 @@ a click on a receptor atom sends.
 The Results tab (Stage 16.6) reads a result off the event loop: tests wait
 for :func:`results_loaded`. :func:`completed_job_on_disk` writes a
 completed session with a receptor and multi-pose SDFs to view.
+
+The Sessions tab (Stage 16.7) reads its listing off the event loop too:
+:func:`open_sessions` opens the tab as a user does, and tests wait for
+:func:`sessions_listed`.
 """
 from __future__ import annotations
 
@@ -56,6 +62,9 @@ def nice_env(tmp_path, output_base, monkeypatch):
     monkeypatch.setenv("OUTPUT_BASE", str(output_base))
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("LLM_ENDPOINT", "http://127.0.0.1:9")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("LLM_BASE_URL", "")
     monkeypatch.setattr("ui.settings.SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr("ui.ollama_models.list_ollama_models", lambda *a, **k: [])
     monkeypatch.setattr("ui.orchestrator_bridge.OrchestratorBridge", FakeBridge)
@@ -90,6 +99,11 @@ class Page:
     def results(self):
         """The last page's Results tab view."""
         return self.parts[-1].results
+
+    @property
+    def sessions(self):
+        """The last page's Sessions tab view."""
+        return self.parts[-1].sessions
 
     @property
     def tab(self) -> str:
@@ -366,3 +380,21 @@ def completed_job_on_disk(output_base: Path, job_id: str, **extra) -> Path:
     }
     (job_dir / "workflow_results.json").write_text(json.dumps(data))
     return job_dir
+
+
+# ---------------------------------------------------------------------------
+# The Sessions tab (Stage 16.7)
+# ---------------------------------------------------------------------------
+
+def open_sessions(user, page: Page) -> None:
+    """Open the Sessions tab, as a user clicks it (that starts a listing)."""
+    with user.client:
+        page.parts[-1].tabs.set_value("Sessions")
+
+
+async def sessions_listed(page: Page) -> None:
+    """Wait until the Sessions tab's listing is read for the current state."""
+    view = page.sessions
+    await eventually(
+        lambda: not view.refreshing and view._listing is not None and view._refresh_key == view._change_key()
+    )

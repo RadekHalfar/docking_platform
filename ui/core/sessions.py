@@ -1,8 +1,14 @@
 """Session history actions: Load, rename, delete, revision history and
 undo (Phase 16, Stage 16.1).
 
-Moved unchanged in behaviour from ``ui/app.py``. Listing sessions is
-``ui.job_history``'s job; caching that listing is each GUI's own concern.
+Moved unchanged in behaviour from ``ui/app.py``. Scanning the sessions on
+disk is ``ui.job_history``'s job; :func:`list_sessions` does both scans in
+one call, and caching or refreshing them is each GUI's own concern.
+
+Rename and delete come in two halves (Stage 16.7): the file work
+(:func:`rename_session_file`, :func:`remove_session_dir`), which NiceGUI
+runs off its event loop, and the state update that follows it
+(:func:`apply_session_rename`, :func:`forget_session`).
 """
 from __future__ import annotations
 
@@ -15,7 +21,10 @@ from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager, describe_revision
 from ui.core.form import clear_box_picker_state, load_session_params, start_new_session
 from ui.core.run_control import active_bridge_job_id
-from ui.job_history import escape_markdown, rename_job
+from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
+
+# A failed session's first error, as its row shows it.
+FIRST_ERROR_CHARS = 80
 
 
 def load_workflow_results(output_base: Path, job_id: str) -> Optional[dict]:
@@ -78,6 +87,10 @@ def resume_session(state, job: dict, output_base: Path) -> None:
         session.pending_changed_params |= CORE_PARAMS
     state.job_id = job["job_id"]
     state.job_name = job.get("job_name", "")
+    # The previous run's finished bridge goes too, as on New Session: both
+    # GUIs pair the bridge with the active job_id, so its result was drawn
+    # as the loaded session's (found in Stage 16.7's real-data check).
+    state.bridge = None
     # The run log shown belongs to the previous session's last run.
     state.run_log = []
     # Keeps process_docking_bridge()'s completion sync from overwriting
@@ -91,30 +104,81 @@ def resume_session(state, job: dict, output_base: Path) -> None:
     state.pending_rerun = None
 
 
-def rename_session(state, job: dict, new_name: str) -> Optional[str]:
-    """Rename a session's display label; returns an error message, or None."""
+def list_sessions(output_base: Path) -> tuple[list[dict], list[dict]]:
+    """The completed and the failed/cancelled sessions, each newest first
+    (``ui.job_history`` listing entries). Reads every session's results file."""
+    return list_completed_jobs(str(output_base)), list_failed_jobs(str(output_base))
+
+
+def session_row_label(job: dict, detail: str) -> str:
+    """A session row's markdown label: its name in bold (if it has one),
+    its id, then *detail*."""
+    job_name = job.get("job_name") or ""
+    if job_name:
+        return f"**{escape_markdown(job_name)}**  `{job['job_id']}`  {detail}"
+    return f"{job['job_id']}  {detail}"
+
+
+def completed_session_detail(job: dict) -> str:
+    return f"{job['protein_id']} ({job['ligand_count']} ligand(s))"
+
+
+def failed_session_detail(job: dict) -> str:
+    first_error = job.get("first_error", "Unknown error")
+    if len(first_error) > FIRST_ERROR_CHARS:
+        first_error = first_error[:FIRST_ERROR_CHARS - 3] + "..."
+    return f"{job['protein_id']} — {first_error}"
+
+
+def rename_session_file(job: dict, new_name: str) -> Optional[str]:
+    """Write a session's new display label; returns an error message, or None."""
     try:
         rename_job(job["job_dir"], new_name)
     except Exception as exc:
         return f"Rename failed: {exc}"
+    return None
+
+
+def apply_session_rename(state, job: dict, new_name: str) -> None:
+    """After :func:`rename_session_file`: the viewed session's label follows."""
     if state.viewed_job_id == job["job_id"]:
         state.job_name = new_name.strip()[:60]
+
+
+def rename_session(state, job: dict, new_name: str) -> Optional[str]:
+    """Rename a session's display label; returns an error message, or None."""
+    error = rename_session_file(job, new_name)
+    if error is None:
+        apply_session_rename(state, job, new_name)
+    return error
+
+
+def remove_session_dir(job: dict) -> Optional[str]:
+    """Delete a session's directory; returns an error message, or None."""
+    try:
+        shutil.rmtree(job["job_dir"])
+    except OSError as exc:
+        return f"Delete failed: {exc}"
     return None
+
+
+def forget_session(state, job: dict) -> None:
+    """After :func:`remove_session_dir`: stop viewing the deleted session,
+    and start a new one if it was the active session."""
+    if state.viewed_job_id == job["job_id"]:
+        state.viewed_job_id = None
+    if state.job_id == job["job_id"]:
+        start_new_session(state)
 
 
 def delete_session(state, job: dict) -> Optional[str]:
     """Delete a session's directory; returns an error message, or None.
     Deleting the active session starts a new one. The caller must not
     offer this for the job this client is running (:func:`active_bridge_job_id`)."""
-    try:
-        shutil.rmtree(job["job_dir"])
-    except OSError as exc:
-        return f"Delete failed: {exc}"
-    if state.viewed_job_id == job["job_id"]:
-        state.viewed_job_id = None
-    if state.job_id == job["job_id"]:
-        start_new_session(state)
-    return None
+    error = remove_session_dir(job)
+    if error is None:
+        forget_session(state, job)
+    return error
 
 
 def undo_to_revision(state, revision: int) -> str:
@@ -175,6 +239,15 @@ def format_history_markdown(revisions: list[dict]) -> str:
         event, details = (escape_markdown(s).replace("|", "\\|") for s in (r["event_type"], details))
         lines.append(f"| {r['revision']} | {timestamp} | {event} | {details} |")
     return "\n".join(lines)
+
+
+def revision_panel_data(state_manager) -> tuple[str, Optional[int], list[int]]:
+    """What the revision history panel shows, read in one call: the history
+    table, the parameters' current revision, and the revisions it can
+    restore (those with parameters), newest first."""
+    revisions = state_manager.list_revisions()
+    restorable = [r["revision"] for r in reversed(revisions) if r["has_parameters"]]
+    return format_history_markdown(revisions), state_manager.get_parameters_revision(), restorable
 
 
 def history_chat_reply(state, intent: dict) -> str:

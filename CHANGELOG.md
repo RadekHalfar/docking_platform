@@ -332,4 +332,19 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
       background, as the chat's `save results as` does since R2.
     - **Result files are read once** per result, and `job.log` only when
       it changes, never on every timer tick.
-  - **Next:** Stage 16.7, the Sessions tab and settings.
+  - **16.7 (2026-10-13):** NiceGUI's Sessions tab and Settings dialog; every
+    Streamlit feature is now ported.
+    - **Sessions tab:** the active session's revision history with Restore,
+      then Session History and Failed Sessions with Load (which opens
+      Results), Rename, Delete (confirmed in a dialog, removed in the
+      background) and Compare. Every session is listed, not only the 10
+      newest. The lists are read off the event loop.
+    - **Load, Delete and Restore revision wait for a save** (or a delete)
+      to finish, as Run, New Session and Reset do.
+    - **Settings dialog:** provider, endpoint, model (Ollama's models
+      listed in the background) and API key.
+    - **Both GUIs:** applying settings the LLM client rejects no longer
+      saves them; comparing two sessions with the same name no longer
+      fails (each column gets its job ID); after a run, Load no longer
+      shows that run's result under the loaded session's name.
+  - **Next:** Review Stage R3 with the Cross-Service Compatibility Review.

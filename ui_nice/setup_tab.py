@@ -332,11 +332,7 @@ class SetupView:
 
     def _blocked(self) -> Optional[str]:
         """Why Run, New Session and Reset are off, or None."""
-        if run_control.active_bridge_job_id(self.state) is not None:
-            return "A session is running — Stop it"
-        if self.controller.busy is not None:
-            return "Results are being saved — wait for that"
-        return None
+        return self.controller.blocked_reason()
 
     def _sync_run_card(self) -> None:
         state = self.state

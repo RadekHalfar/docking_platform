@@ -14,9 +14,9 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_workflow_with_llm,
 )
 from ui.core import form as gui_form
-from ui.core import box_picker, chat, results_view, run_control, sessions, uploads
+from ui.core import box_picker, chat, llm_settings, results_view, run_control, sessions, uploads
 from ui.core import save_results as gui_save
-from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs
+from ui.job_history import list_completed_jobs, list_failed_jobs
 from ui.mol_viewer import render_mol_viewer
 from ui.ollama_models import list_ollama_models
 from ui.orchestrator_bridge import OrchestratorBridge
@@ -140,13 +140,7 @@ def _reset_session(preserve: frozenset = frozenset({"settings"})) -> None:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-_PROVIDER_LABELS = {
-    "ollama": "Ollama (local)",
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "metacentrum": "MetaCentrum (e-INFRA CZ)",
-    "openai_compatible": "Other local server",
-}
+_PROVIDER_LABELS = llm_settings.PROVIDER_LABELS
 _PROVIDER_KEYS = {label: key for key, label in _PROVIDER_LABELS.items()}
 
 
@@ -200,10 +194,8 @@ def _render_settings_form() -> None:
     provider = _PROVIDER_KEYS[provider_label]
 
     endpoint = settings.get("endpoint", "")
-    # Only openai_compatible has a base_url input below; for every other
-    # provider (including metacentrum, which has no override field yet)
-    # drop a stale value left over from a prior openai_compatible session
-    # instead of silently carrying it into the new client.
+    # Only openai_compatible has a base_url input below (settings_from_form
+    # drops it for the others).
     base_url = settings.get("base_url", "") if provider == "openai_compatible" else ""
     api_key = settings.get("api_key", "")
     current_model = settings.get("model", "")
@@ -212,13 +204,13 @@ def _render_settings_form() -> None:
         with st.expander("Advanced"):
             endpoint = st.text_input(
                 "Endpoint URL",
-                value=endpoint or "http://localhost:11434",
+                value=endpoint or llm_settings.DEFAULT_ENDPOINT,
                 help="Point at a different Ollama server (e.g. a GPU workstation) "
                      "instead of the bundled one.",
             )
     elif provider == "openai_compatible":
         endpoint = st.text_input(
-            "Endpoint URL", value=endpoint or "http://localhost:11434"
+            "Endpoint URL", value=endpoint or llm_settings.DEFAULT_ENDPOINT
         )
         base_url = st.text_input("Base URL (OpenAI-compatible)", value=base_url or endpoint)
 
@@ -235,17 +227,11 @@ def _render_settings_form() -> None:
     else:
         model = st.text_input("Model", value=current_model)
 
-    if provider in ("openai", "anthropic", "metacentrum", "openai_compatible"):
+    if provider in llm_settings.API_KEY_PROVIDERS:
         api_key = st.text_input("API Key", value=api_key, type="password")
 
     if st.button("Apply settings"):
-        new_settings = {
-            "provider": provider,
-            "model": model.strip(),
-            "endpoint": endpoint.strip(),
-            "api_key": api_key.strip(),
-            "base_url": base_url.strip(),
-        }
+        new_settings = llm_settings.settings_from_form(provider, model, endpoint, api_key, base_url)
         try:
             apply_settings(new_settings)
             st.success("Settings applied.")
@@ -275,10 +261,7 @@ def _render_session_row(job: dict, detail: str, *, show_checkbox: bool) -> str |
     checked (feeds "Compare selected sessions"), else None.
     """
     job_name = job.get("job_name") or ""
-    if job_name:
-        label = f"**{escape_markdown(job_name)}**  `{job['job_id']}`  {detail}"
-    else:
-        label = f"{job['job_id']}  {detail}"
+    label = sessions.session_row_label(job, detail)
 
     selected_dir = None
     col_first, col_load, col_rename, col_delete = st.columns([3, 1, 1, 1])
@@ -367,8 +350,7 @@ def _render_job_history() -> None:
 
     selected = []
     for job in jobs[:10]:
-        detail = f"{job['protein_id']} ({job['ligand_count']} ligand(s))"
-        job_dir = _render_session_row(job, detail, show_checkbox=True)
+        job_dir = _render_session_row(job, sessions.completed_session_detail(job), show_checkbox=True)
         if job_dir:
             selected.append(job_dir)
 
@@ -387,11 +369,7 @@ def _render_failed_session_history() -> None:
         return
 
     for job in jobs[:10]:
-        first_error = job.get("first_error", "Unknown error")
-        if len(first_error) > 80:
-            first_error = first_error[:77] + "..."
-        detail = f"{job['protein_id']} — {first_error}"
-        _render_session_row(job, detail, show_checkbox=False)
+        _render_session_row(job, sessions.failed_session_detail(job), show_checkbox=False)
 
 
 # ── Chat panel ────────────────────────────────────────────────────────────────

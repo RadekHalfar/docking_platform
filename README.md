@@ -362,7 +362,7 @@ docking_platform/
 │
 ├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
 │   ├── app.py                  # Main Streamlit entry point
-│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view (Phase 16)
+│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view, llm_settings (Phase 16)
 │   ├── session_state.py        # Streamlit adapter: st.session_state as a GuiSession view, init
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-run log sink (no stdout capture)
@@ -382,6 +382,8 @@ docking_platform/
 │   ├── chat_drawer.py          # Chat drawer: messages, Run log, input (LLM parse via run.io_bound)
 │   ├── box_picker_panel.py     # Setup tab's right side: the visual box picker
 │   ├── results_tab.py          # Results tab: viewer + ligand/pose grids, save-as, Session Log, downloads, compare
+│   ├── sessions_tab.py         # Sessions tab: revision history + Restore, session lists (Load/Rename/Delete/Compare)
+│   ├── settings_dialog.py      # Settings dialog: LLM provider, endpoint, model (Ollama list), API key
 │   ├── mol_viewer.py           # 3Dmol.js viewer element (camera kept; box/poses redrawn in place)
 │   ├── mol_viewer.js           # Its Vue component (scene code ported from ui/components/mol_viewer)
 │   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)

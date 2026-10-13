@@ -13,10 +13,12 @@ chat drawer takes every command and LLM message, and the Setup tab has the
 whole form (inputs, Docking Box, Advanced, Run / Save Session / New
 Session / Reset, Stop and live progress). Since Stage 16.5 the Setup tab's
 right side has the 3D box picker. Since Stage 16.6 the Results tab shows
-the session's results (see "The NiceGUI Results tab" below). Sessions with
-Load (16.7) is still to come, so use the Streamlit GUI on port 3000 for real
-work until then. Where the two
-differ, this guide says so.
+the session's results (see "The NiceGUI Results tab" below). Since Stage
+16.7 the Sessions tab (history, Load, Rename, Delete, Compare and the
+revision history) and the Settings dialog are there too (see "The NiceGUI
+Sessions tab" below), so every feature of the Streamlit GUI is ported. The
+Streamlit GUI on port 3000 stays until the owner's parity check in Stage
+16.8. Where the two differ, this guide says so.
 
 Uploaded files (either GUI) are each saved in a folder of their own under
 `orchestrator_output/uploads/`, so uploading another file with the same
@@ -69,6 +71,15 @@ resets Streamlit's in-memory session — and a container restart).
 
 To reset to the values from `.env` / `docker-compose.yml`, delete
 `cache/.docking_platform_settings.json` and refresh the page.
+
+In the NiceGUI GUI (port 3001) the same fields are in the **Settings**
+dialog (the gear in the header). Each time it opens it shows the current
+session's settings and asks Ollama for its models afresh, and again when you
+change the Ollama endpoint (press Enter or leave the field). Apply builds
+the client before saving, so settings the client rejects are neither saved
+nor used, and the error is shown in the dialog. Settings are per browser
+tab, as in Streamlit; the file on disk is shared, so a newly opened tab
+starts from the last ones applied.
 
 ## Chat: Describing Your Workflow
 
@@ -237,6 +248,11 @@ sentence like "undo the box change and set exhaustiveness to 16", asks which
 revision instead of guessing. Like the dropdown, chat only restores
 revisions marked `[params]` in the table.
 
+In the NiceGUI GUI the **Revision history** panel is at the top of the
+**Sessions** tab, under **Active session**, rather than in the form. It
+works the same way, and is also off while results are being saved or a
+session deleted.
+
 ## Saving Results Bundles
 
 To keep a copy of a run's results under a name of your own, before a redock
@@ -372,6 +388,30 @@ Load/Rename/Delete controls, plus a short preview of the first recorded
 error in place of the ligand count. This keeps a failed or intentionally
 stopped run from silently disappearing while still keeping it out of the
 "successful runs" list Session History and job comparison rely on.
+
+### The NiceGUI Sessions tab
+
+The NiceGUI GUI (port 3001) has these lists on its **Sessions** tab:
+**Active session** with the revision history (see "Revision History and
+Undo"), then **Session History** and **Failed Sessions**, each row with
+the same Load / Rename / Delete controls. Where it differs:
+
+- **Every session is listed,** not only the 10 newest, in each list.
+- **Load opens the Results tab** with the loaded session, and fills the
+  Setup form as in Streamlit.
+- **Delete asks in a dialog** ("Delete session … and all its files?
+  This cannot be undone.") with **Confirm delete** / **Cancel**. The
+  folder is removed in the background; the chat input shows "Deleting
+  session..." meanwhile.
+- **While results are being saved** (or a session deleted), Load, Delete
+  and Restore revision are off, as Run, New Session and Reset are:
+  deleting the session being copied, or loading another one, would leave
+  the save writing into, or reporting to, the wrong place.
+- **The lists are read from disk** when you open the tab, after your own
+  Rename / Delete / Restore, while the tab is open whenever the session
+  changes (a run finishing, Save Session, a chat reply), and on
+  **Refresh**. A session another tab or the CLI finished meanwhile shows
+  up on the next of these, so click **Refresh** if you are waiting for one.
 
 ## Stopping a Running Session
 
@@ -534,7 +574,13 @@ that session, or "N/A" if the ligand wasn't docked in that session. An
 used. The
 strongest predicted binder per ligand (most negative kcal/mol) is
 highlighted green — rendered as a plain HTML table (not `st.dataframe`) so
-the highlight stays readable in both light and dark theme.
+the highlight stays readable in both light and dark theme. When two of the
+sessions share a name, each column header gets its job ID in brackets, so
+they stay apart (before Stage 16.7 such a pair made the table fail).
+
+In the NiceGUI GUI, tick the sessions on the **Sessions** tab; **Compare
+selected sessions** appears once two are ticked and opens **Results ›
+Compare Sessions**.
 
 ## Performance
 
@@ -679,7 +725,17 @@ rather than rewriting it:
   - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session,
     bridge polling. A run's log lines go to `state.run_log`, a fresh list
     per run, never into the chat messages.
-  - `sessions.py`: Load, rename, delete, revision history and undo.
+  - `sessions.py`: Load, rename, delete, revision history and undo, and
+    the session lists (`list_sessions()`, the row labels). Rename and
+    delete come in two halves (Stage 16.7), the file work
+    (`rename_session_file()`, `remove_session_dir()`) and the state update
+    after it (`apply_session_rename()`, `forget_session()`), so NiceGUI
+    runs the first on a worker thread. `revision_panel_data()` reads the
+    revision panel in one call.
+  - `llm_settings.py` (Stage 16.7): the settings form's providers,
+    `settings_from_form()` and `apply_settings()`, split into
+    `persist_settings()` (build the client, then save; no GUI state) and
+    `use_settings()`.
   - `chat.py`: chat commands (geometry, algorithm, history, save) and the
     LLM parse. `parse_message()` is the blocking LLM call and touches no
     state, so a GUI with an event loop can run it on a worker thread and
@@ -723,9 +779,9 @@ rather than rewriting it:
     check is the route's security boundary.
   - `layout.py`: `build_page(state, output_base)` draws the header,
     settings dialog, chat drawer, tabs and the Setup splitter, and returns
-    them as `PageParts` for the stages that fill them. It gives the
-    controller `show_results`, which the timer calls when a run finishes
-    as completed or failed.
+    them as `PageParts`. It gives the controller `show_results`, which the
+    timer calls when a run finishes as completed or failed, and tells the
+    Sessions tab when it is opened.
   - `controller.py`: `PageController`, one per client. It holds the state,
     `output_base` and the bridge class, and runs the 1 s `ui.timer` that
     folds the background jobs into the state. Every handler calls a
@@ -739,8 +795,11 @@ rather than rewriting it:
     - `apply_geometry()` and `start_save()` run the geometry command's
       receptor read and a save's copy in `run.io_bound`. A save can come
       from the chat (`run_save()`), the Results tab's panel or its
-      conflict buttons. While a save runs, `busy` holds the session (chat
-      input, Run, New Session, Reset, the save buttons).
+      conflict buttons. While a save runs, or a session is deleted
+      (Stage 16.7), `busy` holds the session: chat input, Run, New
+      Session, Reset, the save buttons, and the Sessions tab's Load,
+      Delete and Restore revision. `blocked_reason()` says why they are
+      off, for the views that check it.
     - `syncing` is set while views write widgets: NiceGUI fires change
       handlers on those writes too, and the handlers ignore them.
   - `box_picker_panel.py` (Stage 16.5): the box picker on the Setup tab's
@@ -765,6 +824,15 @@ rather than rewriting it:
     can't send `rowClicked`: serializing its event args fails in the
     browser). Save results as… computes
     its block reason in `run.io_bound` too.
+  - `sessions_tab.py` (Stage 16.7): the Sessions tab. Its `sync()` reads
+    no file either: the lists and the active session's revisions are read
+    in one `run.io_bound` trip when the tab is opened, after its own
+    actions, on Refresh, and, while it is open, when its change key
+    (session, state manager, `job_done`, the chat messages) moves. A later
+    read wins over an earlier one. Delete's `rmtree` runs in `run.io_bound`.
+  - `settings_dialog.py` (Stage 16.7): the Settings dialog. It lists the
+    Ollama models in `run.io_bound` (dropping a list for an endpoint no
+    longer in the field), and Apply runs `persist_settings()` there.
   - `setup_tab.py` and `chat_drawer.py`: the Setup form and the chat
     drawer. Widgets and `state.form` are kept in step explicitly (change
     handlers write the form; `sync()` writes it back), not with

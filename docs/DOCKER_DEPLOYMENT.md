@@ -464,6 +464,8 @@ docker compose run --rm --no-deps ui-nice \
   AppTest `app` fixture does: `OUTPUT_BASE` in `tmp_path`, Ollama stubbed,
   `ui.settings.SETTINGS_FILE` patched, `OrchestratorBridge` replaced by the
   finished fake from `tests/ui_fakes.py` (shared with the AppTest tier).
+  It fixes the `LLM_*` environment variables too (no API key or base URL),
+  since `docker compose run` passes the `.env` ones, real key included.
   It also shortens the progress timer to 50 ms, and its `page` fixture
   seeds each client's `GuiSession` before the page is drawn (what AppTest
   cases do through `app.session_state`) and keeps every page built.
@@ -483,10 +485,13 @@ docker compose run --rm --no-deps ui-nice \
   `/files` download route is tested with httpx's `ASGITransport`, but
   the streaming test calls the ASGI app directly, because that transport
   buffers the body.
+- The Sessions tab (Stage 16.7) reads its lists off the event loop as
+  well: `open_sessions(user, page)` opens the tab as a click does, and
+  tests `await sessions_listed(page)` before looking at the rows.
 - `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
-  table: each Streamlit-tier test maps to the stage that ports it, to the
-  `tests/test_ui_core_*.py` test that already covers it, or to "N/A" with
-  a reason. It needs no GUI framework, so it runs in the hermetic suite and
+  table: each Streamlit-tier test maps to the NiceGUI test that ports it,
+  to the `tests/test_ui_core_*.py` test that already covers it, or to
+  "N/A" with a reason. Since Stage 16.7 no row is pending. It needs no GUI framework, so it runs in the hermetic suite and
   CI, and fails when a Streamlit-tier test has no row. A new Streamlit-tier
   test therefore needs a row too.
 - The test IDs print as `ui_nice::test_...`: with `-c`, pytest takes the

@@ -54,7 +54,9 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
         {
           "ligands": sorted list of all ligand IDs across all jobs,
           "jobs": list of job display names (user-supplied job_name, falling
-                   back to the job directory basename when unnamed),
+                   back to the job directory basename when unnamed; a name
+                   shared by several jobs gets each one's directory
+                   basename appended, so every column is distinct),
           "algorithms": docking_algorithm per job, aligned with "jobs",
           "affinities": list-of-lists [ligand_idx][job_idx] = float|None,
           "best_per_ligand": {ligand_id: (job_name, affinity)}
@@ -65,6 +67,13 @@ def compare_jobs(job_dirs: List[str]) -> Dict[str, Any]:
 
     per_job_data = [_load_results(d) for d in job_dirs]
     job_names = [data.get("job_name") or Path(d).name for d, data in zip(job_dirs, per_job_data)]
+    # Two sessions named alike would share a column label: the GUI's table
+    # then read a pair of values as one cell and failed, and the best job
+    # per ligand couldn't say which of them it was.
+    shared = {name for name in job_names if job_names.count(name) > 1}
+    job_names = [
+        f"{name} ({Path(d).name})" if name in shared else name for name, d in zip(job_names, job_dirs)
+    ]
     algorithms = [docking_algorithm_of(data.get("results", {}).get("dock")) for data in per_job_data]
     per_job_affinities = [_affinities(data) for data in per_job_data]
 

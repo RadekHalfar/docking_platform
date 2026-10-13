@@ -11,9 +11,9 @@ import streamlit as st
 
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from services.llm_orchestrator.workflow_parser import WorkflowParser
-from ui.core import form
+from ui.core import form, llm_settings
 from ui.core.state import DEFAULT_INPUT_MODE, GREETING_MESSAGE, form_defaults
-from ui.settings import build_llm_client, load_settings, save_settings
+from ui.settings import build_llm_client, load_settings
 from ui.worker_cap import detect_moldina_worker_cap
 
 # Detected once at import time — the docking service's worker ceiling (and
@@ -171,13 +171,8 @@ def init() -> None:
 
 
 def apply_settings(new_settings: dict) -> None:
-    """Persist settings to disk and rebuild the LLM client for the current session.
-
-    api_key is kept in session state for immediate use but never written to disk.
-    """
-    st.session_state.settings = new_settings
-    save_settings(new_settings)
-    st.session_state.llm_client = build_llm_client(new_settings)
+    """See :func:`ui.core.llm_settings.apply_settings`."""
+    llm_settings.apply_settings(gui_session(), new_settings)
 
 
 def clear_box_picker_state() -> None:

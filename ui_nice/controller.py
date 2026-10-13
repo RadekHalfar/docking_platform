@@ -11,16 +11,20 @@ equivalent of Streamlit's rerun.
 
 All clients share one event loop, so slow file work runs off it
 (``run.io_bound``): the views' timer reads (:meth:`View.poll`), a geometry
-command's receptor read (:meth:`apply_geometry`) and a ``save ... as``
-bundle copy (:meth:`run_save`). Review Stage R2 measured those last two at
-up to 80 ms and 37 s on a Docker Desktop bind mount.
+command's receptor read (:meth:`apply_geometry`) and a results bundle copy
+(:meth:`start_save`, from the chat, the Results tab's panel or its conflict
+buttons). Review Stage R2 measured those last two at up to 80 ms and 37 s on
+a Docker Desktop bind mount.
+
+When a run finishes, completed or failed, the page switches to the Results
+tab (:attr:`PageController.show_results`); a stopped run leaves it where it is.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from nicegui import background_tasks, run
 
@@ -35,6 +39,9 @@ POLL_INTERVAL_S = 1.0
 
 # controller.busy while a save copies the results.
 SAVING = "Saving results..."
+
+# The finished runs that switch the page to the Results tab.
+SHOW_RESULTS_ON = ("completed", "failed")
 
 
 class View(Protocol):
@@ -71,6 +78,8 @@ class PageController:
         # handlers ignore those (the state already holds the value).
         self.syncing = False
         self._views: list[View] = []
+        # Switches the page to the Results tab (set by the layout).
+        self.show_results: Optional[Callable[[], None]] = None
         # Geometry commands are applied one at a time, in the order sent.
         self._geometry_lock = asyncio.Lock()
 
@@ -117,12 +126,21 @@ class PageController:
         """The timer: redraw while a job runs, and whenever processing it
         changed the state -- including a job that ended before any tick saw
         it running."""
+        was_done = self.state.job_done
         changed = self.process()
+        if self.state.job_done and not was_done:
+            self._show_finished_run()
         if not (changed or run_control.any_bridge_running(self.state)):
             return
         for view in self._views:
             await view.poll()
         self.sync()
+
+    def _show_finished_run(self) -> None:
+        bridge = self.state.bridge
+        status = "failed" if bridge.get_error() else (bridge.get_result() or {}).get("status")
+        if status in SHOW_RESULTS_ON and self.show_results is not None:
+            self.show_results()
 
     # ── Slow commands, run off the event loop ────────────────────────────────
 
@@ -144,9 +162,15 @@ class PageController:
     def run_save(self, intent: dict) -> None:
         """``ui.core.chat`` 's *run_save*: check the save now, copy the
         bundle off the event loop, then reply."""
-        message, job = save_results.plan_chat_save(self.state, self.output_base, intent)
+        self.start_save(*save_results.plan_chat_save(self.state, self.output_base, intent))
+
+    def start_save(self, message: Optional[str], job: Optional[save_results.SaveJob]) -> None:
+        """Run a save that ``ui.core.save_results`` planned: the copy off the
+        event loop, then the reply. Without a job, *message* (if any) is the
+        reply: why it couldn't be planned."""
         if job is None:
-            reply(self.state, message)
+            if message:
+                reply(self.state, message)
             return
         self.busy = SAVING
         background_tasks.create(self._save(job), name="save results")

@@ -142,6 +142,30 @@ def test_cancel_drops_the_conflict_and_resolving_none_does_nothing(state, tmp_pa
     assert _bundles(tmp_path) == ["trial_a"]
 
 
+def test_plan_conflict_save_plans_without_copying(state, tmp_path):
+    # Stage 16.6: NiceGUI plans on its event loop and copies elsewhere.
+    save_results.save_results(state, tmp_path, "trial_a", "all")
+    save_results.save_results(state, tmp_path, "trial_a", "docking")
+    suggested = state.save_conflict["suggested"]
+
+    _, overwrite = save_results.plan_conflict_save(state, tmp_path, overwrite=True)
+    _, new_name = save_results.plan_conflict_save(state, tmp_path, overwrite=False)
+
+    assert (overwrite.name, overwrite.scope, overwrite.overwrite) == ("trial_a", "docking", True)
+    assert (new_name.name, new_name.scope, new_name.overwrite) == (suggested, "docking", False)
+    assert _bundles(tmp_path) == ["trial_a"]  # nothing copied yet
+    assert state.save_conflict is not None
+
+
+def test_plan_conflict_save_without_a_conflict_or_while_blocked(state, tmp_path):
+    assert save_results.plan_conflict_save(state, tmp_path, overwrite=True) == (None, None)
+
+    state.save_conflict = {"job_id": JOB_ID, "name": "trial_a", "scope": "all", "suggested": "trial_a_1"}
+    state.bridge = _Bridge(running=True)
+    message, job = save_results.plan_conflict_save(state, tmp_path, overwrite=True)
+    assert job is None and message.startswith("Cannot save: A session is running")
+
+
 # ---------------------------------------------------------------------------
 # save_chat_reply
 # ---------------------------------------------------------------------------

@@ -160,20 +160,27 @@ def save_chat_reply(state, output_base: Path, intent: dict) -> str:
     return finish_save(state, job, write_bundle(job))
 
 
-def resolve_save_conflict(state, output_base: Path, *, overwrite: bool) -> Optional[str]:
-    """The conflict's Overwrite (*overwrite*) or "Save as <suggested>"
-    button: save again and return the reply, or None with no conflict."""
-    # TRIGGER (Review Stage R2, docs/reviews/stage_16_r2.md, Deferred #2):
-    # this copies the bundle inline, as the chat command did -- 34-37 s on
-    # a Docker Desktop bind mount with every NiceGUI client frozen. When
-    # Stage 16.6 wires the conflict buttons (and its Save results panel),
-    # run them like PageController.run_save: plan_save() on the loop,
-    # write_bundle() in run.io_bound, finish_save() on the loop.
+def plan_conflict_save(
+    state, output_base: Path, *, overwrite: bool
+) -> tuple[Optional[str], Optional[SaveJob]]:
+    """:func:`plan_save` for the conflict's Overwrite (*overwrite*) or
+    "Save as <suggested>" button; ``(None, None)`` with no conflict."""
     conflict = state.save_conflict
     if not conflict:
-        return None
+        return None, None
     name = conflict["name"] if overwrite else conflict["suggested"]
-    return save_results(state, output_base, name, conflict["scope"], overwrite=overwrite)
+    return plan_save(state, output_base, name, conflict["scope"], overwrite=overwrite)
+
+
+def resolve_save_conflict(state, output_base: Path, *, overwrite: bool) -> Optional[str]:
+    """The conflict's buttons, all inline (Streamlit): save again and
+    return the reply, or None with no conflict. NiceGUI copies off its
+    event loop instead: :func:`plan_conflict_save`, then :func:`write_bundle`
+    in ``run.io_bound`` (Review Stage R2, Deferred #2)."""
+    message, job = plan_conflict_save(state, output_base, overwrite=overwrite)
+    if job is None:
+        return message
+    return finish_save(state, job, write_bundle(job))
 
 
 def cancel_save_conflict(state) -> None:

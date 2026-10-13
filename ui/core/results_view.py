@@ -7,14 +7,23 @@ services' own (``/app/orchestrator_output/...``) and are mapped onto
 
 Helpers that read result files take *read_bytes*, so a GUI can pass a
 cached reader (Streamlit re-reads them on every rerun otherwise).
+
+Stage 16.6 adds what NiceGUI's Results tab needs: :func:`read_results_data`
+does all of one result's file reads at once, so a GUI with an event loop
+runs it off the loop once per result, not per redraw or timer tick;
+:func:`job_log_if_changed` re-reads ``job.log`` only when it has changed;
+and :func:`resolve_job_file` / :func:`job_file_url` are the download
+route's path checks.
 """
 from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
+from urllib.parse import quote
 
 from common.docking_algorithm import docking_algorithm_label, docking_algorithm_of
 from common.file_io import load_json_dict
@@ -34,14 +43,9 @@ OTHER_DOWNLOAD_SUFFIXES = {".pml", ".json", ".png"}
 
 
 def _read_path(path: Path) -> bytes:
-    # Uncached. Streamlit passes its mtime-keyed st.cache_data reader. DEFERRED
-    # to Stage 16.6 (Review Stage R1, docs/reviews/stage_16_r1.md,
-    # deferred #3): a NiceGUI ui.timer that calls pose_records() or
-    # read_job_log() with this default re-reads every SDF / the whole job.log
-    # per client per tick (16.4's timer reads neither). Fix in 16.6: pass a reader cached
-    # on (path, mtime), and redo pose/log reads only when the job's result
-    # or the file's size changes. Do the reads in the view's async poll(),
-    # in run.io_bound, never in sync() (Review Stage R2: sync() does no I/O).
+    # Uncached. Streamlit passes its mtime-keyed st.cache_data reader;
+    # NiceGUI reads a result once (read_results_data) and job.log only when
+    # it changed (job_log_if_changed) -- Review Stage R1, deferred #3.
     return path.read_bytes()
 
 
@@ -188,3 +192,100 @@ def other_download_files(output_base: Path, job_id: str) -> list[Path]:
             dirnames.remove(SAVED_RESULTS_DIRNAME)
         files.extend(Path(root) / name for name in filenames)
     return [f for f in sorted(files) if f.suffix in OTHER_DOWNLOAD_SUFFIXES]
+
+
+# ── One result's reads, at once (Stage 16.6) ──────────────────────────────────
+
+@dataclass
+class ResultsData:
+    """Everything a completed result's view reads from disk."""
+
+    # The visualize step's receptor, or None: no receptor in the result
+    # (receptor_missing False) or none on disk (True).
+    receptor_pdb: Optional[str] = None
+    receptor_missing: bool = False
+    pose_records: dict[str, list[str]] = field(default_factory=dict)
+    # Per POSE_DOWNLOAD_FORMATS entry: (ligand, file) as pose_download_paths.
+    pose_downloads: dict[str, list[tuple[str, Path]]] = field(default_factory=dict)
+    other_files: list[Path] = field(default_factory=list)
+
+
+def read_results_data(output_base: Path, job_id: str, result: dict, read_bytes: ReadBytes = _read_path) -> ResultsData:
+    """Read what a completed *result* shows: the receptor, each ligand's
+    poses and the download lists. Slow on a large batch, so a GUI with an
+    event loop runs it off the loop, once per result."""
+    data = ResultsData()
+    raw_receptor = result.get("results", {}).get("visualize", {}).get("receptor_pdb")
+    if raw_receptor:
+        receptor_path = from_container_path(raw_receptor, output_base)
+        if receptor_path.exists():
+            data.receptor_pdb = read_bytes(receptor_path).decode("utf-8", errors="replace")
+        else:
+            data.receptor_missing = True
+    data.pose_records = pose_records(result, output_base, read_bytes)
+    data.pose_downloads = {fmt: pose_download_paths(result, output_base, fmt) for fmt in POSE_DOWNLOAD_FORMATS}
+    if (Path(output_base) / job_id).exists():
+        data.other_files = other_download_files(output_base, job_id)
+    return data
+
+
+def job_log_if_changed(
+    output_base: Path, job_id: str, last_stat: Optional[tuple[int, int]]
+) -> tuple[Optional[tuple[int, int]], Optional[str]]:
+    """``(stat, text)`` of the session's ``job.log``, where *stat* is its
+    ``(mtime_ns, size)``. *text* is read only when *stat* differs from
+    *last_stat*; otherwise it is None (unchanged). A missing log gives
+    ``(None, None)``."""
+    log_path = Path(output_base) / job_id / "job.log"
+    try:
+        st = log_path.stat()
+    except FileNotFoundError:
+        return None, None
+    stat = (st.st_mtime_ns, st.st_size)
+    if stat == last_stat:
+        return stat, None
+    return stat, log_path.read_text(encoding="utf-8", errors="replace")
+
+
+def job_log_tail(text: str) -> str:
+    """The Session Log viewer's text: the log's last JOB_LOG_TAIL_LINES lines."""
+    return "\n".join(text.splitlines()[-JOB_LOG_TAIL_LINES:])
+
+
+# ── The download route's path checks (Stage 16.6, finding 3) ─────────────────
+
+DOWNLOAD_ROUTE = "/files"
+_JOB_ID = re.compile(r"^job_[A-Za-z0-9_]+$")
+
+
+def resolve_job_file(output_base: Path, job_id: str, rel_path: str) -> Optional[Path]:
+    """The file *rel_path* inside session *job_id*'s directory, or None.
+
+    The download route's security boundary: None for anything but a
+    regular file inside ``<output_base>/<job_id>`` -- a ``..`` or absolute
+    path, a symlink pointing out, a directory, a missing file, an id that
+    is not a plain ``job_...`` name -- and for ``saved_results/``, whose
+    bundles are copies of files listed already.
+    """
+    if not _JOB_ID.match(job_id or ""):
+        return None
+    job_dir = (Path(output_base) / job_id).resolve()
+    try:
+        path = (job_dir / rel_path).resolve()
+    except (OSError, RuntimeError, ValueError):  # e.g. a symlink loop, a NUL byte
+        return None
+    if path == job_dir or not path.is_relative_to(job_dir):
+        return None
+    if path.relative_to(job_dir).parts[0] == SAVED_RESULTS_DIRNAME:
+        return None
+    return path if path.is_file() else None
+
+
+def job_file_url(output_base: Path, job_id: str, path: Path) -> Optional[str]:
+    """The download route's URL for *path*, a file in session *job_id*'s
+    directory, or None if it lies outside it."""
+    try:
+        rel = Path(path).relative_to(Path(output_base) / job_id)
+    except ValueError:
+        return None
+    return f"{DOWNLOAD_ROUTE}/{quote(job_id)}/{quote(PurePosixPath(*rel.parts).as_posix())}"

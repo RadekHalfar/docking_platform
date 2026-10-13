@@ -375,12 +375,13 @@ docking_platform/
 │   └── settings.py             # Persisted LLM provider settings, LLM client builder
 │
 ├── ui_nice/                     # NiceGUI web UI on port 3001 (Phase 16; replaces ui/app.py at Stage 16.8)
-│   ├── app.py                  # Entry point: the page (one GuiSession per client) and /health
+│   ├── app.py                  # Entry point: the page (one GuiSession per client), /health, /files downloads
 │   ├── layout.py               # Header, settings dialog, chat drawer, Setup/Results/Sessions tabs
 │   ├── controller.py           # Per-client page controller: progress timer, sync of the views
 │   ├── setup_tab.py            # Setup tab: inputs, Docking Box, Advanced, actions, redock dialog, progress
 │   ├── chat_drawer.py          # Chat drawer: messages, Run log, input (LLM parse via run.io_bound)
 │   ├── box_picker_panel.py     # Setup tab's right side: the visual box picker
+│   ├── results_tab.py          # Results tab: viewer + ligand/pose grids, save-as, Session Log, downloads, compare
 │   ├── mol_viewer.py           # 3Dmol.js viewer element (camera kept; box/poses redrawn in place)
 │   ├── mol_viewer.js           # Its Vue component (scene code ported from ui/components/mol_viewer)
 │   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)

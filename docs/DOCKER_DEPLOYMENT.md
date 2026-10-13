@@ -477,6 +477,12 @@ docker compose run --rm --no-deps ui-nice \
   read, which happens off the event loop. `atom_click(user, center)` fires
   the event that a click on a receptor atom sends, and
   `load_picker_receptor(page, center, size)` seeds a loaded receptor.
+- The Results tab (Stage 16.6) reads a result off the event loop, so
+  tests `await results_loaded(page)` first. `completed_job_on_disk()`
+  writes a completed session with a receptor and multi-pose SDFs. The
+  `/files` download route is tested with httpx's `ASGITransport`, but
+  the streaming test calls the ASGI app directly, because that transport
+  buffers the body.
 - `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
   table: each Streamlit-tier test maps to the stage that ports it, to the
   `tests/test_ui_core_*.py` test that already covers it, or to "N/A" with

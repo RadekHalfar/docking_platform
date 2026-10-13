@@ -6,7 +6,7 @@ check that. They read the test files with ``ast`` and import no GUI
 framework, so they run in the hermetic suite and in CI.
 
 Targets:
-- ``16.6`` ... ``16.7``: to be ported as a NiceGUI User-fixture test in that
+- ``16.7``: to be ported as a NiceGUI User-fixture test in that
   stage (pending). When ported, the row changes to ``ported: <file>::<test>``.
 - ``ported: <file>::<test>``: the NiceGUI test that replaces it.
 - ``core: <file>::<test>``: the case tests the Streamlit wrapper or adapter
@@ -32,7 +32,7 @@ Targets:
 | test_ui_apptest.py::test_small_positive_box_size_is_drawn_as_typed | ported: test_nicegui_box_picker.py::test_small_positive_box_size_is_drawn_as_typed |  |
 | test_ui_apptest.py::test_redock_local_files_session_after_ligand_change | ported: test_nicegui_setup.py::test_redock_local_files_session_after_ligand_change |  |
 | test_ui_apptest.py::test_finished_run_reply_is_rendered_in_chat | ported: test_nicegui_setup.py::test_finished_run_reply_is_rendered_in_chat |  |
-| test_ui_apptest.py::test_completed_session_from_disk_renders_results_and_viewer | 16.6 | |
+| test_ui_apptest.py::test_completed_session_from_disk_renders_results_and_viewer | ported: test_nicegui_results.py::test_completed_session_from_disk_renders_results_and_viewer |  |
 | test_ui_apptest.py::test_sidebar_lists_completed_and_failed_sessions | 16.7 | Sessions tab, not a sidebar |
 | test_ui_apptest.py::test_revision_history_expander_lists_revisions | 16.7 | |
 | test_ui_apptest.py::test_revision_history_hidden_without_active_session | 16.7 | |
@@ -45,15 +45,15 @@ Targets:
 | test_ui_apptest.py::test_chat_show_history_and_undo | ported: test_nicegui_chat.py::test_chat_show_history_and_undo |  |
 | test_ui_apptest.py::test_param_widgets_survive_early_rerun_in_chat_column | N/A | Streamlit drops widgets a rerun stops before drawing; NiceGUI draws each page once |
 | test_ui_apptest.py::test_chat_history_without_active_session | ported: test_nicegui_chat.py::test_chat_history_without_active_session |  |
-| test_ui_apptest.py::test_save_results_panel_writes_bundle | 16.6 | |
-| test_ui_apptest.py::test_save_results_blocked_while_parameters_pending | 16.6 | |
-| test_ui_apptest.py::test_save_results_blocked_when_parameters_never_ran_after_load | 16.6 | |
+| test_ui_apptest.py::test_save_results_panel_writes_bundle | ported: test_nicegui_results.py::test_save_results_panel_writes_bundle |  |
+| test_ui_apptest.py::test_save_results_blocked_while_parameters_pending | ported: test_nicegui_results.py::test_save_results_blocked_while_parameters_pending | restored through the chat's `undo 1` until 16.7's revision panel |
+| test_ui_apptest.py::test_save_results_blocked_when_parameters_never_ran_after_load | ported: test_nicegui_results.py::test_save_results_blocked_when_parameters_never_ran_after_load |  |
 | test_ui_apptest.py::test_chat_save_refused_while_job_runs | ported: test_nicegui_chat.py::test_chat_save_refused_while_job_runs |  |
-| test_ui_apptest.py::test_save_results_conflict_overwrite_and_new_name | 16.6 | |
+| test_ui_apptest.py::test_save_results_conflict_overwrite_and_new_name | ported: test_nicegui_results.py::test_save_results_conflict_overwrite_and_new_name |  |
 | test_ui_apptest.py::test_chat_save_docking_as_name | ported: test_nicegui_chat.py::test_chat_save_docking_as_name |  |
-| test_ui_apptest.py::test_file_downloads_exclude_saved_bundles | 16.6 | |
+| test_ui_apptest.py::test_file_downloads_exclude_saved_bundles | ported: test_nicegui_results.py::test_file_downloads_exclude_saved_bundles | checks the download links, which go through the /files route |
 | test_ui_apptest.py::test_save_bundle_name_survives_early_rerun_in_chat_column | N/A | Streamlit drops widgets a rerun stops before drawing; NiceGUI draws each page once |
-| test_ui_apptest.py::test_save_results_sits_between_viewer_and_session_log | 16.6 | re-specify the position for the Results tab layout |
+| test_ui_apptest.py::test_save_results_sits_between_viewer_and_session_log | ported: test_nicegui_results.py::test_save_results_sits_between_viewer_and_session_log | re-specified for the tab: viewer and pose grids, then Save results as…, then the Session Log, then the downloads |
 | test_ui_apptest.py::test_receptor_load_with_box_fields_set_logs_no_session_state_warning | N/A | Streamlit's warning for a widget given both a default and a Session State value |
 | test_ui_apptest.py::test_redock_after_load_of_never_run_restore_plans_full_rerun | 16.7 | |
 | test_ui_apptest.py::test_redock_after_stopped_first_run_docks_again | ported: test_nicegui_setup.py::test_redock_after_stopped_first_run_docks_again |  |
@@ -81,7 +81,7 @@ Targets:
 | test_ui_apptest.py::test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph | ported: test_nicegui_chat.py::test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph |  |
 | test_ui_apptest.py::test_chat_algorithm_command_moves_the_selector_and_resets_workers | ported: test_nicegui_chat.py::test_chat_algorithm_command_moves_the_selector_and_resets_workers |  |
 | test_ui_apptest.py::test_summary_shows_the_selected_algorithm | ported: test_nicegui_setup.py::test_summary_shows_the_selected_algorithm |  |
-| test_ui_apptest.py::test_results_name_the_algorithm_that_docked | 16.6 | |
+| test_ui_apptest.py::test_results_name_the_algorithm_that_docked | ported: test_nicegui_results.py::test_results_name_the_algorithm_that_docked |  |
 | test_ui_apptest.py::test_run_log_is_shown_apart_from_the_chat | ported: test_nicegui_chat.py::test_run_log_streams_apart_from_the_chat | |
 | test_ui_app_helpers.py::test_collect_form_params_rcsb_mode | core: test_ui_core_state.py::test_collect_form_params_rcsb_mode | |
 | test_ui_app_helpers.py::test_collect_form_params_omits_center_when_incomplete | core: test_ui_core_state.py::test_collect_form_params_omits_incomplete_box_and_clamps_workers | |
@@ -162,7 +162,7 @@ STREAMLIT_TIER_FILES = (
     "test_ui_streamlit_adapter.py",
 )
 
-PENDING_STAGES = {"16.6", "16.7"}
+PENDING_STAGES = {"16.7"}
 _ROW = re.compile(r"^\| (?P<test>\S+) \| (?P<target>[^|]+?) \| (?P<note>[^|]*?) ?\|$")
 _REFERENCE = re.compile(r"^(?P<kind>ported|core): (?P<file>test_\w+\.py)::(?P<name>test_\w+)$")
 

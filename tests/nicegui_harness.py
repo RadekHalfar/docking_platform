@@ -20,6 +20,10 @@ The 3Dmol viewer needs no recorder (Stage 16.5): a
 browser (``receptor_pdb``, ``center``, ``box_size``, ...), and tests read
 that from the element (:func:`viewer`). :func:`atom_click` fires the event
 a click on a receptor atom sends.
+
+The Results tab (Stage 16.6) reads a result off the event loop: tests wait
+for :func:`results_loaded`. :func:`completed_job_on_disk` writes a
+completed session with a receptor and multi-pose SDFs to view.
 """
 from __future__ import annotations
 
@@ -81,6 +85,16 @@ class Page:
     @property
     def chat(self):
         return self.parts[-1].chat
+
+    @property
+    def results(self):
+        """The last page's Results tab view."""
+        return self.parts[-1].results
+
+    @property
+    def tab(self) -> str:
+        """The last page's open main-area tab."""
+        return self.parts[-1].tabs.value
 
     def chat_texts(self) -> list[str]:
         return [m["content"] for m in self.state.messages]
@@ -286,3 +300,69 @@ def completed_session_with_artifacts(state, output_base: Path) -> WorkflowStateM
     (job_dir / "visualization").mkdir()
     (job_dir / "visualization" / "session.pml").write_text("load x\n")
     return state_manager
+
+
+# ---------------------------------------------------------------------------
+# The Results tab (Stage 16.6)
+# ---------------------------------------------------------------------------
+
+async def results_loaded(page: Page) -> None:
+    """Wait until the Results tab shows what the state asks for (its reads
+    run off the event loop)."""
+    view = page.results
+    await eventually(lambda: view._loading is None and view._loaded == view._load_key())
+
+
+def open_results(user, page: Page) -> None:
+    """Open the Results tab, as a user clicks it."""
+    with user.client:
+        page.parts[-1].tabs.set_value("Results")
+
+
+def sdf(*names: str) -> str:
+    """A multi-record SDF, one record per name."""
+    return "".join(f"{n}\n  mol\n\n  0  0  0  0  0  0            999 V2000\nM  END\n$$$$\n" for n in names)
+
+
+def completed_job_on_disk(output_base: Path, job_id: str, **extra) -> Path:
+    """A completed session that ran visualize: FIXTURE_PDB as the receptor,
+    ATP with two poses and HEM with one, their pdbqt files, a .pml and a
+    job.log. *extra* goes into workflow_results.json."""
+    job_dir = Path(output_base) / job_id
+    for sub in ("docking_results", "visualization"):
+        (job_dir / sub).mkdir(parents=True, exist_ok=True)
+    receptor = job_dir / "visualization" / "receptor.pdb"
+    receptor.write_text(FIXTURE_PDB.read_text())
+    (job_dir / "visualization" / "ATP.sdf").write_text(sdf("atp_pose_1", "atp_pose_2"))
+    (job_dir / "visualization" / "HEM.sdf").write_text(sdf("hem_pose_1"))
+    (job_dir / "visualization" / "session.pml").write_text("load x\n")
+    for ligand in ("ATP", "HEM"):
+        (job_dir / "docking_results" / f"{ligand}_out.pdbqt").write_text("MODEL 1\n")
+    (job_dir / "job.log").write_text("STEP 1: Getting input files...\n")
+    mount = f"/app/orchestrator_output/{job_id}"
+    data = {
+        "status": "completed",
+        "job_name": "trial_a",
+        "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        "results": {
+            "dock": {
+                "docking_algorithm": "vina",
+                "results": [
+                    {"ligand_id": "ATP", "best_affinity": -8.0, "modes": [{"affinity": -8.0}, {"affinity": -7.5}],
+                     "output_path": f"{mount}/docking_results/ATP_out.pdbqt"},
+                    {"ligand_id": "HEM", "best_affinity": -6.0, "modes": [{"affinity": -6.0}],
+                     "output_path": f"{mount}/docking_results/HEM_out.pdbqt"},
+                ],
+            },
+            "visualize": {
+                "receptor_pdb": f"{mount}/visualization/receptor.pdb",
+                "converted": [
+                    {"ligand_id": "ATP", "sdf_path": f"{mount}/visualization/ATP.sdf"},
+                    {"ligand_id": "HEM", "sdf_path": f"{mount}/visualization/HEM.sdf"},
+                ],
+            },
+        },
+        **extra,
+    }
+    (job_dir / "workflow_results.json").write_text(json.dumps(data))
+    return job_dir

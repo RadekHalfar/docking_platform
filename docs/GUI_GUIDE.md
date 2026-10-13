@@ -12,8 +12,9 @@ the right, and the tabs Setup / Results / Sessions. Since Stage 16.4 the
 chat drawer takes every command and LLM message, and the Setup tab has the
 whole form (inputs, Docking Box, Advanced, Run / Save Session / New
 Session / Reset, Stop and live progress). Since Stage 16.5 the Setup tab's
-right side has the 3D box picker. Results (16.6) and Sessions with Load
-(16.7) are still to come, so use the Streamlit GUI on port 3000 for real
+right side has the 3D box picker. Since Stage 16.6 the Results tab shows
+the session's results (see "The NiceGUI Results tab" below). Sessions with
+Load (16.7) is still to come, so use the Streamlit GUI on port 3000 for real
 work until then. Where the two
 differ, this guide says so.
 
@@ -437,6 +438,33 @@ Once a session's results are showing, you get:
 - An **Other Files** section below it for anything else in the session's
   directory (e.g. `workflow_results.json`).
 
+### The NiceGUI Results tab
+
+The NiceGUI GUI (port 3001) shows the same things in its **Results** tab,
+under **Session Viewer** (and **Compare Sessions**). Where it differs:
+
+- **It opens by itself** when a run (or redock) finishes, completed or
+  failed. A run you stopped leaves you on Setup.
+- **While a run goes,** the tab says it is running and shows the Session
+  Log as it grows. The progress bar and **Stop** are on the Setup tab.
+- **The viewer and the pose pickers sit side by side** (drag the divider).
+  The **Ligands** grid lists every docked ligand with its best affinity,
+  number of poses and the pose shown. Click a ligand to list its poses
+  below, then click a pose to show it. The viewer keeps its camera, as
+  in the box picker.
+- **The order** below the viewer: **Save results as…**, **Session Log**,
+  then the downloads.
+- **Downloads are links.** The browser fetches each file straight from the
+  `ui-nice` service at `/files/<job_id>/<path>`, so no file is held in
+  memory and the page doesn't slow down with large sessions. The route
+  serves only files inside that session's folder. `saved_results/`
+  bundles, other sessions, uploads and anything outside are refused
+  (404).
+- **Saving a bundle** runs in the background, from the panel, from the
+  conflict's **Overwrite** / **Save as …** buttons, or from the chat. The
+  chat input shows "Saving results..." until it is done, and the other
+  browser tabs stay responsive.
+
 ### Picking the Docking Box Visually
 
 Before running a session, the **Input & Parameters** panel has a **Pick
@@ -688,11 +716,16 @@ rather than rewriting it:
 - **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui-nice`
   service on port 3001 as the non-root `appuser`:
   - `app.py`: the `/` page, which gives each client its own `GuiSession`
-    (with the LLM settings and client), and the `/health` route the compose
-    healthcheck uses.
+    (with the LLM settings and client), the `/health` route the compose
+    healthcheck uses, and (Stage 16.6) the `/files/{job_id}/{path}`
+    download route. It streams a `FileResponse` once
+    `ui/core/results_view.resolve_job_file` has checked the path; that
+    check is the route's security boundary.
   - `layout.py`: `build_page(state, output_base)` draws the header,
     settings dialog, chat drawer, tabs and the Setup splitter, and returns
-    them as `PageParts` for the stages that fill them.
+    them as `PageParts` for the stages that fill them. It gives the
+    controller `show_results`, which the timer calls when a run finishes
+    as completed or failed.
   - `controller.py`: `PageController`, one per client. It holds the state,
     `output_base` and the bridge class, and runs the 1 s `ui.timer` that
     folds the background jobs into the state. Every handler calls a
@@ -703,9 +736,11 @@ rather than rewriting it:
       from disk in `run.io_bound` (the run's progress), on timer ticks.
     - The timer redraws while a job runs and whenever processing a job
       changed the state, so a run that ends within a second is drawn too.
-    - `apply_geometry()` and `run_save()` run the geometry command's
-      receptor read and the save's copy in `run.io_bound`. While a save
-      runs, `busy` holds the session (chat input, Run, New Session, Reset).
+    - `apply_geometry()` and `start_save()` run the geometry command's
+      receptor read and a save's copy in `run.io_bound`. A save can come
+      from the chat (`run_save()`), the Results tab's panel or its
+      conflict buttons. While a save runs, `busy` holds the session (chat
+      input, Run, New Session, Reset, the save buttons).
     - `syncing` is set while views write widgets: NiceGUI fires change
       handlers on those writes too, and the handlers ignore them.
   - `box_picker_panel.py` (Stage 16.5): the box picker on the Setup tab's
@@ -719,6 +754,17 @@ rather than rewriting it:
     box or the poses by `run_method`, so the camera is kept. They never
     use `update()`, which would resend the receptor PDB. The 3Dmol bundle
     is served from `/mol-viewer-vendor`.
+  - `results_tab.py` (Stage 16.6): the Results tab. Like the box picker,
+    its `sync()` reads no file. When what is shown changes (a run
+    finishing, a redock, a Load, New Session), one `run.io_bound` trip
+    reads the result, `ui/core/results_view.read_results_data` (receptor,
+    poses, download lists) and `job.log`. While a run goes, `poll()`
+    re-reads `job.log` only if its size or mtime changed
+    (`job_log_if_changed`). The ligand and pose grids are `ui.aggrid`s on
+    `cellClicked`, whose event carries the row's data (NiceGUI 3.17.1
+    can't send `rowClicked`: serializing its event args fails in the
+    browser). Save results as… computes
+    its block reason in `run.io_bound` too.
   - `setup_tab.py` and `chat_drawer.py`: the Setup form and the chat
     drawer. Widgets and `state.form` are kept in step explicitly (change
     handlers write the form; `sync()` writes it back), not with

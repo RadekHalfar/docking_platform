@@ -318,4 +318,18 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
       - Reset clears the box picker's message.
       - An LLM answer is dropped after a Load of a session with no saved
         parameters.
-  - **Next:** Stage 16.6, the Results tab.
+  - **16.6 (2026-10-12):** NiceGUI's Results tab.
+    - **What it shows:** the status, the "Docked with" caption, the
+      affinity chart, the viewer beside **Ligands** and pose grids (a click
+      shows a pose, and the camera is kept), **Save results as…** with the
+      conflict buttons, the Session Log, the downloads, and Compare
+      Sessions.
+    - **It opens by itself** when a run finishes, completed or failed.
+    - **Downloads are links** to a `/files/<job_id>/<path>` route that
+      streams the file. Nothing is held in memory, and only files inside
+      that session's folder are served (not `saved_results/`).
+    - **Saves from the panel and the conflict buttons** copy in the
+      background, as the chat's `save results as` does since R2.
+    - **Result files are read once** per result, and `job.log` only when
+      it changes, never on every timer tick.
+  - **Next:** Stage 16.7, the Sessions tab and settings.

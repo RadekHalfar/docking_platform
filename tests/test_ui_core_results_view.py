@@ -175,3 +175,116 @@ def test_other_download_files_skips_saved_bundles(tmp_path):
     assert [f.relative_to(root).as_posix() for f in files] == [
         "b.json", "nested/saved_results/d.json", "visualization/a.png", "visualization/s.pml",
     ]
+
+
+# ---------------------------------------------------------------------------
+# One result's reads (Stage 16.6)
+# ---------------------------------------------------------------------------
+
+def test_read_results_data_reads_receptor_poses_and_download_lists(tmp_path, job):
+    (tmp_path / JOB_ID / "visualization" / "receptor.pdb").write_text("ATOM      1  N\n")
+    (tmp_path / JOB_ID / "visualization" / "s.pml").write_text("load x\n")
+    job["results"]["visualize"]["receptor_pdb"] = f"{MOUNT}/visualization/receptor.pdb"
+    read = []
+
+    data = results_view.read_results_data(
+        tmp_path, JOB_ID, job, lambda p: read.append(p.name) or p.read_bytes()
+    )
+
+    assert data.receptor_pdb == "ATOM      1  N\n" and not data.receptor_missing
+    assert [len(r) for r in data.pose_records.values()] == [3, 1]
+    assert set(data.pose_downloads) == set(results_view.POSE_DOWNLOAD_FORMATS)
+    assert [lig for lig, _ in data.pose_downloads["pdb"]] == ["ATP"]
+    assert [f.name for f in data.other_files] == ["s.pml"]
+    assert sorted(read) == ["ATP.sdf", "HEM.sdf", "receptor.pdb"]  # each file once
+
+
+def test_read_results_data_without_receptor_or_job_dir(tmp_path, job):
+    assert results_view.read_results_data(tmp_path, JOB_ID, job).receptor_missing is False
+
+    job["results"]["visualize"]["receptor_pdb"] = f"{MOUNT}/gone.pdb"
+    data = results_view.read_results_data(tmp_path, "job_20261008_000009_absent", job)
+    assert data.receptor_pdb is None and data.receptor_missing
+    assert data.other_files == []
+
+
+def test_job_log_if_changed_rereads_only_a_changed_log(tmp_path):
+    assert results_view.job_log_if_changed(tmp_path, JOB_ID, None) == (None, None)
+    log = tmp_path / JOB_ID / "job.log"
+    log.parent.mkdir()
+    log.write_text("line 1\n")
+
+    stat, text = results_view.job_log_if_changed(tmp_path, JOB_ID, None)
+    assert text == "line 1\n"
+    assert results_view.job_log_if_changed(tmp_path, JOB_ID, stat) == (stat, None)
+
+    with log.open("a") as f:
+        f.write("line 2\n")
+    new_stat, text = results_view.job_log_if_changed(tmp_path, JOB_ID, stat)
+    assert new_stat != stat and text == "line 1\nline 2\n"
+
+
+def test_job_log_tail_keeps_the_last_lines():
+    text = "\n".join(f"l{i}" for i in range(results_view.JOB_LOG_TAIL_LINES + 5))
+    tail = results_view.job_log_tail(text).splitlines()
+    assert len(tail) == results_view.JOB_LOG_TAIL_LINES and tail[0] == "l5"
+
+
+# ---------------------------------------------------------------------------
+# The download route's path checks (Stage 16.6, finding 3)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def files(tmp_path):
+    root = tmp_path / JOB_ID
+    (root / "visualization").mkdir(parents=True)
+    (root / "visualization" / "a b.png").write_text("png")
+    (root / "job.log").write_text("log")
+    (root / "saved_results" / "run1").mkdir(parents=True)
+    (root / "saved_results" / "run1" / "c.json").write_text("{}")
+    (tmp_path / "secret.txt").write_text("outside")
+    (tmp_path / "job_20261008_000004_other").mkdir()
+    (tmp_path / "job_20261008_000004_other" / "x.json").write_text("{}")
+    return tmp_path
+
+
+def test_resolve_job_file_serves_a_file_in_the_job_dir(files):
+    root = (files / JOB_ID).resolve()
+    assert results_view.resolve_job_file(files, JOB_ID, "job.log") == root / "job.log"
+    assert results_view.resolve_job_file(files, JOB_ID, "visualization/a b.png") == root / "visualization" / "a b.png"
+
+
+@pytest.mark.parametrize("job_id, rel_path", [
+    (JOB_ID, "../secret.txt"),
+    (JOB_ID, "visualization/../../secret.txt"),
+    (JOB_ID, "../job_20261008_000004_other/x.json"),
+    (JOB_ID, "/etc/passwd"),
+    (JOB_ID, "saved_results/run1/c.json"),
+    (JOB_ID, "visualization/../saved_results/run1/c.json"),
+    (JOB_ID, "visualization"),
+    (JOB_ID, ""),
+    (JOB_ID, "missing.json"),
+    ("..", "secret.txt"),
+    ("uploads", "x.sdf"),
+    ("job_../..", "secret.txt"),
+    (JOB_ID, "nul\x00byte"),
+])
+def test_resolve_job_file_refuses_anything_else(files, job_id, rel_path):
+    assert results_view.resolve_job_file(files, job_id, rel_path) is None
+
+
+def test_resolve_job_file_refuses_a_symlink_pointing_out(files):
+    link = files / JOB_ID / "escape.txt"
+    try:
+        link.symlink_to(files / "secret.txt")
+    except OSError:
+        pytest.skip("symlinks not available here")
+    assert results_view.resolve_job_file(files, JOB_ID, "escape.txt") is None
+
+
+def test_job_file_url_quotes_the_path_and_refuses_one_outside(files):
+    root = files / JOB_ID
+    assert results_view.job_file_url(files, JOB_ID, root / "visualization" / "a b.png") == (
+        f"/files/{JOB_ID}/visualization/a%20b.png"
+    )
+    assert results_view.job_file_url(files, JOB_ID, files / "secret.txt") is None

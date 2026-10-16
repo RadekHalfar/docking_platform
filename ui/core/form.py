@@ -255,6 +255,15 @@ def clear_box_picker_state(state) -> None:
     state.box_picker_error = None
 
 
+def detach_run(state) -> None:
+    """Drop the current session's run: its bridge, its log and a staged
+    redock. Shared by New Session and a Load, which each switch the active
+    session (Review Stage R3: Load had missed the bridge)."""
+    state.bridge = None
+    state.run_log = []
+    state.pending_rerun = None
+
+
 def start_new_session(state) -> None:
     """Detach from the current job/session while keeping the form and LLM
     settings untouched.
@@ -269,11 +278,9 @@ def start_new_session(state) -> None:
     state.job_id = None
     state.job_name = ""
     state.viewed_job_id = None
-    state.bridge = None
+    detach_run(state)
     state.job_done = False
-    state.pending_rerun = None
     state.messages = [dict(GREETING_MESSAGE)]
-    state.run_log = []
     clear_box_picker_state(state)
 
 

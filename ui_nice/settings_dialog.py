@@ -99,6 +99,9 @@ class SettingsView:
                 settings.get("base_url", "") if provider == "openai_compatible" else ""
             ) or endpoint
             self.model_input.value = settings.get("model", "")
+            # A model picked but not applied is dropped; _sync selects the
+            # session's (an unapplied pick survived a reopen, Review Stage R3).
+            self.model_select.value = None
             self.api_key.value = settings.get("api_key", "")
         finally:
             self._filling = False

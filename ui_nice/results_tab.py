@@ -52,6 +52,20 @@ SAVE_CAPTION = f"Copies this session's results into `{SAVED_RESULTS_DIRNAME}/<na
 SHOWN = "●"
 # The statuses a result is drawn for; anything else reads as "no results".
 _RESULT_STATUSES = ("completed", "failed", "cancelled")
+# NiceGUI 3.17's Plotly element resizes the chart from a ResizeObserver,
+# which also fires when the browser hides the chart -- leaving the Results
+# tab (its keep-alive panel is detached) or the Session Viewer -- and
+# Plotly throws "Resize must be passed a displayed plot div element". The
+# observer fires again once the chart is shown, so a resize of a chart not
+# displayed is skipped (owner's choice, Review Stage R3). Re-check on a
+# NiceGUI upgrade: the element may guard this itself.
+PLOTLY_RESIZE_GUARD = """
+<script type="module">
+import { Plotly } from "nicegui-plotly";
+const resize = Plotly.Plots.resize;
+Plotly.Plots.resize = (gd) => (gd && gd.isConnected && gd.offsetParent !== null ? resize(gd) : Promise.resolve());
+</script>
+"""
 
 
 @dataclass
@@ -111,11 +125,13 @@ class ResultsView:
         self._poses: dict[tuple[str, str], int] = {}
         self._pose_ligand: Optional[str] = None
         self.viewer: Optional[MolViewer] = None
+        self.status_line: Optional[ui.markdown] = None
         self.ligand_grid: Optional[ui.aggrid] = None
         self.pose_grid: Optional[ui.aggrid] = None
         self.pose_caption: Optional[ui.label] = None
         self._drawn_comparison: Optional[dict] = None
 
+        ui.add_head_html(PLOTLY_RESIZE_GUARD)
         with ui.tabs().classes("w-full") as self.inner_tabs:
             ui.tab(TAB_VIEWER)
             ui.tab(TAB_COMPARE)
@@ -182,7 +198,7 @@ class ResultsView:
         shown, job_id = self._shown, self._shown.job_id
         self.body.clear()
         self.downloads.clear()
-        self.viewer = self.ligand_grid = self.pose_grid = self.pose_caption = None
+        self.viewer = self.ligand_grid = self.pose_grid = self.pose_caption = self.status_line = None
         with self.body:
             if shown.kind == "none":
                 ui.label(NO_SESSION).classes("text-grey-7").mark("results-empty")
@@ -190,9 +206,8 @@ class ResultsView:
             if shown.kind == "missing":
                 ui.label(NO_RESULTS).classes("text-grey-7").mark("no-results")
                 return
-            label = results_view.job_label(job_id, self._job_name())
             if shown.kind == "running":
-                markdown(f"Session {label} is running...").mark("results-status")
+                self.status_line = markdown(self._status_text()).mark("results-status")
                 ui.label(RUNNING_NOTE).classes("text-caption text-grey-7")
                 return
             if shown.kind == "error":
@@ -204,10 +219,9 @@ class ResultsView:
                 for err in shown.result.get("errors", []):
                     ui.label(str(err)).classes("text-caption").mark("results-error")
                 return
+            self.status_line = markdown(self._status_text()).mark("results-status")
             if shown.live:
-                markdown(f"Session {label} completed").classes("text-positive").mark("results-status")
-            else:
-                markdown(f"Viewing session {label}").mark("results-status")
+                self.status_line.classes("text-positive")
             caption = results_view.docked_with_caption(shown.result)
             if caption:
                 ui.label(caption).classes("text-caption").mark("docked-with")
@@ -218,9 +232,19 @@ class ResultsView:
 
     def _job_name(self) -> Optional[str]:
         shown = self._shown
-        if shown.live:
+        # The active session's name as it is now: state.job_name names
+        # state.job_id, and a rename follows into it (Review Stage R3).
+        if shown.live or shown.job_id == self.state.job_id:
             return self.state.job_name
         return shown.result.get("job_name")
+
+    def _status_text(self) -> str:
+        """The status line of a running or completed session."""
+        shown = self._shown
+        label = results_view.job_label(shown.job_id, self._job_name())
+        if shown.kind == "running":
+            return f"Session {label} is running..."
+        return f"Session {label} completed" if shown.live else f"Viewing session {label}"
 
     def _draw_chart(self) -> None:
         dock_results = self._shown.result.get("results", {}).get("dock", {}).get("results", [])
@@ -362,6 +386,12 @@ class ResultsView:
         self.pose_caption.set_text(f"Poses of {ligand}" if ligand else "No poses to show")
 
     def _redraw_poses(self) -> None:
+        # DEFERRED (Review Stage R3, docs/reviews/stage_16_r3.md, Deferred
+        # #2): a pose or ligand click re-sends every ligand's shown pose
+        # (set_ligands), a few KB each, so ~1 MB per click on a 300-ligand
+        # batch. Fix if a click on a large batch is noticeably slow: a
+        # MolViewer.set_ligand(ligand, entry) that sends only the ligand
+        # whose pose changed.
         for grid, rows in ((self.ligand_grid, self._ligand_rows()), (self.pose_grid, self._pose_rows())):
             if grid is not None and grid.options["rowData"] != rows:
                 grid.options["rowData"] = rows
@@ -395,6 +425,8 @@ class ResultsView:
         key = self._load_key()
         if key != self._loaded and key != self._loading:
             self._start_load(key)
+        if self.status_line is not None:
+            self.status_line.set_content(self._status_text())
         self._sync_save_panel()
         self._sync_log()
         self._sync_compare()
@@ -404,7 +436,15 @@ class ResultsView:
         job_id = self._shown.job_id
         if self._shown.kind != "running" or job_id is None:
             return
-        stat, text = await run.io_bound(results_view.job_log_if_changed, self.output_base, job_id, self._log_stat)
+        try:
+            stat, text = await run.io_bound(
+                results_view.job_log_if_changed, self.output_base, job_id, self._log_stat
+            )
+        except OSError:
+            # The log shown stays as last read. Raised, it stopped the tick
+            # before its redraw, every second of the run (Review Stage R3).
+            logger.warning("reading the log of %s failed", job_id, exc_info=True)
+            return
         if self._shown.job_id != job_id:
             return
         self._log_stat = stat
@@ -434,9 +474,12 @@ class ResultsView:
                 live_result = result
         try:
             read = await run.io_bound(_read_session, self.output_base, job_id, live_result, shown is None)
-        except OSError as exc:
-            # e.g. another uid's unreadable file: say so, don't retry.
-            logger.warning("reading the results of %s failed: %s", job_id, exc)
+        except Exception as exc:
+            # The task's boundary: e.g. another uid's unreadable file, or a
+            # malformed result. Say so, and don't retry; an uncaught one
+            # left the viewer on its previous session for good (Review
+            # Stage R3).
+            logger.warning("reading the results of %s failed", job_id, exc_info=True)
             read = _Read(error=str(exc))
         if self._loading != key:
             return  # something else is shown meanwhile
@@ -506,7 +549,13 @@ class ResultsView:
 
     async def _refresh_reason(self, key: tuple) -> None:
         # save_block_reason reads the manifest and workflow_results.json.
-        reason = await run.io_bound(save_results.save_block_reason, self.state, self.output_base)
+        try:
+            reason = await run.io_bound(save_results.save_block_reason, self.state, self.output_base)
+        except Exception as exc:
+            # The task's boundary: an uncaught failure left the button off
+            # with no reason, never checked again (Review Stage R3).
+            logger.warning("checking whether the results can be saved failed", exc_info=True)
+            reason = f"Could not check whether the results can be saved: {exc}"
         if self._reason_loading != key:
             return
         self._reason_loading = None

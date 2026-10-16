@@ -6,17 +6,22 @@ expander.
 Unlike Streamlit's 10 newest, every session is listed (owner's decision,
 2026-10-13).
 
-:meth:`SessionsView.sync` touches no file. The listing and the revision
-history are read off the event loop (``run.io_bound``) in one trip
-(:meth:`SessionsView.start_refresh`): when the tab is opened, after this tab's
-own actions, on Refresh, and while the tab is shown, when the session
-changes in a way that can change them (:meth:`SessionsView._change_key`:
-a run finishing, a Load, New Session, or any chat reply, which Save
-Session and ``undo`` post). A delete's ``rmtree`` runs off the loop too
-(finding 7), holding ``controller.busy``.
+:meth:`SessionsView.sync` touches no file, and does nothing while the tab
+is hidden. The listing and the revision history are read off the event
+loop (``run.io_bound``) in one trip (:meth:`SessionsView.start_refresh`):
+when the tab is opened, after this tab's own actions, on Refresh, and while
+the tab is shown, when the session changes in a way that can change them
+(:meth:`SessionsView._change_key`). The listing parses every session's
+results file, 4-6 s for ~170 sessions on a Docker Desktop bind mount, so on
+a change it is re-read only when a run finishes or the active job changes
+(:meth:`SessionsView._listing_key`); a chat reply (Save Session and
+``undo`` post one) re-reads only the revisions (Review Stage R3). A
+delete's ``rmtree`` runs off the loop too (finding 7), holding
+``controller.busy``.
 
 Load, Delete and Restore revision are off while a run goes in this client
-or the controller is busy with a save or a delete
+or the controller is busy with a save or a delete (Rename only for the
+latter)
 (:meth:`~ui_nice.controller.PageController.blocked_reason`; Review Stage
 R2, Deferred #3), except that a Delete of another session is allowed while
 a run goes, as in Streamlit.
@@ -33,6 +38,7 @@ from nicegui import background_tasks, run, ui
 from services.llm_orchestrator.job_comparator import compare_jobs
 from ui.core import results_view, run_control, sessions
 from ui.core.state import reply
+from ui.job_history import JOB_NAME_MAX_CHARS
 from ui_nice.controller import DELETING, PageController
 from ui_nice.widgets import markdown
 
@@ -45,7 +51,6 @@ RUNNING_HERE = "Running in this browser tab — use Stop (on the Setup tab) befo
 RESTORE_TIP = (
     "Restore that revision's parameters (recorded as a new revision); Run Docking then reruns with them."
 )
-RENAME_MAX_CHARS = 60
 
 
 @dataclass
@@ -59,8 +64,13 @@ class _Listing:
     revisions: Optional[tuple[str, Optional[int], list[int]]] = None
 
 
-def _read_listing(output_base: Path, state_manager) -> _Listing:
-    completed, failed = sessions.list_sessions(output_base)
+def _read_listing(output_base: Path, state_manager, previous: Optional[_Listing] = None) -> _Listing:
+    """The sessions and the revisions; with *previous*, only the revisions
+    (its sessions are kept)."""
+    if previous is None:
+        completed, failed = sessions.list_sessions(output_base)
+    else:
+        completed, failed = previous.completed, previous.failed
     revisions = sessions.revision_panel_data(state_manager) if state_manager is not None else None
     return _Listing(completed, failed, revisions)
 
@@ -69,13 +79,14 @@ def _read_listing(output_base: Path, state_manager) -> _Listing:
 class _Row:
     """One session row's widgets that sync() updates."""
 
-    job: dict
     load: ui.button
     load_tip: ui.tooltip
+    rename: ui.button
     delete: ui.button
     running: ui.label
     editor: ui.row
     name_input: ui.input
+    rename_save: ui.button
 
 
 class SessionsView:
@@ -97,9 +108,11 @@ class SessionsView:
         # were read for; None before the first refresh.
         self._listing: Optional[_Listing] = None
         self._listing_manager = None
-        # The change key last refreshed for, and the current refresh's
-        # number (a later refresh makes an earlier one stale).
+        # The change key last refreshed for, the listing key the sessions
+        # were last read for, and the current refresh's number (a later
+        # refresh makes an earlier one stale).
         self._refresh_key: Optional[tuple] = None
+        self._listed_key: Optional[tuple] = None
         self._generation = 0
         self.refreshing = False
         # The listing drawn, by identity.
@@ -110,8 +123,10 @@ class SessionsView:
         self._selected: set[str] = set()
         self._renaming: Optional[str] = None
         self._deleting: Optional[dict] = None
-        # This tab's last action error, until its next action.
+        # This tab's last action error, until its next action; the last
+        # read's error, until a read succeeds.
         self.error: Optional[str] = None
+        self.read_error: Optional[str] = None
 
         with ui.column().classes("w-full p-2 gap-2"):
             with ui.row().classes("w-full items-center"):
@@ -165,6 +180,8 @@ class SessionsView:
                 )
 
     def _draw_rows(self, listing: _Listing) -> None:
+        # A name being typed survives the redraw (a run finishing re-lists).
+        typed = self._rows[self._renaming].name_input.value if self._renaming in self._rows else None
         self._rows = {}
         for container, jobs, detail, selectable, empty in (
             (self.completed_list, listing.completed, sessions.completed_session_detail, True, NO_COMPLETED),
@@ -180,6 +197,8 @@ class SessionsView:
         self._selected &= listed
         if self._renaming not in self._rows:
             self._renaming = None
+        elif typed is not None:
+            self._rows[self._renaming].name_input.value = typed
         self._drawn = listing
 
     def _draw_row(self, job: dict, detail: str, *, selectable: bool) -> _Row:
@@ -197,7 +216,7 @@ class SessionsView:
                 )
                 with load:
                     load_tip = ui.tooltip()
-                ui.button("Rename", on_click=lambda j=job: self._on_rename_toggle(j)).props(
+                rename = ui.button("Rename", on_click=lambda j=job: self._on_rename_toggle(j)).props(
                     "dense outline"
                 ).mark(f"rename-{job_id}")
                 delete = ui.button("Delete", on_click=lambda j=job: self._on_delete(j)).props(
@@ -206,21 +225,23 @@ class SessionsView:
             running = ui.label(RUNNING_HERE).classes("text-caption").mark(f"running-{job_id}")
             with ui.row().classes("items-center no-wrap").mark(f"rename-editor-{job_id}") as editor:
                 name_input = ui.input("New name", value=job.get("job_name") or "").props(
-                    f"maxlength={RENAME_MAX_CHARS} dense"
+                    f"maxlength={JOB_NAME_MAX_CHARS} dense"
                 ).mark(f"rename-input-{job_id}")
-                ui.button("Save", on_click=lambda j=job: self._on_rename_save(j)).props("dense").mark(
-                    f"rename-save-{job_id}"
-                )
+                rename_save = ui.button("Save", on_click=lambda j=job: self._on_rename_save(j)).props(
+                    "dense"
+                ).mark(f"rename-save-{job_id}")
                 ui.button("Cancel", on_click=self._on_rename_cancel).props("dense flat").mark(
                     f"rename-cancel-{job_id}"
                 )
-        return _Row(job, load, load_tip, delete, running, editor, name_input)
+        return _Row(load, load_tip, rename, delete, running, editor, name_input, rename_save)
 
     # ── Sync (state -> widgets) ──────────────────────────────────────────────
 
     def sync(self) -> None:
-        if self.shown and self._change_key() != self._refresh_key:
-            self.start_refresh()
+        if not self.shown:
+            return  # set_shown() syncs on opening
+        if self._change_key() != self._refresh_key:
+            self.start_refresh(relist=False)
         listing = self._listing
         self.spinner.set_visibility(self.refreshing)
         if listing is not None and listing is not self._drawn:
@@ -228,8 +249,9 @@ class SessionsView:
         elif listing is None and self._drawn is None and not self.completed_list.default_slot.children:
             with self.completed_list:
                 ui.label(LISTING).classes("text-caption text-grey-7")
-        self.error_label.set_text(self.error or "")
-        self.error_label.set_visibility(bool(self.error))
+        error = self.error or self.read_error
+        self.error_label.set_text(error or "")
+        self.error_label.set_visibility(bool(error))
         self._sync_rows()
         self._sync_revision_panel()
 
@@ -247,6 +269,9 @@ class SessionsView:
                 else f"{blocked} before loading another."
             )
             row.delete.set_enabled(job_id != running_id and not busy)
+            # Not during a delete, whose rmtree a rename would write into.
+            row.rename.set_enabled(not busy)
+            row.rename_save.set_enabled(not busy)
             row.running.set_visibility(job_id == running_id)
             row.editor.set_visibility(job_id == self._renaming)
         self.compare_button.set_visibility(len(self._selected) >= 2)
@@ -285,13 +310,18 @@ class SessionsView:
         self.restore_button.set_enabled(blocked is None)
         self.restore_tip.set_text(RESTORE_TIP if blocked is None else f"{blocked} before restoring a revision.")
 
+    def _listing_key(self) -> tuple:
+        """What, when it changes, can change the sessions on disk outside
+        this tab's own actions: a run finishing, or another active job."""
+        state = self.state
+        return state.job_id, state.job_done
+
     def _change_key(self) -> tuple:
         """What, when it changes, can change the listing or the revisions."""
         state = self.state
         return (
-            state.job_id,
+            self._listing_key(),
             id(state.interactive_session.state_manager),
-            state.job_done,
             id(state.messages),
             len(state.messages),
         )
@@ -303,34 +333,53 @@ class SessionsView:
         self.shown = shown
         if shown:
             self.start_refresh()
+            self.sync()
 
-    def start_refresh(self) -> None:
-        """Re-read the sessions and the active session's revisions, off the
-        event loop; a refresh started after this one wins."""
-        background_tasks.create(self._refresh(*self._begin_refresh()), name="sessions listing")
+    def start_refresh(self, *, relist: bool = True) -> None:
+        """Re-read the active session's revisions, and the sessions unless
+        *relist* is False and the listing key is unchanged, off the event
+        loop; a refresh started after this one wins."""
+        background_tasks.create(self._refresh(*self._begin_refresh(relist)), name="sessions listing")
 
-    def _begin_refresh(self) -> tuple:
+    def _begin_refresh(self, relist: bool) -> tuple:
         # Done at once, not when the read's task first runs: a sync before
         # then sees the key as refreshed and starts no second read.
         self._generation += 1
         self._refresh_key = self._change_key()
+        listing_key = self._listing_key()
+        keep = (
+            self._listing
+            if not relist and self._listing is not None and self._listed_key == listing_key
+            else None
+        )
+        self._listed_key = listing_key
         session = self.state.interactive_session
         self.refreshing = True
         self.spinner.set_visibility(True)
-        return self._generation, session.state_manager if session.has_active_job() else None
+        return self._generation, session.state_manager if session.has_active_job() else None, keep
 
-    async def _refresh(self, generation: int, state_manager) -> None:
+    async def _refresh(self, generation: int, state_manager, keep: Optional[_Listing]) -> None:
         try:
-            listing = await run.io_bound(_read_listing, self.controller.output_base, state_manager)
-        except (OSError, ValueError) as exc:
+            listing = await run.io_bound(_read_listing, self.controller.output_base, state_manager, keep)
+        except Exception as exc:
+            # The task's boundary: any failure is shown and ends the spinner
+            # (one it didn't catch left it spinning, Review Stage R3). The
+            # next change, Refresh or tab open reads again.
+            logger.warning("reading the sessions failed", exc_info=True)
             if generation == self._generation:
-                self.error = f"Could not read the sessions: {exc}"
+                self.read_error = f"Could not read the sessions: {exc}"
                 self.refreshing = False
+                self._listed_key = None  # the next refresh re-lists
                 self.sync()
             return
         if generation != self._generation:
             return  # stale: a later refresh is under way
         self.refreshing = False
+        self.read_error = None
+        drawn = self._drawn
+        if drawn is not None and (listing.completed, listing.failed) == (drawn.completed, drawn.failed):
+            # The same sessions: keep the rows drawn (Review Stage R3).
+            self._drawn = listing
         self._listing, self._listing_manager = listing, state_manager
         self.sync()
 
@@ -343,7 +392,8 @@ class SessionsView:
     def _relist(self) -> None:
         """Redraw the page, re-reading the listing (this tab's own action
         changed it)."""
-        self._refresh_key = None
+        if self.shown:
+            self.start_refresh()
         self.controller.sync()
 
     def _on_refresh(self) -> None:
@@ -389,6 +439,9 @@ class SessionsView:
 
     async def _on_rename_save(self, job: dict) -> None:
         self._start()
+        if self.controller.busy is not None:
+            self.sync()
+            return
         new_name = self._rows[job["job_id"]].name_input.value or ""
         error = await run.io_bound(sessions.rename_session_file, job, new_name)
         if error:
@@ -396,6 +449,7 @@ class SessionsView:
         else:
             sessions.apply_session_rename(self.state, job, new_name)
             self._renaming = None
+            self._drawn = None  # the row shows the new name now, not after the re-list
         self._relist()
 
     def _on_delete(self, job: dict) -> None:

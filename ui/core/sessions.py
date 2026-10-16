@@ -19,9 +19,9 @@ from typing import Optional
 from common.file_io import load_json_dict
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager, describe_revision
-from ui.core.form import clear_box_picker_state, load_session_params, start_new_session
+from ui.core.form import clear_box_picker_state, detach_run, load_session_params, start_new_session
 from ui.core.run_control import active_bridge_job_id
-from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
+from ui.job_history import JOB_NAME_MAX_CHARS, escape_markdown, list_completed_and_failed_jobs, rename_job
 
 # A failed session's first error, as its row shows it.
 FIRST_ERROR_CHARS = 80
@@ -87,27 +87,22 @@ def resume_session(state, job: dict, output_base: Path) -> None:
         session.pending_changed_params |= CORE_PARAMS
     state.job_id = job["job_id"]
     state.job_name = job.get("job_name", "")
-    # The previous run's finished bridge goes too, as on New Session: both
-    # GUIs pair the bridge with the active job_id, so its result was drawn
-    # as the loaded session's (found in Stage 16.7's real-data check).
-    state.bridge = None
-    # The run log shown belongs to the previous session's last run.
-    state.run_log = []
+    # The previous session's run goes, as on New Session: its finished
+    # bridge was drawn as the loaded session's result (found in Stage 16.7's
+    # real-data check), and a redock staged for it must not be confirmed
+    # against this job (confirm_redock also checks job_id as a second guard).
+    detach_run(state)
     # Keeps process_docking_bridge()'s completion sync from overwriting
     # session.last_results with a previous bridge's result (it only runs
     # while job_done is False, i.e. for a run it's actively tracking).
     state.job_done = True
-    # A redock staged for the *previous* active session is no longer valid
-    # once the active session switches to a different job_id -- discard it
-    # rather than risk it being confirmed against this new job later
-    # (confirm_redock also checks job_id as a second guard).
-    state.pending_rerun = None
 
 
 def list_sessions(output_base: Path) -> tuple[list[dict], list[dict]]:
     """The completed and the failed/cancelled sessions, each newest first
-    (``ui.job_history`` listing entries). Reads every session's results file."""
-    return list_completed_jobs(str(output_base)), list_failed_jobs(str(output_base))
+    (``ui.job_history`` listing entries). Reads every session's results
+    file once -- slow with many sessions, so NiceGUI runs it off its loop."""
+    return list_completed_and_failed_jobs(str(output_base))
 
 
 def session_row_label(job: dict, detail: str) -> str:
@@ -140,9 +135,14 @@ def rename_session_file(job: dict, new_name: str) -> Optional[str]:
 
 
 def apply_session_rename(state, job: dict, new_name: str) -> None:
-    """After :func:`rename_session_file`: the viewed session's label follows."""
+    """After :func:`rename_session_file`: the viewed session's label and
+    the listing entry *job* follow. The entry is what a later Load of it
+    resumes with, so a Load before the GUI re-lists (seconds, with many
+    sessions) kept the old name (Review Stage R3)."""
+    name = new_name.strip()[:JOB_NAME_MAX_CHARS]
+    job["job_name"] = name
     if state.viewed_job_id == job["job_id"]:
-        state.job_name = new_name.strip()[:60]
+        state.job_name = name
 
 
 def rename_session(state, job: dict, new_name: str) -> Optional[str]:

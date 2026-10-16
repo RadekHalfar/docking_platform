@@ -19,6 +19,7 @@ from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS, with_d
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.core.form import clear_box_picker_state, sync_form_into_params
 from ui.core.state import Outcome, reply
+from ui.job_history import JOB_NAME_MAX_CHARS
 
 BridgeFactory = Callable[[], Any]
 
@@ -69,7 +70,11 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
     # GUI serves more than one user, or a stall is noticed: split each like
     # ui.core.save_results (plan on the loop -> file work in run.io_bound ->
     # apply on the loop), with PageController.busy holding the session
-    # meanwhile.
+    # meanwhile. Widened by Review Stage R3 (docs/reviews/stage_16_r3.md,
+    # Deferred #1): NiceGUI's Load (sessions.resume_session) and its Save
+    # results bundle click (save_results.plan_save's save_block_reason) do
+    # the same kind of reads inline, ~55 ms for the largest (1.2 MB)
+    # session; the same fix and trigger apply.
     params = sync_form_into_params(state)
 
     session = state.interactive_session
@@ -97,7 +102,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
         return Outcome()
 
     job_id = generate_job_id()
-    job_name = state.form.get("param_job_name", "").strip()[:60]
+    job_name = state.form.get("param_job_name", "").strip()[:JOB_NAME_MAX_CHARS]
     state.job_id = job_id
     state.job_name = job_name
     state.viewed_job_id = job_id

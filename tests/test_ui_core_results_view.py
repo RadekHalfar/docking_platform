@@ -268,6 +268,7 @@ def test_resolve_job_file_serves_a_file_in_the_job_dir(files):
     ("uploads", "x.sdf"),
     ("job_../..", "secret.txt"),
     (JOB_ID, "nul\x00byte"),
+    (JOB_ID + "\n", "workflow_results.json"),  # re's "$" allows a trailing newline
 ])
 def test_resolve_job_file_refuses_anything_else(files, job_id, rel_path):
     assert results_view.resolve_job_file(files, job_id, rel_path) is None

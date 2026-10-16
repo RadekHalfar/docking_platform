@@ -3,7 +3,14 @@ import json
 
 import pytest
 
-from ui.job_history import escape_markdown, list_completed_jobs, list_failed_jobs, rename_job
+from ui import job_history
+from ui.job_history import (
+    escape_markdown,
+    list_completed_and_failed_jobs,
+    list_completed_jobs,
+    list_failed_jobs,
+    rename_job,
+)
 
 
 def _write_workflow_results(
@@ -311,3 +318,36 @@ class TestEscapeMarkdown:
 
     def test_emoji_and_unicode_pass_through(self):
         assert escape_markdown("Run 🧬 ligand ähnlich") == "Run 🧬 ligand ähnlich"
+
+
+class TestListCompletedAndFailedJobs:
+    def test_one_scan_gives_both_lists(self, tmp_path, monkeypatch):
+        # Parsing every results file is the slow part (4-6 s for ~170
+        # sessions on a bind mount); the GUI read them twice (Review Stage R3).
+        _write_workflow_results(tmp_path / "job_a", dock_results=[{"ligand_id": "ATP"}])
+        _write_workflow_results(tmp_path / "job_b", status="failed", errors=["boom"])
+        _write_workflow_results(tmp_path / "job_c", status="cancelled")
+        _write_workflow_results(tmp_path / "job_d", status="running")
+        reads = []
+        real_loads = job_history.json.loads
+        monkeypatch.setattr(job_history.json, "loads", lambda text: (reads.append(1), real_loads(text))[1])
+
+        completed, failed = list_completed_and_failed_jobs(str(tmp_path))
+
+        assert len(reads) == 4
+        assert completed == list_completed_jobs(str(tmp_path))
+        assert failed == list_failed_jobs(str(tmp_path))
+        assert [j["job_id"] for j in completed] == ["job_a"]
+        assert [(j["job_id"], j["first_error"]) for j in failed] == [
+            ("job_c", "Unknown error"), ("job_b", "boom"),
+        ]
+
+    def test_a_results_file_that_is_not_an_object_is_skipped(self, tmp_path):
+        # It raised AttributeError and lost the whole listing.
+        _write_workflow_results(tmp_path / "job_a")
+        (tmp_path / "job_b").mkdir()
+        (tmp_path / "job_b" / "workflow_results.json").write_text("[1, 2]")
+
+        completed, failed = list_completed_and_failed_jobs(str(tmp_path))
+
+        assert [j["job_id"] for j in completed] == ["job_a"] and failed == []

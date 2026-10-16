@@ -24,7 +24,9 @@ Uploaded files (either GUI) are each saved in a folder of their own under
 `orchestrator_output/uploads/`, so uploading another file with the same
 name, from another tab or the other GUI, never changes the file an earlier
 session docked. In the NiceGUI GUI each drop of ligand files adds to the
-list ("N ligand file(s) ready"); **Clear** empties it.
+list ("N ligand file(s) ready"); **Clear** empties it. A dropped file
+named like one already in the list replaces it (the chat says so): two
+files with one name would fail the run.
 
 Whenever a session is active, the Chat panel shows a small **Session:
 name (`job_id`)** line above the "Chat" title, so it stays clear which
@@ -403,15 +405,18 @@ the same Load / Rename / Delete controls. Where it differs:
   This cannot be undone.") with **Confirm delete** / **Cancel**. The
   folder is removed in the background; the chat input shows "Deleting
   session..." meanwhile.
-- **While results are being saved** (or a session deleted), Load, Delete
-  and Restore revision are off, as Run, New Session and Reset are:
+- **While results are being saved** (or a session deleted), Load, Delete,
+  Rename and Restore revision are off, as Run, New Session and Reset are:
   deleting the session being copied, or loading another one, would leave
   the save writing into, or reporting to, the wrong place.
 - **The lists are read from disk** when you open the tab, after your own
-  Rename / Delete / Restore, while the tab is open whenever the session
-  changes (a run finishing, Save Session, a chat reply), and on
-  **Refresh**. A session another tab or the CLI finished meanwhile shows
-  up on the next of these, so click **Refresh** if you are waiting for one.
+  Rename / Delete, while the tab is open when a run finishes or another
+  session becomes active, and on **Refresh**. Reading them parses every
+  session's results file, which takes seconds with many sessions, so a
+  chat reply (Save Session, `undo`) re-reads only the revision history. A
+  session another tab or the CLI finished meanwhile shows up on the next
+  read, so click **Refresh** if you are waiting for one. A rename shows in
+  its row at once.
 
 ## Stopping a Running Session
 

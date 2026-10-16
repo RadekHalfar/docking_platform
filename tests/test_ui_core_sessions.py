@@ -179,6 +179,9 @@ def test_rename_and_delete_come_in_two_halves(state, tmp_path, job):
     assert state.job_name == ""  # the state half hasn't run
     sessions.apply_session_rename(state, job, " new ")
     assert state.job_name == "new"
+    # The listing entry follows too: a Load of it before the GUI re-lists
+    # resumed the old name (Review Stage R3).
+    assert job["job_name"] == "new"
 
     assert sessions.remove_session_dir(job) is None
     assert not (tmp_path / JOB_ID).exists() and state.viewed_job_id == JOB_ID

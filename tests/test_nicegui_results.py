@@ -6,6 +6,7 @@ Ports the results rows of the parity table (tests/test_nicegui_parity.py)
 from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
 Runs in the ui-nice tier only (see tests/test_nicegui_setup.py).
 """
+import asyncio
 import json
 from pathlib import Path
 
@@ -167,6 +168,41 @@ async def test_failed_session_shows_its_errors_and_log(user: User, page, output_
     assert "ERROR: no ligands" in _text(user, "session-log-text")
 
 
+async def test_a_result_that_cannot_be_read_is_said_so(user: User, page, output_base, monkeypatch):
+    # Only OSError was caught: anything else (a malformed result) left the
+    # viewer on what it showed before, and the load was never retried
+    # (Review Stage R3).
+    completed_job_on_disk(output_base, JOB_ID)
+
+    def malformed(*args):
+        raise AttributeError("'NoneType' object has no attribute 'get'")
+
+    monkeypatch.setattr(results_tab.results_view, "read_results_data", malformed)
+    _view(page)
+    await user.open("/")
+    open_results(user, page)
+    await results_loaded(page)
+
+    assert "Could not read the results" in _text(user, "results-status")
+    assert page.results._loading is None
+
+
+async def test_a_rename_of_the_viewed_session_follows_into_its_status(user: User, page, output_base):
+    # The status line kept the name the session was read with (Review
+    # Stage R3; Streamlit re-reads on every rerun).
+    page.seed(lambda state: completed_session_with_artifacts(state, output_base))
+    await user.open("/")
+    open_results(user, page)
+    await results_loaded(page)
+    assert "renamed run" not in _text(user, "results-status")
+
+    with user.client:
+        page.state.job_name = "renamed run"  # what apply_session_rename does
+        page.results.controller.sync()
+
+    assert "renamed run" in _text(user, "results-status")
+
+
 async def test_missing_receptor_is_named(user: User, page, output_base):
     job_dir = completed_job_on_disk(output_base, JOB_ID)
     (job_dir / "visualization" / "receptor.pdb").unlink()
@@ -280,6 +316,21 @@ async def test_save_results_blocked_when_parameters_never_ran_after_load(user: U
     await send_chat(user, page, "save results as trial_a")
     assert "have not been run yet" in page.chat_texts()[-1]
     assert not (job_dir / "saved_results").exists()
+
+
+async def test_a_failed_save_check_is_shown_not_left_pending(user: User, page, output_base, monkeypatch):
+    # An uncaught failure of the background check left the button off with
+    # no reason, never checked again (Review Stage R3).
+    def unreadable(state, output_base):
+        raise PermissionError("[Errno 13] Permission denied: 'workflow_manifest.json'")
+
+    monkeypatch.setattr(save_results, "save_block_reason", unreadable)
+    page.seed(lambda state: completed_session_with_artifacts(state, output_base))
+    await _save_panel(user, page)
+
+    assert not element(user, "save-bundle").enabled
+    assert "Could not check whether the results can be saved" in _text(user, "save-reason")
+    assert page.results._reason_loading is None
 
 
 async def test_save_results_conflict_overwrite_and_new_name(user: User, page, output_base):
@@ -444,9 +495,16 @@ async def test_download_route_streams_a_large_file(user: User, output_base):
         "query_string": b"", "headers": [(b"host", b"test")], "server": ("test", 80), "client": ("test", 1),
     }
     messages = []
+    requested = []
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        # As a server does: the request once, then nothing until the client
+        # disconnects (Starlette 1.8's FileResponse listens for that, and
+        # failed on a second http.request -- found in Review Stage R3).
+        if not requested:
+            requested.append(1)
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.Event().wait()
 
     async def send(message):
         messages.append(message)
@@ -522,6 +580,37 @@ async def test_running_session_shows_its_log_as_it_grows(user: User, page, outpu
     with log.open("a") as f:
         f.write("STEP 2: Preparing ligands...\n")
     await eventually(lambda: "STEP 2" in _text(user, "session-log-text"))
+
+
+async def test_an_unreadable_log_keeps_the_last_one_and_the_tick_going(
+    user: User, page, output_base, monkeypatch
+):
+    # poll() raised, which stopped tick() before its redraw, every second
+    # of the run (Review Stage R3).
+    log = output_base / HISTORY_JOB_ID / "job.log"
+
+    def seed(state):
+        active_session_with_two_revisions(state, output_base)
+        log.write_text("STEP 1: Getting input files...\n")
+        state.bridge = RunningBridge()
+
+    page.seed(seed)
+    await user.open("/")
+    open_results(user, page)
+    await results_loaded(page)
+
+    def unreadable(*args):
+        raise PermissionError("[Errno 13] Permission denied: 'job.log'")
+
+    monkeypatch.setattr(results_tab.results_view, "job_log_if_changed", unreadable)
+    synced = []
+    controller = page.results.controller
+    monkeypatch.setattr(controller, "sync", lambda: synced.append(1))
+    with user.client:
+        await controller.tick()
+
+    assert synced == [1]
+    assert "STEP 1" in _text(user, "session-log-text")
 
 
 async def test_new_session_empties_the_results_tab(user: User, page, output_base):

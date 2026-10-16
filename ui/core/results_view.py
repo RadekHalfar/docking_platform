@@ -255,7 +255,7 @@ def job_log_tail(text: str) -> str:
 # ── The download route's path checks (Stage 16.6, finding 3) ─────────────────
 
 DOWNLOAD_ROUTE = "/files"
-_JOB_ID = re.compile(r"^job_[A-Za-z0-9_]+$")
+_JOB_ID = re.compile(r"job_[A-Za-z0-9_]+")
 
 
 def resolve_job_file(output_base: Path, job_id: str, rel_path: str) -> Optional[Path]:
@@ -267,7 +267,7 @@ def resolve_job_file(output_base: Path, job_id: str, rel_path: str) -> Optional[
     is not a plain ``job_...`` name -- and for ``saved_results/``, whose
     bundles are copies of files listed already.
     """
-    if not _JOB_ID.match(job_id or ""):
+    if not _JOB_ID.fullmatch(job_id or ""):
         return None
     job_dir = (Path(output_base) / job_id).resolve()
     try:

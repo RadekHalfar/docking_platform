@@ -156,3 +156,17 @@ async def test_reopening_the_dialog_shows_the_session_settings(user: User, page)
     await _models_listed(page)
 
     assert element(user, "settings-provider").value == "ollama"
+
+
+async def test_reopening_drops_a_model_picked_but_not_applied(user: User, page, ollama_lists):
+    # The select kept its value while it was still listed, so a later Apply
+    # (say, of a new endpoint) saved the unapplied model (Review Stage R3).
+    await _open_dialog(user, page)
+    current = page.state.settings["model"]
+    set_value(user, "settings-model-select", MODELS[1])
+    click(user, "settings-close")
+
+    click(user, "settings-button")
+    await _models_listed(page)
+
+    assert element(user, "settings-model-select").value == current

@@ -77,17 +77,30 @@ def apply_ligand_uploads(
     Streamlit's uploader hands over all its files each time. NiceGUI's
     hands over one drop at a time, so it passes *append*: the drop is added
     to the files already set (the Clear button empties them), and the reply
-    names them all."""
+    names them all. A dropped file named like one already set replaces it
+    (owner's choice, Review Stage R3): two files of one name would fail the
+    run's "Local ligand filename collision" check."""
     files = [str(p) for p in paths]
+    replaced: list[str] = []
     if append:
-        files = [*(state.params.get("ligand_files") or []), *files]
+        dropped = {PurePath(f).name for f in files}
+        kept = []
+        for f in state.params.get("ligand_files") or []:
+            if PurePath(f).name in dropped:
+                replaced.append(PurePath(f).name)
+            else:
+                kept.append(f)
+        files = [*kept, *files]
         names = [PurePath(f).name for f in files]
     state.params["ligand_files"] = files
     state.params.pop("ligand_ids", None)
     if folder_mode:
         state.params.pop("ligand_folder", None)
     if announce:
-        reply(state, f"{len(names)} local ligand file(s) set: **{', '.join(names)}**")
+        message = f"{len(names)} local ligand file(s) set: **{', '.join(names)}**"
+        if replaced:
+            message += f" (replaced the earlier {', '.join(replaced)})"
+        reply(state, message)
 
 
 def clear_ligand_uploads(state) -> None:

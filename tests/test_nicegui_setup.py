@@ -649,3 +649,22 @@ async def test_a_second_ligand_drop_adds_to_the_list(user: User, page):
     assert page.chat_texts()[-1] == "3 local ligand file(s) set: **a.sdf, b.mol2, c.sdf**"
     await user.should_see("3 ligand file(s) ready")
 
+
+async def test_dropping_a_listed_ligand_again_replaces_it(user: User, page):
+    # New Session keeps the inputs, so dropping the same file again listed
+    # it twice and the run failed (Stage 16.7's real-data check).
+    page.seed(lambda state: state.form.update(input_mode="local_files"))
+    await user.open("/")
+    upload = element(user, "upload-ligands")
+
+    await upload.handle_uploads([SmallFileUpload("a.sdf", "chemical/x-mdl-sdfile", b"old")])
+    await eventually(lambda: len(page.state.params.get("ligand_files", [])) == 1)
+    first = page.state.params["ligand_files"][0]
+    await upload.handle_uploads([SmallFileUpload("a.sdf", "chemical/x-mdl-sdfile", b"new")])
+
+    await eventually(lambda: page.state.params["ligand_files"] != [first])
+    files = page.state.params["ligand_files"]
+    assert len(files) == 1 and Path(files[0]).read_bytes() == b"new"
+    assert page.chat_texts()[-1] == "1 local ligand file(s) set: **a.sdf** (replaced the earlier a.sdf)"
+    await user.should_see("1 ligand file(s) ready")
+

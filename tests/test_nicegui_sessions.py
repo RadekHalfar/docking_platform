@@ -37,6 +37,7 @@ from tests.nicegui_harness import (  # noqa: E402
     on_event_loop,
     open_sessions,
     results_loaded,
+    send_chat,
     sessions_listed,
     set_value,
     validated,
@@ -406,6 +407,36 @@ async def test_rename_saves_the_new_name_and_cancel_keeps_the_old(user: User, pa
     assert not element(user, f"rename-editor-{JOB_A}").visible
 
 
+async def test_a_load_before_the_relist_after_a_rename_uses_the_new_name(
+    user: User, page, output_base, monkeypatch
+):
+    # Found in Review Stage R3's real-data check: the re-list after a rename
+    # takes seconds with many sessions, and a Load meanwhile resumed the
+    # session under its old name (the row's listing entry).
+    _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
+    await _open(user, page)
+    gate = threading.Event()
+    real = sessions_tab._read_listing
+
+    def slow(*args):
+        gate.wait(5)
+        return real(*args)
+
+    monkeypatch.setattr(sessions_tab, "_read_listing", slow)
+    click(user, f"rename-{JOB_A}")
+    set_value(user, f"rename-input-{JOB_A}", "renamed run")
+    click(user, f"rename-save-{JOB_A}")
+    try:
+        await eventually(lambda: "renamed run" in _row_text(user, JOB_A))
+        assert page.sessions.refreshing  # the re-list is still under way
+        click(user, f"load-{JOB_A}")
+    finally:
+        gate.set()
+    await results_loaded(page)
+
+    assert page.state.job_name == "renamed run"
+
+
 async def test_delete_asks_first_and_removes_the_session_off_the_event_loop(user: User, page, output_base, monkeypatch):
     where = []
     real = core_sessions.remove_session_dir
@@ -487,13 +518,18 @@ async def test_load_delete_and_restore_wait_for_a_save(user: User, page, output_
     await eventually(started.is_set)
     try:
         assert controller.busy == SAVING
-        for marker in (f"load-{JOB_A}", f"load-{HISTORY_JOB_ID}", f"delete-{JOB_A}", "restore-revision"):
+        # Rename too (Review Stage R3): during a delete it wrote into the
+        # directory the rmtree was removing.
+        for marker in (
+            f"load-{JOB_A}", f"load-{HISTORY_JOB_ID}", f"delete-{JOB_A}", f"rename-{JOB_A}",
+            f"rename-save-{JOB_A}", "restore-revision",
+        ):
             assert not element(user, marker).enabled, marker
     finally:
         gate.set()
     await eventually(lambda: controller.busy is None)
 
-    for marker in (f"load-{JOB_A}", f"delete-{JOB_A}", "restore-revision"):
+    for marker in (f"load-{JOB_A}", f"delete-{JOB_A}", f"rename-{JOB_A}", "restore-revision"):
         assert element(user, marker).enabled, marker
 
 
@@ -541,16 +577,85 @@ async def test_a_failed_comparison_is_shown(user: User, page, output_base, monke
 # The listing's reads
 # ---------------------------------------------------------------------------
 
-async def test_listing_rereads_when_the_session_changes_while_shown(user: User, page, output_base):
+def _count_listings(monkeypatch) -> list:
+    calls = []
+    real = core_sessions.list_sessions
+
+    def list_sessions(output_base):
+        calls.append(1)
+        return real(output_base)
+
+    monkeypatch.setattr(core_sessions, "list_sessions", list_sessions)
+    return calls
+
+
+def _finish_a_run(user, page) -> None:
+    """What a run finishing changes for this tab: ``job_done``."""
+    with user.client:
+        page.state.job_done = not page.state.job_done
+        page.parts[-1].controller.sync()
+
+
+async def test_a_finished_run_relists_but_a_chat_reply_rereads_only_the_revisions(
+    user: User, page, output_base, monkeypatch
+):
+    # Listing parses every session's results file (4-6 s for ~170 sessions
+    # on a bind mount); it ran on every chat reply (Review Stage R3).
+    calls = _count_listings(monkeypatch)
+    page.seed(lambda state: active_session_with_two_revisions(state, output_base))
     await _open(user, page)
-    assert _rows(page) == []
-
+    assert calls == [1]
     _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
-    # Any reply (here a chat command) can mean the sessions on disk changed.
-    set_value(user, "chat-input", "show history")
-    click(user, "chat-send")
 
+    table = element(user, "revision-table").content
+    await send_chat(user, page, "undo 1")
+    # The reply re-reads the revisions (the restore added one), not the sessions.
+    await eventually(lambda: element(user, "revision-table").content != table)
+    await sessions_listed(page)
+    assert calls == [1]
+    assert JOB_A not in _rows(page)
+
+    _finish_a_run(user, page)
+    await eventually(lambda: JOB_A in _rows(page))
+    assert calls == [1, 1]
+
+
+async def test_a_name_being_typed_survives_a_relist(user: User, page, output_base):
+    _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
+    await _open(user, page)
+    click(user, f"rename-{JOB_A}")
+    set_value(user, f"rename-input-{JOB_A}", "half-typ")
+
+    _write_job(output_base, JOB_B, completed_job_data(FIXTURE_PDB))
+    _finish_a_run(user, page)  # re-lists, with a new row
+    await eventually(lambda: JOB_B in _rows(page))
+
+    assert element(user, f"rename-editor-{JOB_A}").visible
+    assert element(user, f"rename-input-{JOB_A}").value == "half-typ"
+
+
+async def test_a_failed_listing_is_shown_and_the_next_read_clears_it(user: User, page, output_base, monkeypatch):
+    # Only OSError/ValueError were caught: another failure left the spinner
+    # spinning, and a caught one stayed above a later good listing.
+    real = sessions_tab._read_listing
+    failures = [TypeError("bad results file")]
+
+    def read(*args):
+        if failures:
+            raise failures.pop()
+        return real(*args)
+
+    monkeypatch.setattr(sessions_tab, "_read_listing", read)
+    _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
+    await user.open("/")
+    open_sessions(user, page)
+    await eventually(lambda: not page.sessions.refreshing and page.sessions.read_error)
+    assert element(user, "sessions-error").visible
+    assert "bad results file" in element(user, "sessions-error").text
+
+    click(user, "sessions-refresh")
     await eventually(lambda: _rows(page) == [JOB_A])
+    assert not element(user, "sessions-error").visible
 
 
 async def test_listing_is_read_off_the_event_loop_and_a_stale_read_is_dropped(user: User, page, monkeypatch):
@@ -558,13 +663,13 @@ async def test_listing_is_read_off_the_event_loop_and_a_stale_read_is_dropped(us
     real = sessions_tab._read_listing
     stale = sessions_tab._Listing(completed=[{"job_id": "stale"}])
 
-    def read(output_base, state_manager):
+    def read(output_base, state_manager, previous=None):
         where.append(on_event_loop())
         if len(where) == 1:
             gate.wait(5)  # opening the tab: still reading when Refresh starts another
             returned.append(stale)
             return stale
-        return real(output_base, state_manager)
+        return real(output_base, state_manager, previous)
 
     monkeypatch.setattr(sessions_tab, "_read_listing", read)
     await user.open("/")

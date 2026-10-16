@@ -347,4 +347,29 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
       saves them; comparing two sessions with the same name no longer
       fails (each column gets its job ID); after a run, Load no longer
       shows that run's result under the loaded session's name.
-  - **Next:** Review Stage R3 with the Cross-Service Compatibility Review.
+  - **Review Stage R3 (2026-10-13)**, covering 16.6–16.7 plus the
+    Cross-Service Compatibility Review (`docs/reviews/stage_16_r3.md`):
+    - **NiceGUI fixes:**
+      - Dropping a ligand file named like one already listed replaces it,
+        with a chat note. Listing it twice made the run fail.
+      - The Sessions tab no longer re-reads every session (4–6 s for ~170
+        sessions on a Docker Desktop bind mount) on each chat reply. A
+        reply re-reads only the revisions, and one scan now serves both
+        lists.
+      - A rename shows in its row at once, and a Load right after it
+        resumes the new name.
+      - Rename is off while a save or a delete runs.
+      - A name being typed survives the list being re-read.
+      - A failed read of the sessions, a result or the save check is shown,
+        instead of a spinner or a disabled button left for good.
+      - An unreadable `job.log` during a run no longer stops the page from
+        updating.
+      - The Results status follows a rename of the session shown.
+      - Reopening the settings drops a model picked but not applied.
+      - Leaving the Results tab no longer logs Plotly's "Resize must be
+        passed a displayed plot div element".
+    - **Both GUIs:** New Session and Load drop the previous run through one
+      shared helper.
+    - **Fresh stack:** every image rebuilt, `down` / `up`, `--check-health`,
+      a CLI workflow and a NiceGUI-driven run all passed.
+  - **Next:** Stage 16.8, parity sign-off and Streamlit removal.

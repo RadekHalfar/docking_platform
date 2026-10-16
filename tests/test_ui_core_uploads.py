@@ -111,6 +111,19 @@ def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_pa
     assert state.messages[-1]["content"] == "2 local ligand file(s) set: **a.sdf, b.mol2**"
 
 
+def test_a_dropped_ligand_named_like_a_listed_one_replaces_it(state, tmp_path):
+    # Two files of one name failed the run's "Local ligand filename
+    # collision" check (found in Stage 16.7; owner: the newest replaces it).
+    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "1" / "a.sdf"], append=True)
+    uploads.apply_ligand_uploads(state, ["b.mol2"], [tmp_path / "2" / "b.mol2"], append=True)
+    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "3" / "a.sdf"], append=True)
+
+    assert state.params["ligand_files"] == [str(tmp_path / "2" / "b.mol2"), str(tmp_path / "3" / "a.sdf")]
+    assert state.messages[-1]["content"] == (
+        "2 local ligand file(s) set: **b.mol2, a.sdf** (replaced the earlier a.sdf)"
+    )
+
+
 def test_an_upload_seen_again_is_not_announced_again(state, tmp_path):
     uploads.apply_protein_upload(state, "r.pdb", tmp_path / "r.pdb", announce=False)
     uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "a.sdf"], announce=False)

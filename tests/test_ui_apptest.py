@@ -86,6 +86,12 @@ def app(tmp_path, output_base, viewer, monkeypatch):
     monkeypatch.setenv("OUTPUT_BASE", str(output_base))
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("LLM_ENDPOINT", "http://127.0.0.1:9")
+    # `docker compose run` passes .env: without these, the real LLM_API_KEY
+    # reached each test's settings (found in Stage 16.7, as for the
+    # NiceGUI harness).
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("LLM_BASE_URL", "")
     monkeypatch.setattr("ui.settings.SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr("ui.ollama_models.list_ollama_models", lambda *a, **k: [])
     monkeypatch.setattr("ui.mol_viewer.render_mol_viewer", viewer)

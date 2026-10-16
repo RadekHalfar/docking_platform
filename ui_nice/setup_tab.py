@@ -25,6 +25,7 @@ from nicegui import run, ui
 from common.docking_algorithm import DOCKING_ALGORITHMS, docking_algorithm_label
 from services.llm_orchestrator.rerun_planner import describe_rerun_plan
 from ui.core import form, results_view, run_control, uploads
+from ui.job_history import JOB_NAME_MAX_CHARS
 from ui.worker_cap import describe_worker_cap
 from ui_nice.controller import PageController
 from ui_nice.widgets import markdown
@@ -81,7 +82,7 @@ class SetupView:
             self._build_docking_box()
             self._build_advanced()
             ui.separator()
-            self._text("param_job_name", "Session name (optional)").props("maxlength=60").tooltip(
+            self._text("param_job_name", "Session name (optional)").props(f"maxlength={JOB_NAME_MAX_CHARS}").tooltip(
                 "A label to help you find this session later in the Sessions tab."
             )
             ui.separator()

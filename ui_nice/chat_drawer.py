@@ -3,7 +3,8 @@ the docking run's log and the chat input.
 
 Commands are answered by ``ui.core.chat.submit``; the two that do slow
 file work (geometry, ``save ... as``) run it off the event loop through the
-controller. Any other message goes to the LLM: the blocking call runs in
+controller. A run command ("run", "redock", "dock with vina") does what
+Run Docking does, through ``controller.run_docking`` (Stage 17.1). Any other message goes to the LLM: the blocking call runs in
 ``run.io_bound`` with the input disabled, and its result is applied only if
 the session hasn't changed meanwhile (``chat.parse_context``). A save
 disables the input the same way (``controller.busy``).
@@ -106,6 +107,7 @@ class ChatView:
         if chat.submit(
             state, message, controller.output_base, controller.bridge_factory,
             apply_geometry=controller.apply_geometry, run_save=controller.run_save,
+            run_docking=controller.run_docking,
         ):
             controller.sync()
             return

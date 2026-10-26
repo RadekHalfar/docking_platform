@@ -46,6 +46,10 @@ _BUSY_REASONS = {
     DELETING: "A session is being deleted — wait for that",
 }
 
+# The chat's reply when a run command staged a redock plan: the button has
+# only the dialog, but a chat message should get an answer.
+REDOCK_STAGED = "Redock plan ready — confirm it in the dialog."
+
 # The finished runs that switch the page to the Results tab.
 SHOW_RESULTS_ON = ("completed", "failed")
 
@@ -172,6 +176,21 @@ class PageController:
             else:
                 box_picker.set_protein_geometry(self.state, target, center, box_size)
         self.sync()
+
+    def run_docking(self) -> None:
+        """``ui.core.chat`` 's *run_docking*: what a Run Docking click does
+        (``SetupView._on_run``), with any refusal as the chat's reply, since
+        that is where the user is looking. A redock stages its plan, and
+        the next sync opens the Confirm redock dialog."""
+        blocked = self.blocked_reason()
+        if blocked is not None:
+            reply(self.state, f"{blocked} before docking again.")
+            return
+        outcome = run_control.run_docking(self.state, self.output_base, self.bridge_factory)
+        if outcome.error:
+            reply(self.state, outcome.error)
+        elif self.state.pending_rerun:
+            reply(self.state, REDOCK_STAGED)
 
     def run_save(self, intent: dict) -> None:
         """``ui.core.chat`` 's *run_save*: check the save now, copy the

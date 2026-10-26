@@ -602,6 +602,27 @@ def detect_docking_algorithm_command(text: str) -> Optional[Dict[str, Any]]:
     return {"algorithm": algorithm, "rerun": rerun}
 
 
+# "run" / "start docking" / "redock it again" / "go ahead" -- the GUI chat's
+# Run Docking (Stage 17.1). Anchored over the whole message, and only filler
+# words may follow the verb, so a request that names anything ("dock ATP
+# into 6lu7", "run 6lu7", "start a new session") never matches and still
+# fills the form.
+_RUN_COMMAND_RE = re.compile(
+    r"^(?:(?:please|ok(?:ay)?|now|so)[\s,]+)*"
+    r"(?:re[\s-]?run|run|re[\s-]?dock|dock|start|launch|execute|go(?:\s+ahead)?)"
+    r"(?:\s+(?:it|the|docking|job|workflow|session|again|now|please))*"
+    r"[\s.!]*$",
+    re.IGNORECASE,
+)
+
+
+def detect_run_command(text: str) -> bool:
+    """Whether *text* is a bare "start docking" command (the GUI chat's
+    Run Docking). Pure regex, no LLM call. The CLI's ``rerun_steps`` prefix
+    in :func:`_deterministic_intent` is broader and separate."""
+    return _RUN_COMMAND_RE.match(text.strip()) is not None
+
+
 def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     """Return an intent result dict if *text* matches an unambiguous pattern, else None."""
     t = text.strip().lower()

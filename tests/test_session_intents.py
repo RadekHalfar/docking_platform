@@ -6,6 +6,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     classify_session_intent,
     detect_docking_algorithm_command,
     detect_protein_geometry_command,
+    detect_run_command,
     extract_updates_from_command_with_llm,
     split_command_sequence,
     _llm_split_command_sequence,
@@ -380,6 +381,34 @@ def test_detect_docking_algorithm_command(command, algorithm, rerun):
 )
 def test_detect_docking_algorithm_command_no_false_positives(command):
     assert detect_docking_algorithm_command(command) is None
+
+
+# ---------------------------------------------------------------------------
+# detect_run_command -- Stage 17.1 (the GUI chat's Run Docking)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "run", "Run docking.", "start docking", "start the docking now", "redock", "re-dock",
+        "rerun", "dock", "dock it again", "go", "go ahead!", "please run", "ok, run it",
+        "launch the job", "execute the workflow",
+    ],
+)
+def test_detect_run_command(command):
+    assert detect_run_command(command) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "dock ATP into 6lu7", "run 6lu7", "start a new session", "dock with vina",
+        "run show history", "rerun the docking with ATP", "dock with vina and visualize",
+        "how do I run docking?", "don't run", "running", "show history",
+    ],
+)
+def test_detect_run_command_no_false_positives(command):
+    assert detect_run_command(command) is False
 
 
 @pytest.mark.parametrize(

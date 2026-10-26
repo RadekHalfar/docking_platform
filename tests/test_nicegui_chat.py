@@ -20,6 +20,8 @@ from nicegui import ui  # noqa: E402
 from nicegui.testing import User  # noqa: E402
 
 from ui.core.chat import STALE_PARSE_REPLY  # noqa: E402
+from ui.core.form import BOX_FORM_KEYS  # noqa: E402
+from ui_nice.controller import REDOCK_STAGED  # noqa: E402
 from ui.worker_cap import MEASURED_BEST_WORKERS, WorkerCap  # noqa: E402
 from tests.nicegui_harness import (  # noqa: E402
     HISTORY_JOB_ID,
@@ -374,3 +376,85 @@ async def test_save_copies_off_the_event_loop_and_holds_the_session_meanwhile(us
     await eventually(lambda: page.state.messages[-1]["content"].startswith("Saved bundle `trial_a`"))
     await eventually(lambda: element(user, "chat-input").enabled)
     assert element(user, "run-docking").enabled
+
+
+# ---------------------------------------------------------------------------
+# Starting docking from the chat (Stage 17.1)
+# ---------------------------------------------------------------------------
+
+async def test_chat_run_starts_a_job(user: User, page, monkeypatch):
+    started = []
+
+    def make_bridge():
+        bridge = RunningBridge()
+        started.append(bridge)
+        return bridge
+
+    monkeypatch.setattr("ui.orchestrator_bridge.OrchestratorBridge", make_bridge)
+
+    def seed(state):
+        state.form.update(input_mode="rcsb", param_protein_id="6lu7", param_ligand_ids_text="ATP")
+        state.form.update(zip(BOX_FORM_KEYS, ("1", "2", "3", "20", "20", "20")))
+
+    page.seed(seed)
+    await user.open("/")
+
+    await send_chat(user, page, "run docking")
+
+    state = page.state
+    assert started and state.bridge is started[0]
+    assert page.chat_texts()[-1] == f"Starting docking session `{state.job_id}`..."
+    await eventually(lambda: element(user, "run-status").visible)
+    assert not element(user, "run-docking").enabled
+
+
+async def test_chat_run_with_missing_params_replies(user: User, page):
+    await user.open("/")
+
+    await send_chat(user, page, "run")
+
+    assert page.state.bridge is None
+    assert page.chat_texts()[-1].startswith("Cannot start — required parameters missing")
+
+
+async def test_chat_redock_opens_the_confirm_dialog(user: User, page, output_base):
+    def seed(state):
+        active_session_with_two_revisions(state, output_base)
+        state.form["param_center_x"] = "8.0"
+
+    page.seed(seed)
+    await user.open("/")
+
+    await send_chat(user, page, "redock")
+
+    assert page.state.pending_rerun["steps"] == ["dock", "visualize"]
+    assert page.chat_texts()[-1] == REDOCK_STAGED
+    assert element(user, "redock-dialog").value is True
+    click(user, "confirm-redock")
+    assert page.chat_texts()[-1].startswith(f"Redocking `{HISTORY_JOB_ID}` — steps: dock, visualize")
+
+
+async def test_chat_dock_with_vina_switches_then_redocks(user: User, page, output_base):
+    page.seed(lambda state: active_session_with_two_revisions(state, output_base))
+    await user.open("/")
+
+    await send_chat(user, page, "dock with vina")
+
+    assert page.state.form["param_docking_algorithm"] == "vina"
+    assert page.chat_texts()[-2:] == ["Docking algorithm set to **Vina (Monte Carlo)**.", REDOCK_STAGED]
+    assert element(user, "redock-dialog").value is True
+
+
+async def test_chat_run_while_a_run_goes_is_refused(user: User, page, output_base, monkeypatch):
+    monkeypatch.setattr(
+        "ui.orchestrator_bridge.OrchestratorBridge",
+        lambda: pytest.fail("a second run must not start"),
+    )
+    _running(page, output_base)
+    await user.open("/")
+    bridge = page.state.bridge
+
+    await send_chat(user, page, "run")
+
+    assert page.state.bridge is bridge
+    assert page.chat_texts()[-1] == "A session is running — Stop it before docking again."

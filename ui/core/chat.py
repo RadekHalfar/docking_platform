@@ -2,8 +2,9 @@
 Stage 16.2).
 
 :func:`submit` posts the user's message and answers it if it is a command
-(geometry, algorithm, ``show history`` / ``undo``, ``save ... as``);
-otherwise the LLM parses it.
+(geometry, algorithm, ``run`` / ``dock with ...``, ``show history`` /
+``undo``, ``save ... as``); otherwise the LLM parses it. A run command does
+what a Run Docking click does (Stage 17.1), through the GUI's *run_docking*.
 
 The LLM path is split so the GUI runs only the slow part off its event
 loop: :func:`parse_message` makes the LLM call and touches no state;
@@ -28,6 +29,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     _deterministic_intent,
     detect_docking_algorithm_command,
     detect_protein_geometry_command,
+    detect_run_command,
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
@@ -39,6 +41,8 @@ from ui.core.state import reply
 StartPrep = Callable[[], tuple]
 # Runs a ``save ... as`` command: (intent) -> None; it posts its own reply.
 RunSave = Callable[[dict], None]
+# Does what a Run Docking click does: () -> None; it posts its own reply.
+RunDocking = Callable[[], None]
 
 STALE_PARSE_REPLY = (
     "The session changed while I was reading that message, so I didn't "
@@ -53,15 +57,16 @@ def submit(
     bridge_factory: Callable,
     *,
     run_save: RunSave,
+    run_docking: RunDocking,
     apply_geometry: box_picker.ApplyGeometry = box_picker.apply_protein_geometry,
 ) -> bool:
     """Post the user's *message* and answer it if it is a deterministic
     command. Returns False if it is not one -- the caller then has the LLM
     parse it (:func:`parse_message`).
 
-    *run_save* runs a ``save ... as`` (it posts its own reply);
-    *apply_geometry* replaces the inline geometry read (see the module
-    docstring)."""
+    *run_save* runs a ``save ... as`` and *run_docking* a run command (each
+    posts its own reply); *apply_geometry* replaces the inline geometry
+    read (see the module docstring)."""
     state.messages.append({"role": "user", "content": message})
 
     geometry_target = detect_protein_geometry_command(message)
@@ -75,7 +80,13 @@ def submit(
 
     algorithm_command = detect_docking_algorithm_command(message)
     if algorithm_command is not None:
-        docking_algorithm_command(state, algorithm_command["algorithm"])
+        docking_algorithm_command(state, algorithm_command["algorithm"], run=algorithm_command["rerun"])
+        if algorithm_command["rerun"]:
+            run_docking()
+        return True
+
+    if detect_run_command(message):
+        run_docking()
         return True
 
     # Only the revision and save commands are taken from the CLI's
@@ -151,17 +162,19 @@ def _queue_geometry_target(state, target: str) -> None:
     state.pending_geometry_targets = tuple(dict.fromkeys((*queued, target)))
 
 
-def docking_algorithm_command(state, algorithm: str) -> None:
-    """Apply a "use vina" / "dock with moldina" chat command. The GUI only
-    switches -- docking always starts from Run Docking, so the CLI's
-    "dock with ..." redock is not mirrored here."""
+def docking_algorithm_command(state, algorithm: str, *, run: bool = False) -> None:
+    """Apply a "use vina" / "dock with moldina" chat command. With *run*
+    ("dock with ..."), :func:`submit` then runs, as the CLI does, so the
+    reply carries no Run Docking hint."""
     apply_parsed_params(state, {"docking_algorithm": algorithm})
     label = docking_algorithm_label(algorithm)
-    if state.interactive_session.has_active_job():
-        hint = "Click **Run Docking** to redock with it (docking and visualization only)."
+    if run:
+        hint = ""
+    elif state.interactive_session.has_active_job():
+        hint = " Say **redock** or click **Run Docking** to redock with it (docking and visualization only)."
     else:
-        hint = "It will be used when you click **Run Docking**."
-    reply(state, f"Docking algorithm set to **{label}**. {hint}")
+        hint = " It will be used when you start docking."
+    reply(state, f"Docking algorithm set to **{label}**.{hint}")
 
 
 def parse_message(
@@ -271,6 +284,10 @@ def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[t
         )
     if missing:
         lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
+    elif state.interactive_session.has_active_job():
+        lines.append("\nSay **redock** or click **Run Docking** to redock.")
+    else:
+        lines.append("\nSay **run** or click **Run Docking** to start.")
 
     reply(state, "\n".join(lines))
 

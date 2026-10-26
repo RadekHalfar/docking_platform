@@ -413,3 +413,16 @@ moved from Streamlit to NiceGUI.
       stop test, a CLI workflow, and a headless end-to-end GUI run (new
       session → redock → Vina → save-as → resume → restore → delete).
     - **Phase 16 is closed.**
+
+## Unreleased — Chat-started docking (Phase 17)
+
+- **Stage 17.1 (2026-10-26): start docking from the GUI chat.** A short
+  run command typed as the whole message ("run", "run docking", "start
+  docking", "redock", "go ahead") does what **Run Docking** does, without an
+  LLM call. A new session starts at once. In an active session, the redock
+  plan opens in the Confirm redock dialog. A refusal, such as missing
+  parameters or a run already going, is the chat's reply. "dock with vina"
+  switches the algorithm and then runs, as the CLI does. A message that
+  describes the work still only fills the form, and its "Got it!" reply now
+  ends with "Say **run** or click **Run Docking** to start" once nothing is
+  missing.

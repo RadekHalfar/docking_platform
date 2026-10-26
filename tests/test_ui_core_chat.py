@@ -42,8 +42,15 @@ def _contents(state):
     return [m["content"] for m in state.messages]
 
 
-def _submit(state, message, output_base):
-    return chat.submit(state, message, output_base, FakeBridge, run_save=inline_run_save(state, output_base))
+def _submit(state, message, output_base, run_docking=None):
+    return chat.submit(
+        state, message, output_base, FakeBridge,
+        run_save=inline_run_save(state, output_base), run_docking=run_docking or _no_run,
+    )
+
+
+def _no_run():
+    raise AssertionError("this message must not start docking")
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +158,26 @@ def test_algorithm_command_switches_the_selector(state, tmp_path, active, hint):
     assert hint in state.messages[-1]["content"]
 
 
+@pytest.mark.parametrize("message", ["run", "Start docking.", "redock it"])
+def test_run_command_starts_docking(state, tmp_path, message):
+    runs = []
+
+    assert _submit(state, message, tmp_path, run_docking=lambda: runs.append(1)) is True
+
+    assert runs == [1]
+    assert state.messages == [{"role": "user", "content": message}]
+
+
+def test_dock_with_algorithm_switches_then_runs(state, tmp_path):
+    order = []
+    run = lambda: order.append(state.form["param_docking_algorithm"])  # noqa: E731
+
+    assert _submit(state, "dock with vina", tmp_path, run_docking=run) is True
+
+    assert order == ["vina"]
+    assert state.messages[-1]["content"] == "Docking algorithm set to **Vina (Monte Carlo)**."
+
+
 def test_history_command_is_answered(state, tmp_path):
     assert _submit(state, "show history", tmp_path) is True
     assert state.messages[-1]["content"] == "No active session — no history yet."
@@ -214,6 +241,27 @@ def test_only_named_parameters_reach_the_form(state):
     assert "- Protein: **6lu7**" in reply
     assert "Algorithm" not in reply
     assert "Still needed:" in reply
+    assert "Run Docking" not in reply
+
+
+COMPLETE_PARAMS = {
+    "protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [1.0, 2.0, 3.0], "box_size": [20.0, 20.0, 20.0],
+}
+
+
+@pytest.mark.parametrize("active,hint", [
+    (False, "Say **run** or click **Run Docking** to start."),
+    (True, "Say **redock** or click **Run Docking** to redock."),
+])
+def test_complete_parse_ends_with_the_run_hint(state, tmp_path, active, hint):
+    if active:
+        state.interactive_session.activate("job_x", WorkflowStateManager(tmp_path / "job_x"))
+
+    chat.apply_parsed_message(state, {"services": ["dock"], "parameters": dict(COMPLETE_PARAMS)}, set(COMPLETE_PARAMS))
+
+    reply = state.messages[-1]["content"]
+    assert "Still needed:" not in reply
+    assert reply.endswith(hint)
 
 
 def test_named_algorithm_is_applied_and_echoed(state):

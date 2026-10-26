@@ -85,9 +85,23 @@ To reset to the values from `.env` / `docker-compose.yml`, delete
 Type a request into the chat box (e.g. "Download 6lu7 and dock ATP with
 center 10 20 30 box 25 30 35") and the LLM extracts protein/ligand/box
 parameters into the Setup form, telling you what's still missing if
-anything is. **A chat message only fills in the form: docking starts when
-you click Run Docking** on the Setup tab (unlike the CLI, which asks to run
-straight away).
+anything is. **A request only fills in the form.** Once nothing is
+missing, the reply ends with "Say **run** or click **Run Docking** to
+start".
+
+To start docking from the chat, send a short run command as the whole
+message: `run`, `run docking`, `start docking`, `dock`, `redock`, `go ahead`
+(no LLM call). It does exactly what **Run Docking** does:
+- with no active session, the run starts at once;
+- in an active session, the redock plan opens in the **Confirm redock**
+  dialog, and the chat says so;
+- a refusal is the chat's reply: missing parameters, a run already going
+  ("A session is running — Stop it before docking again."), or nothing
+  changed to redock.
+
+A message that names anything else ("dock ATP into 6lu7", "run 6lu7") is a
+request, so it only fills the form. The CLI, by contrast, asks to run
+straight away.
 
 Follow-up messages in the same chat build on what's already been
 collected rather than starting over — e.g. after the message above,
@@ -161,7 +175,8 @@ algorithm** selector:
 
 The chat commands "use vina", "switch to PSO" and "set algorithm to vina" move
 the selector too, without an LLM call (see
-[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). A chat message changes only
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). "dock with vina" (or "redock
+using moldina") also switches, then runs as a `run` command does. A chat message changes only
 the fields it names: one that doesn't name an algorithm, CPUs per ligand,
 Exhaustiveness or pH leaves your values in those fields alone.
 

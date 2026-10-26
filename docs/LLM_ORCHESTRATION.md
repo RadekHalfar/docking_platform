@@ -389,8 +389,21 @@ straight to the rerun plan (dock and visualize only, `[Y/n]`), also when the
 session already uses that algorithm (a plain redock). If the LLM intent
 classifier, rather than the detector, returns this intent, its name is
 normalised the same way and an unknown one is rejected. The GUI
-chat runs the same detector before its LLM parse, but it only switches the
-algorithm; **Run Docking** applies it.
+chat runs the same detector before its LLM parse. "use …" only switches;
+"dock with …" switches and then does what **Run Docking** does (Stage 17.1).
+
+#### GUI run command (Phase 17)
+
+The GUI chat also recognises a bare run command, `run`, `start docking`,
+`redock it again`, `go ahead`, with
+`workflow_llm_parser.py::detect_run_command()`. It is anchored over the
+whole message, and only filler words (`it`, `the`, `docking`, `job`,
+`again`, `now`, …) may follow the verb, so "dock ATP into 6lu7" or
+"run 6lu7" still go to the LLM parse. It does what **Run Docking** does
+(`PageController.run_docking`): it starts a new session or stages the
+redock plan for the Confirm redock dialog, and any refusal is the chat's
+reply. The CLI keeps its own broader `rerun|run|dock|execute` prefix in
+`_deterministic_intent()`.
 
 A GUI chat message changes only the form fields it names. The parser fills
 every default (`docking_algorithm`, `cpu`, `exhaustiveness`, `ph`, …), and

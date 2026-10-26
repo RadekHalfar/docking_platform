@@ -6,10 +6,26 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def whole_number(value: Any) -> Optional[int]:
+    """*value* as a whole number >= 1, or None if it isn't one.
+
+    Accepts ints and numeric strings, and cuts a fraction to its whole part
+    ("4", "4.0", 4.7 -> 4), since an LLM or a form may hand over any of
+    them; "all", "", None and anything below 1 give None.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number >= 1 else None
 
 
 def ensure_directory(path: str) -> Path:

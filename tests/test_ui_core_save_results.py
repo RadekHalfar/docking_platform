@@ -13,6 +13,8 @@ from ui.core import save_results
 from ui.core.state import GuiSession
 from ui.worker_cap import WorkerCap
 
+from tests.ui_fakes import finish_inline
+
 JOB_ID = "job_20261008_000002_beef02"
 PARAMS = {"protein_id": "6lu7", "ligand_ids": ["ATP"], "center": [1.0, 2.0, 3.0], "box_size": [20.0, 20.0, 20.0]}
 
@@ -88,7 +90,7 @@ def test_a_run_that_did_not_complete_blocks(state, tmp_path, content):
 # ---------------------------------------------------------------------------
 
 def test_save_writes_the_bundle_and_says_what_it_copied(state, tmp_path):
-    reply = save_results.save_results(state, tmp_path, "trial_a", "docking")
+    reply = _save(state, tmp_path, "trial_a", "docking")
 
     assert reply.startswith("Saved bundle `trial_a` (scope: docking)")
     assert "Artifacts: docking_results, docking_box.json." in reply
@@ -97,25 +99,31 @@ def test_save_writes_the_bundle_and_says_what_it_copied(state, tmp_path):
 
 
 def test_blocked_or_invalid_saves_write_nothing(state, tmp_path):
-    assert save_results.save_results(state, tmp_path, "../x", "all").startswith("Invalid bundle name:")
+    assert _save(state, tmp_path, "../x", "all").startswith("Invalid bundle name:")
     state.bridge = _Bridge(running=True)
-    assert save_results.save_results(state, tmp_path, "ok", "all").startswith("Cannot save: A session is running")
+    assert _save(state, tmp_path, "ok", "all").startswith("Cannot save: A session is running")
     assert _bundles(tmp_path) == []
 
 
+def _save(state, output_base, name, scope, *, overwrite=False):
+    """The panel's save, run inline (the GUI copies in ``run.io_bound``)."""
+    return finish_inline(state, save_results.plan_save(state, output_base, name, scope, overwrite=overwrite))
+
+
 def _resolve_conflict(state, output_base, *, overwrite):
-    """The conflict buttons' path, run inline: plan, copy, finish (the GUI
-    copies in ``run.io_bound``); the reply, or None with no conflict."""
-    message, job = save_results.plan_conflict_save(state, output_base, overwrite=overwrite)
-    if job is None:
-        return message
-    return save_results.finish_save(state, job, save_results.write_bundle(job))
+    """The conflict buttons' path, run inline; the reply, or None with no
+    conflict."""
+    return finish_inline(state, save_results.plan_conflict_save(state, output_base, overwrite=overwrite))
+
+
+def _chat_save(state, output_base, intent):
+    return finish_inline(state, save_results.plan_chat_save(state, output_base, intent))
 
 
 def test_a_name_clash_offers_overwrite_or_a_new_name(state, tmp_path):
-    save_results.save_results(state, tmp_path, "trial_a", "all")
+    _save(state, tmp_path, "trial_a", "all")
 
-    reply = save_results.save_results(state, tmp_path, "trial_a", "docking")
+    reply = _save(state, tmp_path, "trial_a", "docking")
 
     conflict = state.save_conflict
     assert conflict["job_id"] == JOB_ID and conflict["name"] == "trial_a" and conflict["scope"] == "docking"
@@ -129,8 +137,8 @@ def test_a_name_clash_offers_overwrite_or_a_new_name(state, tmp_path):
 
 
 def test_overwrite_replaces_the_bundle(state, tmp_path):
-    save_results.save_results(state, tmp_path, "trial_a", "all")
-    save_results.save_results(state, tmp_path, "trial_a", "docking")
+    _save(state, tmp_path, "trial_a", "all")
+    _save(state, tmp_path, "trial_a", "docking")
 
     reply = _resolve_conflict(state, tmp_path, overwrite=True)
 
@@ -141,8 +149,8 @@ def test_overwrite_replaces_the_bundle(state, tmp_path):
 
 
 def test_cancel_drops_the_conflict_and_resolving_none_does_nothing(state, tmp_path):
-    save_results.save_results(state, tmp_path, "trial_a", "all")
-    save_results.save_results(state, tmp_path, "trial_a", "all")
+    _save(state, tmp_path, "trial_a", "all")
+    _save(state, tmp_path, "trial_a", "all")
 
     save_results.cancel_save_conflict(state)
 
@@ -153,8 +161,8 @@ def test_cancel_drops_the_conflict_and_resolving_none_does_nothing(state, tmp_pa
 
 def test_plan_conflict_save_plans_without_copying(state, tmp_path):
     # Stage 16.6: NiceGUI plans on its event loop and copies elsewhere.
-    save_results.save_results(state, tmp_path, "trial_a", "all")
-    save_results.save_results(state, tmp_path, "trial_a", "docking")
+    _save(state, tmp_path, "trial_a", "all")
+    _save(state, tmp_path, "trial_a", "docking")
     suggested = state.save_conflict["suggested"]
 
     _, overwrite = save_results.plan_conflict_save(state, tmp_path, overwrite=True)
@@ -176,14 +184,14 @@ def test_plan_conflict_save_without_a_conflict_or_while_blocked(state, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# save_chat_reply
+# The chat's save results/docking/visualization as <name>
 # ---------------------------------------------------------------------------
 
 def test_chat_save_needs_a_name_and_defaults_to_all(state, tmp_path):
-    assert save_results.save_chat_reply(state, tmp_path, {"intent": "save_results", "name": None}) == (
+    assert _chat_save(state, tmp_path, {"intent": "save_results", "name": None}) == (
         "Give the bundle a name, e.g. `save results as run1`."
     )
-    reply = save_results.save_chat_reply(state, tmp_path, {"intent": "save_results", "name": "run1", "scope": None})
+    reply = _chat_save(state, tmp_path, {"intent": "save_results", "name": "run1", "scope": None})
     assert reply.startswith("Saved bundle `run1` (scope: all)")
 
 

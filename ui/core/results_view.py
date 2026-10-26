@@ -4,9 +4,6 @@ The widgets stay in the GUI. Paths in a workflow result are the MCP
 services' own (``/app/orchestrator_output/...``) and are mapped onto
 *output_base* with ``common.path_utils.from_container_path``.
 
-Helpers that read result files take *read_bytes*, so a GUI can pass a
-cached reader.
-
 Stage 16.6 adds what NiceGUI's Results tab needs: :func:`read_results_data`
 does all of one result's file reads at once, so a GUI with an event loop
 runs it off the loop once per result, not per redraw or timer tick;
@@ -21,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Callable, Optional
+from typing import Optional
 from urllib.parse import quote
 
 from common.docking_algorithm import docking_algorithm_label, docking_algorithm_of
@@ -30,8 +27,6 @@ from common.path_utils import from_container_path
 from services.llm_orchestrator.interactive_session import SAVED_RESULTS_DIRNAME
 from ui.job_history import escape_markdown
 
-ReadBytes = Callable[[Path], bytes]
-
 # The Session Log viewer shows the log's last lines; the download has all of it.
 JOB_LOG_TAIL_LINES = 500
 
@@ -39,12 +34,6 @@ POSE_DOWNLOAD_FORMATS = ["pdbqt", "pdb", "sdf", "mol2"]
 
 # "Other Files" offers only these; the poses have their own downloads.
 OTHER_DOWNLOAD_SUFFIXES = {".pml", ".json", ".png"}
-
-
-def _read_path(path: Path) -> bytes:
-    # Uncached: the GUI reads a result once (read_results_data) and job.log only when
-    # it changed (job_log_if_changed) -- Review Stage R1, deferred #3.
-    return path.read_bytes()
 
 
 def job_label(job_id: str, job_name: Optional[str]) -> str:
@@ -85,15 +74,6 @@ def currently_docking(progress: dict, now: datetime) -> list[tuple[str, Optional
     return docking
 
 
-def read_job_log(output_base: Path, job_id: str) -> Optional[str]:
-    """The session's ``job.log``, read fresh (it is appended to while a job
-    runs), or None if there is none yet."""
-    log_path = Path(output_base) / job_id / "job.log"
-    if not log_path.exists():
-        return None
-    return log_path.read_text(encoding="utf-8", errors="replace")
-
-
 def split_sdf_records(sdf_text: str) -> list[str]:
     """Split a multi-record SDF (one $$$$-terminated block per pose) into a
     list of individually valid single-record SDF texts, in file order."""
@@ -110,7 +90,7 @@ def dock_results_by_ligand(result: dict) -> dict[str, dict]:
     }
 
 
-def pose_records(result: dict, output_base: Path, read_bytes: ReadBytes = _read_path) -> dict[str, list[str]]:
+def pose_records(result: dict, output_base: Path) -> dict[str, list[str]]:
     """Each ligand's docked poses as single-record SDF texts, from the
     visualize step's converted SDF files, in that step's order. Ligands
     whose SDF is missing or empty are left out."""
@@ -123,7 +103,7 @@ def pose_records(result: dict, output_base: Path, read_bytes: ReadBytes = _read_
         sdf_path = from_container_path(raw_sdf_path, output_base)
         if not sdf_path.exists():
             continue
-        records = split_sdf_records(read_bytes(sdf_path).decode("utf-8", errors="replace"))
+        records = split_sdf_records(sdf_path.read_bytes().decode("utf-8", errors="replace"))
         if records:
             records_by_ligand[ligand_id] = records
     return records_by_ligand
@@ -208,7 +188,7 @@ class ResultsData:
     other_files: list[Path] = field(default_factory=list)
 
 
-def read_results_data(output_base: Path, job_id: str, result: dict, read_bytes: ReadBytes = _read_path) -> ResultsData:
+def read_results_data(output_base: Path, job_id: str, result: dict) -> ResultsData:
     """Read what a completed *result* shows: the receptor, each ligand's
     poses and the download lists. Slow on a large batch, so a GUI with an
     event loop runs it off the loop, once per result."""
@@ -217,10 +197,10 @@ def read_results_data(output_base: Path, job_id: str, result: dict, read_bytes: 
     if raw_receptor:
         receptor_path = from_container_path(raw_receptor, output_base)
         if receptor_path.exists():
-            data.receptor_pdb = read_bytes(receptor_path).decode("utf-8", errors="replace")
+            data.receptor_pdb = receptor_path.read_bytes().decode("utf-8", errors="replace")
         else:
             data.receptor_missing = True
-    data.pose_records = pose_records(result, output_base, read_bytes)
+    data.pose_records = pose_records(result, output_base)
     data.pose_downloads = {fmt: pose_download_paths(result, output_base, fmt) for fmt in POSE_DOWNLOAD_FORMATS}
     if (Path(output_base) / job_id).exists():
         data.other_files = other_download_files(output_base, job_id)

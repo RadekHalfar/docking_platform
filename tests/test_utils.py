@@ -8,7 +8,7 @@ import pytest
 
 from common.utils import (
     ensure_directory, ensure_shared_directory, compute_file_checksum,
-    generate_job_id, validate_pdb_id, sanitize_filename
+    generate_job_id, validate_pdb_id, sanitize_filename, whole_number
 )
 from common.file_io import atomic_write_json, load_json_dict
 
@@ -108,3 +108,11 @@ def test_sanitize_filename():
     assert sanitize_filename("../../../etc/passwd") == "______etc_passwd"
     assert sanitize_filename("file|with&special<chars>") == "file_with_special_chars_"
     assert sanitize_filename("file;rm -rf /") == "file_rm -rf _"
+
+
+@pytest.mark.parametrize("value, expected", [
+    (4, 4), ("4", 4), ("4.0", 4), (4.7, 4), (" 3 ", 3),
+    ("all", None), ("", None), (None, None), (0, None), (-2, None), ("inf", None), (True, None),
+])
+def test_whole_number(value, expected):
+    assert whole_number(value) == expected

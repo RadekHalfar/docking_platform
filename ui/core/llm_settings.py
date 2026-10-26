@@ -4,7 +4,7 @@ Loading and saving the settings file is ``ui.settings``' job.
 """
 from __future__ import annotations
 
-from ui.settings import build_llm_client, save_settings
+from ui.settings import DEFAULT_ENDPOINT, build_llm_client, save_settings
 
 PROVIDER_LABELS = {
     "ollama": "Ollama (local)",
@@ -15,7 +15,6 @@ PROVIDER_LABELS = {
 }
 # The providers that take an API key field.
 API_KEY_PROVIDERS = ("openai", "anthropic", "metacentrum", "openai_compatible")
-DEFAULT_ENDPOINT = "http://localhost:11434"
 
 
 def settings_from_form(provider: str, model: str, endpoint: str, api_key: str, base_url: str) -> dict:
@@ -51,6 +50,3 @@ def use_settings(state, new_settings: dict, client) -> None:
     state.llm_client = client
 
 
-def apply_settings(state, new_settings: dict) -> None:
-    """Persist *new_settings* and rebuild the LLM client for this session."""
-    use_settings(state, new_settings, persist_settings(new_settings))

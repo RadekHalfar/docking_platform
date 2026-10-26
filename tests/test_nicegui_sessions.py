@@ -407,6 +407,25 @@ async def test_rename_saves_the_new_name_and_cancel_keeps_the_old(user: User, pa
     assert not element(user, f"rename-editor-{JOB_A}").visible
 
 
+async def test_a_rename_keeps_the_rows_so_a_click_right_after_it_is_not_lost(user: User, page, output_base):
+    # Review Stage R4's real-data run: a Delete clicked right after a rename
+    # got no dialog -- the rename rebuilt every row, and the click landed on
+    # a button being deleted.
+    _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
+    await _open(user, page)
+    delete_before = page.sessions._rows[JOB_A].delete
+
+    click(user, f"rename-{JOB_A}")
+    set_value(user, f"rename-input-{JOB_A}", "renamed run")
+    click(user, f"rename-save-{JOB_A}")
+    await eventually(lambda: "renamed run" in _row_text(user, JOB_A))
+    await sessions_listed(page)
+
+    assert page.sessions._rows[JOB_A].delete is delete_before
+    click(user, f"delete-{JOB_A}")
+    assert page.sessions.delete_dialog.value
+
+
 async def test_a_load_before_the_relist_after_a_rename_uses_the_new_name(
     user: User, page, output_base, monkeypatch
 ):

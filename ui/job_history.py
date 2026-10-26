@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from common.file_io import FileLock, atomic_write_json
+from common.file_io import FileLock, atomic_write_json, load_json_dict
 
 _MD_SPECIAL_RE = re.compile(r'([\\`*_\[\]#])')
 
@@ -28,80 +29,90 @@ def escape_markdown(text: str) -> str:
     return _MD_SPECIAL_RE.sub(r'\\\1', text)
 
 
-def _completed_fields(data: Dict[str, Any]) -> Dict[str, Any]:
-    dock = data.get("results", {}).get("dock", {})
-    return {"ligand_count": len(dock.get("results", []))}
-
-
-def _failed_fields(data: Dict[str, Any]) -> Dict[str, Any]:
-    errors = data.get("errors") or []
-    return {"first_error": errors[0] if errors else "Unknown error"}
-
-
-# Each listing: the statuses it keeps, and the fields it adds to the common
-# ones (job_id/job_dir/job_name/protein_id).
-_COMPLETED = ({"completed"}, _completed_fields)
 # A cancelled run (stopped via the GUI's "Stop" button) is listed alongside
 # genuine failures -- both are "not completed", and share the same
 # Load/Rename/Delete affordances.
-_FAILED = ({"failed", "cancelled"}, _failed_fields)
+_FAILED_STATUSES = {"failed", "cancelled"}
+
+# Parsed listing entries by results file, with the (mtime_ns, size) they
+# were parsed at. Parsing every session's file is the slow part of a
+# listing (4-6 s for ~190 sessions on a Docker Desktop bind mount, Review
+# Stages R3/R4), so a re-list re-reads only the files that changed. Shared
+# by every client; the scans run on worker threads, hence the lock.
+_entry_cache: Dict[str, Tuple[Tuple[int, int], Optional[Tuple[str, Dict[str, Any]]]]] = {}
+_entry_cache_lock = threading.Lock()
 
 
-def _scan_jobs(
-    output_base: str,
-    listings: Sequence[Tuple[set, Callable[[Dict[str, Any]], Dict[str, Any]]]],
-) -> List[List[Dict[str, Any]]]:
-    """Shared scan: parse every workflow_results.json under output_base
-    once, and sort each job into the first of *listings* whose statuses
-    hold its status. Returns one list per listing, newest first (job IDs
-    are timestamp-prefixed, e.g. job_20260701_...).
-
-    One pass for all listings: parsing every session's file is the slow
-    part (4-6 s for ~170 sessions on a Docker Desktop bind mount, Review
-    Stage R3), so a caller wanting several listings shouldn't scan twice.
-    """
-    found: List[List[Dict[str, Any]]] = [[] for _ in listings]
-    base = Path(output_base)
-    if not base.exists():
-        return found
-
-    for results_file in base.glob("*/workflow_results.json"):
-        try:
-            data = json.loads(results_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(data, dict):
-            continue
-
-        for jobs, (statuses, extra_fields) in zip(found, listings):
-            if data.get("status") not in statuses:
-                continue
-            get_input_files = data.get("results", {}).get("get_input_files", {})
-            protein_path = get_input_files.get("protein_path")
-            protein_id = Path(protein_path).stem if protein_path else "?"
-            job = {
-                "job_id": results_file.parent.name,
-                "job_dir": str(results_file.parent),
-                "job_name": data.get("job_name", ""),
-                "protein_id": protein_id,
-            }
-            job.update(extra_fields(data))
-            jobs.append(job)
-            break
-
-    return [sorted(jobs, key=lambda j: j["job_id"], reverse=True) for jobs in found]
+def _listing_entry(results_file: Path) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """``("completed" | "failed", job)`` for one session's results file, or
+    None if it is neither (running, unreadable, not a dict)."""
+    data = load_json_dict(results_file)
+    if data is None:
+        return None
+    status = data.get("status")
+    if status == "completed":
+        kind = "completed"
+        dock = data.get("results", {}).get("dock", {})
+        extra = {"ligand_count": len(dock.get("results", []))}
+    elif status in _FAILED_STATUSES:
+        kind = "failed"
+        errors = data.get("errors") or []
+        extra = {"first_error": errors[0] if errors else "Unknown error"}
+    else:
+        return None
+    protein_path = data.get("results", {}).get("get_input_files", {}).get("protein_path")
+    job = {
+        "job_id": results_file.parent.name,
+        "job_dir": str(results_file.parent),
+        "job_name": data.get("job_name", ""),
+        "protein_id": Path(protein_path).stem if protein_path else "?",
+        **extra,
+    }
+    return kind, job
 
 
 def list_completed_and_failed_jobs(output_base: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Scan output_base once for completed jobs and for failed or
-    user-cancelled ones.
+    """Scan output_base for completed jobs and for failed or user-cancelled
+    ones.
 
-    Returns two lists, each sorted newest first: completed jobs as
+    Returns two lists, each sorted newest first (job IDs are
+    timestamp-prefixed, e.g. job_20260701_...): completed jobs as
     {job_id, job_dir, job_name, protein_id, ligand_count} dicts, failed ones
-    as {job_id, job_dir, job_name, protein_id, first_error} dicts.
+    as {job_id, job_dir, job_name, protein_id, first_error} dicts. Each call
+    returns fresh dicts; only files changed since the last scan are parsed.
     """
-    completed, failed = _scan_jobs(output_base, [_COMPLETED, _FAILED])
-    return completed, failed
+    completed: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    base = Path(output_base)
+    if not base.exists():
+        return completed, failed
+
+    seen: Dict[str, Tuple[Tuple[int, int], Optional[Tuple[str, Dict[str, Any]]]]] = {}
+    for results_file in base.glob("*/workflow_results.json"):
+        try:
+            st = results_file.stat()
+        except OSError:
+            continue
+        key, stamp = str(results_file), (st.st_mtime_ns, st.st_size)
+        with _entry_cache_lock:
+            cached = _entry_cache.get(key)
+        entry = cached[1] if cached is not None and cached[0] == stamp else _listing_entry(results_file)
+        seen[key] = (stamp, entry)
+        if entry is not None:
+            kind, job = entry
+            (completed if kind == "completed" else failed).append(dict(job))
+
+    with _entry_cache_lock:
+        # Drop entries of this base's sessions that are gone (deleted).
+        prefix = str(base)
+        for key in [k for k in _entry_cache if k.startswith(prefix) and k not in seen]:
+            del _entry_cache[key]
+        _entry_cache.update(seen)
+
+    def newest_first(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return sorted(jobs, key=lambda j: j["job_id"], reverse=True)
+
+    return newest_first(completed), newest_first(failed)
 
 
 def rename_job(job_dir: str, new_name: str) -> None:

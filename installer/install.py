@@ -164,9 +164,12 @@ def build_images(compose_file: str) -> None:
 def start_services(compose_file: str) -> None:
     # Pulls the Ollama image automatically (it has no build: section); the
     # platform's own services use the images built by build_images() above.
+    # --remove-orphans: a service dropped from docker-compose.yml is stopped
+    # too, e.g. Phase 16's ui-nice, which would otherwise keep serving an
+    # old GUI on port 3001 next to the new one (Review Stage R4).
     resolved = str(Path(compose_file).resolve())
     subprocess.run(
-        ["docker", "compose", "-f", resolved, "up", "-d"],
+        ["docker", "compose", "-f", resolved, "up", "-d", "--remove-orphans"],
         check=True,
         cwd=str(Path(resolved).parent),
     )
@@ -193,15 +196,15 @@ def open_browser(url: str) -> None:
 _LAUNCHER_CONTENT = {
     "windows": (
         "docking-platform.bat",
-        '@echo off\r\ncd /d "%~dp0"\r\ndocker compose up -d\r\nstart "" http://localhost:3000\r\n',
+        '@echo off\r\ncd /d "%~dp0"\r\ndocker compose up -d --remove-orphans\r\nstart "" http://localhost:3000\r\n',
     ),
     "mac": (
         "docking-platform.command",
-        '#!/bin/bash\ncd "$(dirname "$0")"\ndocker compose up -d\nopen http://localhost:3000\n',
+        '#!/bin/bash\ncd "$(dirname "$0")"\ndocker compose up -d --remove-orphans\nopen http://localhost:3000\n',
     ),
     "linux": (
         "docking-platform.sh",
-        '#!/bin/bash\ncd "$(dirname "$0")"\ndocker compose up -d\nxdg-open http://localhost:3000 2>/dev/null || true\n',
+        '#!/bin/bash\ncd "$(dirname "$0")"\ndocker compose up -d --remove-orphans\nxdg-open http://localhost:3000 2>/dev/null || true\n',
     ),
 }
 

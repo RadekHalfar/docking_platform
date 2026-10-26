@@ -87,3 +87,29 @@ class FinishesWhileStreaming(FakeBridge):
     def get_log_lines(self):
         self._finished = True
         return []
+
+
+def finish_inline(state, planned):
+    """Run a save ``ui.core.save_results`` planned -- ``(message, job)`` --
+    all inline, as the GUI does with the copy off its event loop: the reply,
+    or the plan's message (None with nothing to do)."""
+    from ui.core import save_results
+
+    message, job = planned
+    if job is None:
+        return message
+    return save_results.finish_save(state, job, save_results.write_bundle(job))
+
+
+def inline_run_save(state, output_base):
+    """A ``chat.submit`` *run_save* that saves inline and posts the reply,
+    like ``PageController.run_save`` without the event loop."""
+    from ui.core import save_results
+    from ui.core.state import reply
+
+    def run_save(intent):
+        message = finish_inline(state, save_results.plan_chat_save(state, output_base, intent))
+        if message:
+            reply(state, message)
+
+    return run_save

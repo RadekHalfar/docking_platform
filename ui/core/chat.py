@@ -3,20 +3,20 @@ Stage 16.2).
 
 :func:`submit` posts the user's message and answers it if it is a command
 (geometry, algorithm, ``show history`` / ``undo``, ``save ... as``);
-otherwise :func:`answer_with_llm` parses it.
+otherwise the LLM parses it.
 
-The LLM path is split so a GUI can run only the slow part off its event
+The LLM path is split so the GUI runs only the slow part off its event
 loop: :func:`parse_message` makes the LLM call and touches no state;
 :func:`apply_parsed_message` then applies the result to the state, unless
-the session changed meanwhile (:func:`parse_context`). The parse functions
-are passed in, like the bridge class in ``run_control``, so each GUI's
-tests can swap them.
+the session changed meanwhile (:func:`parse_context`); any failure is
+:func:`parse_failed`'s reply. The parse functions are passed in, like the
+bridge class in ``run_control``, so tests can swap them.
 
 Two commands do slow file work: a geometry command reads the receptor, and
 ``save ... as`` copies the results into a bundle (tens of seconds for a
-real session on a Docker Desktop bind mount, Review Stage R2). A GUI with
-an event loop passes *apply_geometry* / *run_save* to :func:`submit` to
-run those off it; without them they run inline (as the tests do).
+real session on a Docker Desktop bind mount, Review Stage R2). The GUI
+passes *run_save* and *apply_geometry* to :func:`submit` to run those off
+its event loop (``apply_geometry`` defaults to the inline read).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
     parse_followup_with_llm,
     parse_workflow_with_llm,
 )
-from ui.core import box_picker, save_results, sessions
+from ui.core import box_picker, sessions
 from ui.core.form import apply_parsed_params, selected_docking_algorithm
 from ui.core.state import reply
 
@@ -52,15 +52,16 @@ def submit(
     output_base: Path,
     bridge_factory: Callable,
     *,
+    run_save: RunSave,
     apply_geometry: box_picker.ApplyGeometry = box_picker.apply_protein_geometry,
-    run_save: Optional[RunSave] = None,
 ) -> bool:
     """Post the user's *message* and answer it if it is a deterministic
-    command. Returns False if it is not one -- the caller then passes it
-    to :func:`answer_with_llm`.
+    command. Returns False if it is not one -- the caller then has the LLM
+    parse it (:func:`parse_message`).
 
-    *apply_geometry* and *run_save* replace the inline geometry read and
-    bundle copy (see the module docstring)."""
+    *run_save* runs a ``save ... as`` (it posts its own reply);
+    *apply_geometry* replaces the inline geometry read (see the module
+    docstring)."""
     state.messages.append({"role": "user", "content": message})
 
     geometry_target = detect_protein_geometry_command(message)
@@ -79,16 +80,13 @@ def submit(
 
     # Only the revision and save commands are taken from the CLI's
     # deterministic intents; everything else keeps the parameter-parsing
-    # path (answer_with_llm).
+    # path (the LLM).
     intent = _deterministic_intent(message)
     if intent is not None and intent["intent"] in ("show_history", "undo_revision"):
         reply(state, sessions.history_chat_reply(state, intent))
         return True
     if intent is not None and intent["intent"] == "save_results":
-        if run_save is not None:
-            run_save(intent)
-        else:
-            reply(state, save_results.save_chat_reply(state, output_base, intent))
+        run_save(intent)
         return True
     return False
 
@@ -275,30 +273,6 @@ def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[t
         lines.append(f"\nStill needed: **{', '.join(missing)}** — please fill them in.")
 
     reply(state, "\n".join(lines))
-
-
-def answer_with_llm(
-    state,
-    message: str,
-    *,
-    parse_workflow: Callable = parse_workflow_with_llm,
-    parse_followup: Callable = parse_followup_with_llm,
-) -> None:
-    """Parse a non-command chat message with the LLM and apply it; any
-    failure becomes the reply. Blocks for the LLM call -- a GUI with an
-    event loop runs :func:`parse_message` off it and then
-    :func:`apply_parsed_message` instead."""
-    try:
-        parsed, named = parse_message(
-            state.llm_client,
-            message,
-            state.parser.parsed_workflow,
-            parse_workflow=parse_workflow,
-            parse_followup=parse_followup,
-        )
-        apply_parsed_message(state, parsed, named)
-    except Exception as exc:
-        parse_failed(state, exc)
 
 
 def parse_failed(state, exc: Exception) -> None:

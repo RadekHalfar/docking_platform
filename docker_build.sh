@@ -107,15 +107,15 @@ for service in "${SERVICES[@]}"; do
             ;;
         *)
             echo -e "${RED}Unknown service: $service${NC}"
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
             continue
             ;;
     esac
     
     if [ $? -eq 0 ]; then
-        ((success_count++))
+        success_count=$((success_count + 1))
     else
-        ((fail_count++))
+        fail_count=$((fail_count + 1))
         echo -e "${YELLOW}⚠️  Stopping build due to failure${NC}"
         break
     fi

@@ -241,8 +241,16 @@ docker build -f docker/pymol_interactive.Dockerfile -t mcp-pymol-interactive:lat
 ### Start All Services
 
 ```bash
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
+
+`--remove-orphans` also stops containers of services that were removed from
+`docker-compose.yml`. **Upgrading past Phase 16 (2026-10-26):** the
+`ui-nice` service (NiceGUI on port 3001) is gone, since NiceGUI now serves
+`ui` on port 3000. A plain `docker compose up -d` leaves the old
+`mcp-ui-nice` container running as an orphan; use the command above, or
+`docker rm -f mcp-ui-nice`. The installer and its launcher scripts pass
+`--remove-orphans` themselves.
 
 ### Start Specific Services
 

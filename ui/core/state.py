@@ -42,7 +42,7 @@ def form_defaults(worker_cap: WorkerCap) -> Dict[str, Any]:
         "param_box_z": "",
         "param_ph": "7.4",
         "param_exhaustiveness": "8",
-        "param_cpu": "1",
+        "param_cpu": 1,
         "param_parallel": False,
         "param_max_workers": default_worker_count(worker_cap),
         "param_docking_algorithm": DEFAULT_DOCKING_ALGORITHM,
@@ -58,10 +58,9 @@ def reply(state, content: str) -> None:
 @dataclass(frozen=True)
 class Outcome:
     """What a GUI action asks of the page beyond the replies it appended to
-    ``messages``: ``refresh`` -- redraw now;
-    ``error`` -- show this next to the control, not in the chat."""
+    ``messages``: ``error`` -- show this next to the control, not in the
+    chat. The page redraws after every action anyway."""
 
-    refresh: bool = False
     error: Optional[str] = None
 
 
@@ -99,9 +98,7 @@ class GuiSession:
     # A save-as name clash awaiting Overwrite / Save as: {"job_id", "name", "scope", "suggested"}.
     save_conflict: Optional[dict] = None
     box_picker_receptor_pdb: Optional[str] = None
-    box_picker_last_click: Optional[dict] = None
     box_picker_error: Optional[str] = None
-    box_picker_job_id: Optional[str] = None
     # Geometry chat commands ("center", "box_size") waiting for a receptor
     # prep job, in the order given; None when nothing is waiting.
     pending_geometry_targets: Optional[Tuple[str, ...]] = None

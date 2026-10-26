@@ -1,4 +1,4 @@
-"""Persisted LLM provider settings for the GUIs (no GUI framework dependency).
+"""Persisted LLM provider settings for the GUI (no GUI framework dependency).
 
 Settings survive a browser refresh (which resets the GUI's per-tab state) by
 being written to a small JSON file on disk. API keys are never written to that
@@ -7,12 +7,11 @@ UI for the current session only.
 """
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict
 
-from common.file_io import atomic_write_json
+from common.file_io import atomic_write_json, load_json_dict
 
 # Overridable so a container deployment can point this at a mounted volume
 # (see docker-compose.yml) and have settings survive container recreation,
@@ -20,6 +19,9 @@ from common.file_io import atomic_write_json
 SETTINGS_FILE = Path(
     os.getenv("DOCKING_PLATFORM_SETTINGS_FILE", str(Path.home() / ".docking_platform_settings.json"))
 )
+
+# The Ollama endpoint when neither LLM_ENDPOINT nor a saved setting gives one.
+DEFAULT_ENDPOINT = "http://localhost:11434"
 
 # Only these keys are persisted to disk.
 _PERSISTABLE_KEYS = ("provider", "model", "endpoint", "base_url")
@@ -34,19 +36,16 @@ def load_settings() -> Dict[str, Any]:
     settings = {
         "provider": os.getenv("LLM_PROVIDER", "ollama"),
         "model": os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M"),
-        "endpoint": os.getenv("LLM_ENDPOINT", "http://localhost:11434"),
+        "endpoint": os.getenv("LLM_ENDPOINT", DEFAULT_ENDPOINT),
         "api_key": os.getenv("LLM_API_KEY", ""),
         "base_url": os.getenv("LLM_BASE_URL", ""),
     }
 
-    if SETTINGS_FILE.exists():
-        try:
-            saved = json.loads(SETTINGS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            saved = {}
-        for key in _PERSISTABLE_KEYS:
-            if saved.get(key):
-                settings[key] = saved[key]
+    # A missing, unreadable or non-object file counts as nothing saved.
+    saved = load_json_dict(SETTINGS_FILE) or {}
+    for key in _PERSISTABLE_KEYS:
+        if saved.get(key):
+            settings[key] = saved[key]
 
     return settings
 
@@ -61,7 +60,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
 
 def build_llm_client(settings: Dict[str, Any]):
     """The LLM client for *settings* (as :func:`load_settings` returns them).
-    Shared by both GUIs; building it makes no network call."""
+    Building it makes no network call."""
     from services.llm_orchestrator import create_llm_client
 
     return create_llm_client(

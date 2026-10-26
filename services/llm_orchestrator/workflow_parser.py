@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from common.docking_algorithm import normalize_docking_algorithm
+from common.utils import whole_number
 from services.llm_orchestrator.workflow_definition import (
     REQUIRED_PARAMETERS_BY_STEP,
     get_default_parameters,
@@ -26,6 +27,20 @@ def _normalize_docking_algorithm_in_place(params: Dict[str, Any]) -> None:
         canonical = normalize_docking_algorithm(params["docking_algorithm"])
         if canonical:
             params["docking_algorithm"] = canonical
+
+
+def _normalize_cpu_in_place(params: Dict[str, Any]) -> None:
+    """Make "cpu" a whole number >= 1 ("4.0" -> 4). A value that isn't one
+    (e.g. an LLM's "all") is dropped, so the default -- or, for an update,
+    the current value -- stays (Review Stage R4: it reached the form and the
+    docking call as given)."""
+    if "cpu" in params:
+        cpu = whole_number(params["cpu"])
+        if cpu is None:
+            logger.warning("Ignoring cpu=%r: not a whole number >= 1", params["cpu"])
+            del params["cpu"]
+        else:
+            params["cpu"] = cpu
 
 
 class WorkflowParser:
@@ -124,6 +139,7 @@ class WorkflowParser:
         services = parsed.get("services", [])
         parameters = parsed.get("parameters", {})
         
+        _normalize_cpu_in_place(parameters)
         # Apply defaults
         defaults = get_default_parameters()
         for key, default_value in defaults.items():
@@ -235,6 +251,7 @@ class WorkflowParser:
         
         updates = dict(updates)
         _normalize_docking_algorithm_in_place(updates)
+        _normalize_cpu_in_place(updates)
         self.parsed_workflow["parameters"].update(updates)
         
         # Remove from missing list if now provided

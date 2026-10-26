@@ -53,13 +53,6 @@ def _save_uploads(files: Sequence[tuple[str, bytes]], upload_dir: Path) -> list[
     return [uploads.save_upload(name, data, upload_dir) for name, data in files]
 
 
-def _as_int(value: Any) -> Optional[int]:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 class SetupView:
     def __init__(self, controller: PageController) -> None:
         self.controller = controller
@@ -279,7 +272,7 @@ class SetupView:
         self.cpu.set_visibility(vina)
         self.vina_caption.set_visibility(vina)
         self.pso_caption.set_visibility(not vina)
-        cpu = _as_int(state.form.get("param_cpu"))
+        cpu = form.form_cpu(state)
         if self.cpu.value != cpu:
             self.cpu.value = cpu
 

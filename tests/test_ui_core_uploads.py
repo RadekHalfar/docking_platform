@@ -125,6 +125,18 @@ def test_a_dropped_ligand_named_like_a_listed_one_replaces_it(state, tmp_path):
     )
 
 
+def test_two_files_of_one_name_in_one_drop_keep_only_the_last(state, tmp_path):
+    # Review Stage R4: e.g. set1/a.sdf and set2/a.sdf dropped together, each
+    # saved in its own upload dir, used to both stay listed and fail the
+    # run's filename-collision check.
+    uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf", tmp_path / "2" / "b.sdf", tmp_path / "3" / "a.sdf"])
+
+    assert state.params["ligand_files"] == [str(tmp_path / "2" / "b.sdf"), str(tmp_path / "3" / "a.sdf")]
+    assert state.messages[-1]["content"] == (
+        "2 local ligand file(s) set: **b.sdf, a.sdf** (replaced the earlier a.sdf)"
+    )
+
+
 def test_clearing_uploads_drops_only_their_paths(state):
     state.params.update(protein_file="/x/r.pdb", ligand_files=["/x/a.sdf"], center=[1, 2, 3])
 

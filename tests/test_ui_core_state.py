@@ -59,7 +59,7 @@ def test_given_form_values_are_kept_and_the_rest_filled_in():
 
 
 def test_outcome_defaults_to_nothing_to_do():
-    assert Outcome() == Outcome(refresh=False, error=None)
+    assert Outcome() == Outcome(error=None)
 
 
 def test_no_ui_core_module_imports_a_gui_framework():
@@ -101,12 +101,25 @@ def test_importing_ui_core_loads_no_gui_framework_indirectly():
 
 @pytest.mark.parametrize(
     "algorithm, cpu, expected",
-    [("moldina", 4, 1), ("vina", 4, 4), ("vina", None, 1)],
+    [("moldina", 4, 1), ("vina", 4, 4), ("vina", "4", 4), ("vina", "4.0", 4), ("vina", "2.5", 2),
+     ("vina", "all", 1), ("vina", "", 1), ("vina", None, 1), ("vina", "0", 1)],
 )
 def test_effective_cpu(state, algorithm, cpu, expected):
     state.form["param_docking_algorithm"] = algorithm
     state.form["param_cpu"] = cpu
     assert form.effective_cpu(state) == expected
+
+
+@pytest.mark.parametrize("cpu", [4.0, "all"])
+def test_a_chat_cpu_that_is_not_a_whole_number_does_not_break_the_form(state, cpu):
+    # Review Stage R4: the chat writes the LLM's cpu as a string, and once
+    # 16.8 dropped effective_cpu's fallback, "4.0" or "all" raised in every
+    # redraw (max_workers) and in Run Docking (collect_form_params).
+    state.form["param_docking_algorithm"] = "vina"
+    form.apply_parsed_params(state, {"cpu": cpu})
+
+    assert form.max_workers(state) >= 1
+    assert form.effective_cpu(state) == (4 if cpu == 4.0 else 1)
 
 
 def test_switching_algorithm_resets_workers_to_its_best(state):
@@ -146,7 +159,7 @@ def test_apply_parsed_params_writes_params_and_form(state):
     assert state.form["param_ligand_ids_text"] == "ATP, HEM"
     assert [state.form[k] for k in form.BOX_FORM_KEYS] == ["1.0", "2.0", "3.0", "10.0", "20.0", "30.0"]
     assert state.form["param_ph"] == "7.0"
-    assert state.form["param_cpu"] == "2"
+    assert state.form["param_cpu"] == 2
 
 
 def test_apply_parsed_params_keeps_values_parsed_as_none(state):
@@ -212,7 +225,7 @@ def test_load_of_vina_session_keeps_its_saved_workers(state):
         state, {"protein_id": "6lu7", "docking_algorithm": "vina", "cpu": 2, "parallel": True, "max_workers": 3}
     )
     assert state.form["param_docking_algorithm"] == "vina"
-    assert state.form["param_cpu"] == "2"
+    assert state.form["param_cpu"] == 2
     assert state.form["param_max_workers"] == 3
 
 
@@ -271,15 +284,14 @@ def test_sync_form_into_params_keeps_upload_paths(state):
 
 def test_clear_box_picker_state_keeps_the_box(state):
     state.box_picker_receptor_pdb = "/x/y.pdb"
-    state.box_picker_last_click = {"center": [1, 2, 3], "clickId": 1}
     state.pending_geometry_targets = ("center",)
     state.box_picker_error = "boom"
     state.form["param_center_x"] = "1.0"
 
     form.clear_box_picker_state(state)
 
-    assert (state.box_picker_receptor_pdb, state.box_picker_last_click,
-            state.pending_geometry_targets, state.box_picker_error) == (None, None, None, None)
+    assert (state.box_picker_receptor_pdb, state.pending_geometry_targets,
+            state.box_picker_error) == (None, None, None)
     assert state.form["param_center_x"] == "1.0"
 
 

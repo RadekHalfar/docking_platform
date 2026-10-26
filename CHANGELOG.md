@@ -391,3 +391,25 @@ moved from Streamlit to NiceGUI.
       read.
     - **Linux hosts:** sessions created by the old root Streamlit GUI before
       Stage 16.3 may need a one-time `chown` (`docs/DOCKER_DEPLOYMENT.md`).
+    - **Upgrading:** run `docker compose up -d --remove-orphans` (the
+      installer and its launchers now do), or `docker rm -f mcp-ui-nice`;
+      otherwise the old NiceGUI container keeps running on port 3001.
+  - **Review Stage R4 (2026-10-26), the phase's final review**
+    (`docs/reviews/stage_16_r4.md`):
+    - **Fixed:**
+      - A chat CPU value like `4.0` or "all" no longer breaks the page.
+        CPU counts are normalized where they enter, in the CLI as well.
+      - Two same-named files in one ligand drop no longer both stay listed.
+      - A Delete clicked right after a rename no longer goes unanswered.
+      - A settings file holding a JSON list no longer raises.
+      - `docker_build.sh` now builds every image. It used to stop after
+        the base image.
+      - The installer stops containers of removed services.
+    - **Faster:** the Sessions tab re-reads only the sessions that changed
+      (4–6 s before, with ~190 sessions).
+    - **Measured:** the GUI benchmark's filtered latency figure is
+      corrected: a box step takes about 310 ms, against Streamlit's 491 ms.
+    - **Verified:** a full rebuild and a fresh stack, `--check-health`, the
+      stop test, a CLI workflow, and a headless end-to-end GUI run (new
+      session → redock → Vina → save-as → resume → restore → delete).
+    - **Phase 16 is closed.**

@@ -52,13 +52,14 @@
     current = null;
   }
 
-  // A node inside (or being) one of the ignored elements.
+  // A node inside (or being) one of the ignored elements -- not one that
+  // merely contains one: a button holding a ripple still does real work
+  // (Review Stage R4).
   function ignoredNode(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentElement;
     if (!el) return false;
     for (var i = 0; i < lat.ignore.length; i++) {
-      var sel = lat.ignore[i];
-      if (el.closest(sel) || (node.nodeType === 1 && node.querySelector(sel))) return true;
+      if (el.closest(lat.ignore[i])) return true;
     }
     return false;
   }

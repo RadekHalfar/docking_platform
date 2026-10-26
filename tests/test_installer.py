@@ -115,7 +115,7 @@ class TestBuildAndStartServices:
         install.start_services(str(compose_file))
 
         mock_run.assert_called_once_with(
-            ["docker", "compose", "-f", resolved, "up", "-d"],
+            ["docker", "compose", "-f", resolved, "up", "-d", "--remove-orphans"],
             check=True,
             cwd=str(Path(resolved).parent),
         )
@@ -144,7 +144,7 @@ class TestWriteLauncher:
         path = install.write_launcher("windows", target_dir=str(tmp_path))
         assert path.exists()
         assert path.name == "docking-platform.bat"
-        assert "docker compose up -d" in path.read_text()
+        assert "docker compose up -d --remove-orphans" in path.read_text()
 
     def test_writes_mac_launcher_executable(self, tmp_path):
         path = install.write_launcher("mac", target_dir=str(tmp_path))

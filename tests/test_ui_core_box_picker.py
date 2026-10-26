@@ -134,7 +134,7 @@ def test_prep_starts_the_prep_services_and_clears_the_old_picker_state(state, tm
     assert started is True and message is None
     bridge = state.box_picker_bridge
     args, kwargs = bridge.started_with
-    assert args[1] == state.box_picker_job_id and args[2] == str(tmp_path)
+    assert args[1].startswith("job_") and args[2] == str(tmp_path)
     assert kwargs == {"services": ["get_input_files", "prepare_protein"]}
     assert state.box_picker_receptor_pdb is None and state.pending_geometry_targets is None
     assert state.params["protein_id"] == "6lu7"

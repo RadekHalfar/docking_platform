@@ -3,6 +3,7 @@ OUTPUT_BASE. Result paths use the MCP services' own mount
 (``/app/orchestrator_output/...``), as real workflow results do."""
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -95,11 +96,10 @@ def test_currently_docking_gives_the_elapsed_seconds():
     assert results_view.currently_docking({"in_progress": None}, now) == []
 
 
-def test_read_job_log(tmp_path):
-    assert results_view.read_job_log(tmp_path, JOB_ID) is None
+def test_job_log_reads_undecodable_bytes_as_replacements(tmp_path):
     (tmp_path / JOB_ID).mkdir()
     (tmp_path / JOB_ID / "job.log").write_bytes(b"line 1\nbad \xff byte\n")
-    assert results_view.read_job_log(tmp_path, JOB_ID) == "line 1\nbad � byte\n"
+    assert results_view.job_log_if_changed(tmp_path, JOB_ID, None)[1] == "line 1\nbad � byte\n"
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +122,6 @@ def test_pose_records_reads_each_ligands_poses_in_order(tmp_path, job):
     records = results_view.pose_records(job, tmp_path)
     assert list(records) == ["ATP", "HEM"]  # ADP's SDF is missing, XYZ has none
     assert [len(r) for r in records.values()] == [3, 1]
-
-
-def test_pose_records_reads_through_the_given_reader(tmp_path, job):
-    read = []
-    results_view.pose_records(job, tmp_path, lambda p: read.append(p.name) or p.read_bytes())
-    assert read == ["ATP.sdf", "HEM.sdf"]
 
 
 def test_viewer_ligand_picks_the_pose_and_its_affinity(tmp_path, job):
@@ -181,15 +175,15 @@ def test_other_download_files_skips_saved_bundles(tmp_path):
 # One result's reads (Stage 16.6)
 # ---------------------------------------------------------------------------
 
-def test_read_results_data_reads_receptor_poses_and_download_lists(tmp_path, job):
+def test_read_results_data_reads_receptor_poses_and_download_lists(tmp_path, job, monkeypatch):
     (tmp_path / JOB_ID / "visualization" / "receptor.pdb").write_text("ATOM      1  N\n")
     (tmp_path / JOB_ID / "visualization" / "s.pml").write_text("load x\n")
     job["results"]["visualize"]["receptor_pdb"] = f"{MOUNT}/visualization/receptor.pdb"
     read = []
+    real_read_bytes = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda p: read.append(p.name) or real_read_bytes(p))
 
-    data = results_view.read_results_data(
-        tmp_path, JOB_ID, job, lambda p: read.append(p.name) or p.read_bytes()
-    )
+    data = results_view.read_results_data(tmp_path, JOB_ID, job)
 
     assert data.receptor_pdb == "ATOM      1  N\n" and not data.receptor_missing
     assert [len(r) for r in data.pose_records.values()] == [3, 1]

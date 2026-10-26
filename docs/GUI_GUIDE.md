@@ -635,10 +635,17 @@ same browser and inputs, against the live `mcp-ui-nice`, on mains power.
   and [`docs/benchmarks/2026-10-25_gui_nicegui_stats.json`](benchmarks/2026-10-25_gui_nicegui_stats.json).
 - **Latency:** the raw median compares with Streamlit; the filtered one
   (in brackets) leaves out Quasar's ripple and tooltip (see Tools).
+  **Corrected in Review Stage R4 (2026-10-26):** the 16.8 run's filter also
+  dropped changes to an element that merely *contained* a ripple (the
+  clicked button itself), so its filtered medians (30 / 31 / 1,219 ms) were
+  too low. The bracketed figures below are R4's re-measurement with the
+  fixed snippet, on the same reference session and the live GUI on port
+  3000; their raw medians (689 / 726 / 1,267 ms) match 16.8's. The JSON
+  files keep 16.8's original values.
 
 | Phase | Measurement | Streamlit (16.0) | NiceGUI (16.8) |
 |---|---|---|---|
-| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | 679 ms (621–689) [30 ms] |
+| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | 679 ms (621–689) [310 ms] |
 | setup | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 184 ms | 1.0 (box only, camera kept); 117 ms |
 | running | `show history` latency, median (min–max) | 4,736 ms (2,492–12,823) | 62 ms (28–337) |
 | running | GUI container CPU mean / peak | 10.1% / 27.6% (52 samples, 115 s) | 1.2% / 6.8% (60 samples) |
@@ -647,8 +654,8 @@ same browser and inputs, against the live `mcp-ui-nice`, on mains power.
 | completed | GUI container memory mean / peak, idle | 141 MiB / 142 MiB | 183 MiB / 184 MiB |
 | completed | Viewer renders while idle | 0 | 1 (the Results viewer's first build, once) |
 | completed | `show history` latency, median (min–max) | 926 ms (243–954) | 77 ms (65–108) |
-| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | 1,287 ms (1,207–2,511) [1,219 ms] |
-| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | 728 ms (685–771) [31 ms] |
+| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | 1,287 ms (1,207–2,511) [1,260 ms] |
+| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | 728 ms (685–771) [310 ms] |
 | completed | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 190 ms | 1.0 (box only, camera kept); 146 ms |
 
 What the numbers say about Streamlit:
@@ -673,16 +680,18 @@ What the 16.8 numbers say about NiceGUI:
   rerun.
 - **A finished session costs nothing extra.** Interactions on it are as
   fast as in setup; no results panel is redrawn on every click.
-- **Box X ± does about 30 ms of DOM work.** The raw 679–728 ms is Quasar's
-  click ripple (it ends about 760 ms after the click) and the next
-  button's tooltip, animations Streamlit lacks. The viewer redraws only
-  the box (117–146 ms of JS) and keeps the camera.
+- **Box X ± is done in about 310 ms.** That covers the round trip, the
+  fields and the box-only redraw (117–146 ms of JS; the camera is kept).
+  The rest of the raw 679–728 ms is Quasar's click ripple (it ends about
+  760 ms after the click) and the next button's tooltip, animations
+  Streamlit lacks. So NiceGUI's box step is faster than Streamlit's
+  491 ms, whose figure includes no animation.
 - **Load reads slower, 1.29 s against 1.03 s, but its work is done by
   about 0.4–0.6 s.** A Load also switches to the Results tab. A mutation
   timeline (scratch probe, 2026-10-25) shows the session drawn and the
   viewer's canvas painted by 400–600 ms, then Quasar's tab-panel slide
   transition and scroll-area thumb until about 1.3 s. The ripple filter
-  doesn't cover the transition, so the filtered median stays at 1.22 s.
+  doesn't cover the transition, so the filtered median stays at 1.26 s.
   The first Load of a session also builds its viewer (one 381 ms render).
 - **Memory is about 50 MiB higher** (183 MiB against 132–142 MiB):
   NiceGUI's FastAPI/uvicorn process holds every page element server-side.
@@ -750,17 +759,18 @@ port), and `ui_nice/` draws it:
     runs the first on a worker thread. `revision_panel_data()` reads the
     revision panel in one call.
   - `llm_settings.py` (Stage 16.7): the settings form's providers,
-    `settings_from_form()` and `apply_settings()`, split into
+    `settings_from_form()`, and Apply in two steps,
     `persist_settings()` (build the client, then save; no GUI state) and
     `use_settings()`.
   - `chat.py`: chat commands (geometry, algorithm, history, save) and the
     LLM parse. `parse_message()` is the blocking LLM call and touches no
-    state, so a GUI with an event loop can run it on a worker thread and
-    then apply the result with `apply_parsed_message()`. Passing it the
-    `parse_context()` taken before the call drops a result whose session
-    (or job) changed meanwhile. `submit()` takes `apply_geometry` and
-    `run_save`, so a GUI with an event loop can do the geometry command's
-    receptor read and the save's copy off it; by default both run inline.
+    state, so the GUI runs it on a worker thread and then applies the
+    result with `apply_parsed_message()` (`parse_failed()` is the reply to
+    any failure). Passing it the `parse_context()` taken before the call
+    drops a result whose session (or job) changed meanwhile. `submit()`
+    takes `run_save` and `apply_geometry`, so the GUI does the save's copy
+    and the geometry command's receptor read off its event loop
+    (`apply_geometry` defaults to the inline read).
   - `box_picker.py`: the box picker (receptor prep job, viewer click, − / +
     steps) and protein geometry, split into `read_protein_geometry()` (the
     file read, no state) and `set_protein_geometry()`.
@@ -769,16 +779,19 @@ port), and `ui_nice/` draws it:
   - `save_results.py`: Save results as…, its guard and the name-clash flow,
     in three steps: `plan_save()` (checks), `write_bundle()` (the copy, no
     GUI state, so it can run on a worker thread) and `finish_save()` (the
-    reply and the name clash). `save_results()` runs all three.
+    reply and the name clash), planned by `plan_save()` /
+    `plan_chat_save()` / `plan_conflict_save()`.
   - `results_view.py`: what the results panel shows, as data: progress,
     poses, download lists, the job log.
 
   Each action appends its chat replies to `state.messages`, all through
   `ui.core.state.reply()`. It returns an
-  `Outcome`: `refresh` to redraw the page, `error` to show next to the
-  control. The bridge class and the LLM parse functions are passed in, so
-  tests swap in fakes. Helpers that read result files take a `read_bytes`
-  callable.
+  `Outcome`, whose `error` is shown next to the control (the page redraws
+  after every action). The bridge class and the LLM parse functions are
+  passed in, so tests swap in fakes. Since Review Stage R4 `ui/core` holds
+  only what the GUI calls: the inline helpers the Streamlit page used
+  (`save_results()`, `answer_with_llm()`, `rename_session()`, ...) are gone,
+  and the tests run the same halves the GUI does.
 - **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui`
   service on port 3000 as the non-root `appuser`:
   - `app.py`: the `/` page, which gives each client its own `GuiSession`

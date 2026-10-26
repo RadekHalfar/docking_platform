@@ -54,6 +54,24 @@ def _sm(state):
 # load_workflow_results
 # ---------------------------------------------------------------------------
 
+
+def _rename(state, job, new_name):
+    """The Sessions tab's Rename: the file write (off the event loop in the
+    GUI), then the state update."""
+    error = sessions.rename_session_file(job, new_name)
+    if error is None:
+        sessions.apply_session_rename(state, job, new_name)
+    return error
+
+
+def _delete(state, job):
+    """The Sessions tab's Delete: the rmtree (off the event loop in the GUI),
+    then the state update."""
+    error = sessions.remove_session_dir(job)
+    if error is None:
+        sessions.forget_session(state, job)
+    return error
+
 def test_load_workflow_results_reads_or_returns_none(tmp_path, job):
     assert sessions.load_workflow_results(tmp_path, JOB_ID)["job_name"] == "trial_a"
     assert sessions.load_workflow_results(tmp_path, "job_missing") is None
@@ -94,7 +112,7 @@ def test_resume_prefers_a_draft(state, tmp_path, job):
 
 def test_resume_drops_the_previous_runs_finished_bridge(state, tmp_path, job):
     # Stage 16.7's real-data check: the finished bridge of the run before
-    # stayed, and both GUIs drew its result as the loaded session's.
+    # stayed, and both GUIs of the time drew its result as the loaded session's.
     state.job_id = "job_previous"
     state.bridge = _Bridge(running=False)
 
@@ -128,7 +146,7 @@ def test_resume_drops_the_picker_receptor_only_for_another_protein(state, tmp_pa
 def test_rename_updates_the_viewed_sessions_label(state, tmp_path, job):
     state.viewed_job_id = JOB_ID
 
-    assert sessions.rename_session(state, job, "  renamed  ") is None
+    assert _rename(state, job, "  renamed  ") is None
 
     assert state.job_name == "renamed"
     assert sessions.load_workflow_results(tmp_path, JOB_ID)["job_name"] == "renamed"
@@ -136,19 +154,19 @@ def test_rename_updates_the_viewed_sessions_label(state, tmp_path, job):
 
 def test_rename_of_another_session_leaves_the_label(state, tmp_path, job):
     state.job_name = "mine"
-    sessions.rename_session(state, job, "renamed")
+    _rename(state, job, "renamed")
     assert state.job_name == "mine"
 
 
 def test_rename_failure_is_returned(state, tmp_path):
-    error = sessions.rename_session(state, {"job_id": "job_x", "job_dir": str(tmp_path / "job_x")}, "n")
+    error = _rename(state, {"job_id": "job_x", "job_dir": str(tmp_path / "job_x")}, "n")
     assert error.startswith("Rename failed:")
 
 
 def test_delete_of_the_active_session_starts_a_new_one(state, tmp_path, job):
     sessions.resume_session(state, job, tmp_path)
 
-    assert sessions.delete_session(state, job) is None
+    assert _delete(state, job) is None
 
     assert not (tmp_path / JOB_ID).exists()
     assert state.job_id is None and state.viewed_job_id is None
@@ -160,14 +178,14 @@ def test_delete_of_another_session_keeps_the_active_one(state, tmp_path, job):
     state.job_id = state.viewed_job_id = "job_mine"
     state.messages.append({"role": "user", "content": "hi"})
 
-    sessions.delete_session(state, job)
+    _delete(state, job)
 
     assert state.job_id == state.viewed_job_id == "job_mine"
     assert len(state.messages) == 2
 
 
 def test_delete_failure_is_returned(state, tmp_path):
-    error = sessions.delete_session(state, {"job_id": "job_x", "job_dir": str(tmp_path / "job_x")})
+    error = _delete(state, {"job_id": "job_x", "job_dir": str(tmp_path / "job_x")})
     assert error.startswith("Delete failed:")
 
 

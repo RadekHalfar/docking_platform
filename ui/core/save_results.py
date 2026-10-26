@@ -12,7 +12,7 @@ bind mount (34-37 s for 17 MB of docking results, Review Stage R2). So a
 save is three steps, and a GUI with an event loop runs only the middle one
 off it: :func:`plan_save` (checks, on the state), :func:`write_bundle` (the
 copy; touches no GUI state), :func:`finish_save` (the reply and the
-conflict, on the state). :func:`save_results` does all three inline.
+conflict, on the state).
 """
 from __future__ import annotations
 
@@ -136,28 +136,11 @@ def finish_save(state, job: SaveJob, result: dict) -> str:
     return "\n\n".join(lines)
 
 
-def save_results(state, output_base: Path, name: str, scope: str, *, overwrite: bool = False) -> str:
-    """Save the active session's results as bundle *name* (the GUI's
-    ``save results as``) and return the reply to show -- all inline."""
-    message, job = plan_save(state, output_base, name, scope, overwrite=overwrite)
-    if job is None:
-        return message
-    return finish_save(state, job, write_bundle(job))
-
-
 def plan_chat_save(state, output_base: Path, intent: dict) -> tuple[Optional[str], Optional[SaveJob]]:
     """:func:`plan_save` for a deterministic ``save results/docking/visualization as <name>``."""
     if not intent.get("name"):
         return "Give the bundle a name, e.g. `save results as run1`.", None
     return plan_save(state, output_base, intent["name"], intent.get("scope") or "all")
-
-
-def save_chat_reply(state, output_base: Path, intent: dict) -> str:
-    """The reply to a deterministic ``save results/docking/visualization as <name>``."""
-    message, job = plan_chat_save(state, output_base, intent)
-    if job is None:
-        return message
-    return finish_save(state, job, write_bundle(job))
 
 
 def plan_conflict_save(

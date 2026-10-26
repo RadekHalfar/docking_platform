@@ -2,10 +2,10 @@
 
 Replies go into ``state.messages``; what else
 the page must do comes back as an :class:`~ui.core.state.Outcome`
-(``refresh``: redraw now; ``error``: an inline error next to the control).
+(``error``: an inline error next to the control).
 
 The bridge class is passed in (*bridge_factory*), never imported here: the
-GUI tests swap it for a fake, and each GUI owns which class it runs.
+GUI tests swap it for a fake, and the GUI owns which class it runs.
 """
 from __future__ import annotations
 
@@ -22,14 +22,6 @@ from ui.core.state import Outcome, reply
 from ui.job_history import JOB_NAME_MAX_CHARS
 
 BridgeFactory = Callable[[], Any]
-
-# DEFERRED (Review Stage R1, docs/reviews/stage_16_r1.md, deferred #5):
-# output_base and bridge_factory are passed separately into every action
-# here and in box_picker/chat/save_results/sessions. Fine with one GUI
-# calling a few of them. Trigger: if wiring NiceGUI (Stages 16.3-16.7) means
-# threading the same two or three values through many call sites, bundle
-# them in one per-app `GuiDeps(output_base, bridge_factory, ...)` built at
-# startup and pass that instead, in one change across ui/core.
 
 
 def active_bridge_job_id(state) -> Optional[str]:
@@ -121,7 +113,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
     state.bridge = bridge
 
     reply(state, f"Starting docking session `{job_id}`...")
-    return Outcome(refresh=True)
+    return Outcome()
 
 
 def plan_redock(state, params: dict) -> Outcome:
@@ -167,7 +159,7 @@ def plan_redock(state, params: dict) -> Outcome:
         reply(state, "Parameters updated, but no steps need to be re-executed.")
         # Not for the reply: the checkpoint above is a new revision, which
         # the revision history panel must show.
-        return Outcome(refresh=True)
+        return Outcome()
 
     # The checkpoint above now runs ahead of the results on disk until a
     # run completes (process_docking_bridge() clears this) -- Cancel or the
@@ -183,7 +175,7 @@ def plan_redock(state, params: dict) -> Outcome:
         )
 
     state.pending_rerun = {"job_id": session.job_id, "steps": steps, "params": params}
-    return Outcome(refresh=True)
+    return Outcome()
 
 
 def confirm_redock(state, output_base: Path, bridge_factory: BridgeFactory) -> Outcome:
@@ -199,7 +191,6 @@ def confirm_redock(state, output_base: Path, bridge_factory: BridgeFactory) -> O
         # staged but before it was confirmed -- the staged steps/params
         # were computed for a different job_id and must not be applied here.
         return Outcome(
-            refresh=True,
             error="Redock plan was for a different session and has been discarded — please try again.",
         )
 
@@ -220,14 +211,14 @@ def confirm_redock(state, output_base: Path, bridge_factory: BridgeFactory) -> O
     state.bridge = bridge
 
     reply(state, f"Redocking `{session.job_id}` — steps: {', '.join(pending['steps'])}...")
-    return Outcome(refresh=True)
+    return Outcome()
 
 
 def cancel_redock(state) -> Outcome:
     """"Cancel" on a staged redock plan. Its checkpoint stays, and
     ``pending_changed_params`` keeps it plannable next time."""
     state.pending_rerun = None
-    return Outcome(refresh=True)
+    return Outcome()
 
 
 def stop_run(state) -> Outcome:
@@ -235,7 +226,7 @@ def stop_run(state) -> Outcome:
     ``OrchestratorBridge.request_stop``)."""
     if state.bridge is not None and state.bridge.is_running():
         state.bridge.request_stop()
-    return Outcome(refresh=True)
+    return Outcome()
 
 
 def save_session(state) -> Outcome:

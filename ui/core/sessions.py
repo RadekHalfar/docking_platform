@@ -2,8 +2,9 @@
 undo (Phase 16, Stage 16.1).
 
 Scanning the sessions on
-disk is ``ui.job_history``'s job; :func:`list_sessions` does both scans in
-one call, and caching or refreshing them is each GUI's own concern.
+disk is ``ui.job_history``'s job (it re-reads only sessions that changed);
+:func:`list_sessions` gives both lists in one call, and when to re-list is
+the GUI's concern.
 
 Rename and delete come in two halves (Stage 16.7): the file work
 (:func:`rename_session_file`, :func:`remove_session_dir`), which NiceGUI
@@ -145,14 +146,6 @@ def apply_session_rename(state, job: dict, new_name: str) -> None:
         state.job_name = name
 
 
-def rename_session(state, job: dict, new_name: str) -> Optional[str]:
-    """Rename a session's display label; returns an error message, or None."""
-    error = rename_session_file(job, new_name)
-    if error is None:
-        apply_session_rename(state, job, new_name)
-    return error
-
-
 def remove_session_dir(job: dict) -> Optional[str]:
     """Delete a session's directory; returns an error message, or None."""
     try:
@@ -171,14 +164,6 @@ def forget_session(state, job: dict) -> None:
         start_new_session(state)
 
 
-def delete_session(state, job: dict) -> Optional[str]:
-    """Delete a session's directory; returns an error message, or None.
-    Deleting the active session starts a new one. The caller must not
-    offer this for the job this client is running (:func:`active_bridge_job_id`)."""
-    error = remove_session_dir(job)
-    if error is None:
-        forget_session(state, job)
-    return error
 
 
 def undo_to_revision(state, revision: int) -> str:

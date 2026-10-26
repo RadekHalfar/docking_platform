@@ -95,7 +95,7 @@ def _last_reply(state):
 # New run
 # ---------------------------------------------------------------------------
 
-def test_run_with_missing_params_replies_without_refresh(state, tmp_path, factory):
+def test_run_with_missing_params_replies_without_an_error(state, tmp_path, factory):
     outcome = run_control.run_docking(state, tmp_path, factory)
 
     assert outcome == Outcome()
@@ -103,14 +103,14 @@ def test_run_with_missing_params_replies_without_refresh(state, tmp_path, factor
     assert factory.made == [] and state.job_id is None
 
 
-def test_run_starts_a_job_checkpoints_and_refreshes(state, tmp_path, factory):
+def test_run_starts_a_job_and_checkpoints(state, tmp_path, factory):
     _fill_form(state)
     state.form["param_job_name"] = "  trial  "
     state.box_picker_receptor_pdb = "/x/old_protein.pdb"
 
     outcome = run_control.run_docking(state, tmp_path, factory)
 
-    assert outcome == Outcome(refresh=True)
+    assert outcome == Outcome()
     assert state.job_id and state.job_id == state.viewed_job_id
     assert state.job_name == "trial"
     assert state.box_picker_receptor_pdb is None  # belonged to an earlier protein
@@ -130,14 +130,13 @@ def test_run_validation_error_is_returned_inline(state, tmp_path, factory):
     outcome = run_control.run_docking(state, tmp_path, factory)
 
     assert outcome.error.startswith("Validation error:")
-    assert not outcome.refresh
 
 
 # ---------------------------------------------------------------------------
 # Redock
 # ---------------------------------------------------------------------------
 
-def test_redock_with_nothing_changed_replies_without_refresh(state, tmp_path, factory):
+def test_redock_with_nothing_changed_replies_without_an_error(state, tmp_path, factory):
     _active_completed_session(state, tmp_path)
 
     outcome = run_control.run_docking(state, tmp_path, factory)
@@ -153,7 +152,7 @@ def test_redock_after_a_change_stages_a_plan_and_checkpoints(state, tmp_path, fa
 
     outcome = run_control.run_docking(state, tmp_path, factory)
 
-    assert outcome == Outcome(refresh=True)
+    assert outcome == Outcome()
     assert state.pending_rerun["job_id"] == JOB_ID
     assert state.pending_rerun["steps"] == ["dock", "visualize"]
     assert sm.load_latest_parameters()["center"] == [9.0, 2.0, 3.0]
@@ -181,7 +180,7 @@ def test_confirm_runs_the_staged_plan(state, tmp_path, factory):
 
     outcome = run_control.confirm_redock(state, tmp_path, factory)
 
-    assert outcome == Outcome(refresh=True)
+    assert outcome == Outcome()
     assert state.pending_rerun is None and state.job_done is False
     assert state.run_log == []
     args, kwargs = state.bridge.started_with
@@ -196,7 +195,7 @@ def test_confirm_after_the_active_session_changed_is_refused(state, tmp_path, fa
 
     outcome = run_control.confirm_redock(state, tmp_path, factory)
 
-    assert outcome.refresh and "different session" in outcome.error
+    assert "different session" in outcome.error
     assert state.pending_rerun is None and factory.made == []
 
 
@@ -210,7 +209,7 @@ def test_cancel_drops_the_plan_but_keeps_it_plannable(state, tmp_path, factory):
     run_control.run_docking(state, tmp_path, factory)
     steps = state.pending_rerun["steps"]
 
-    assert run_control.cancel_redock(state) == Outcome(refresh=True)
+    assert run_control.cancel_redock(state) == Outcome()
     assert state.pending_rerun is None
     run_control.run_docking(state, tmp_path, factory)  # form now equals the checkpoint
     assert state.pending_rerun["steps"] == steps
@@ -226,7 +225,7 @@ def test_redock_with_missing_required_param_returns_error(state, tmp_path, facto
 
     assert outcome.error.startswith("Cannot redock — required parameters are missing: ")
     assert "protein_id" in outcome.error
-    assert not outcome.refresh and state.pending_rerun is None
+    assert state.pending_rerun is None
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +234,7 @@ def test_redock_with_missing_required_param_returns_error(state, tmp_path, facto
 
 def test_stop_requests_stop_of_a_running_bridge(state):
     state.bridge = FakeBridge(running=True)
-    assert run_control.stop_run(state) == Outcome(refresh=True)
+    assert run_control.stop_run(state) == Outcome()
     assert state.bridge.stop_calls == 1
 
 

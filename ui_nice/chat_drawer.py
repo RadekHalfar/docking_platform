@@ -125,7 +125,7 @@ class ChatView:
             )
             chat.apply_parsed_message(state, parsed, named, context=context)
         except Exception as exc:
-            # As chat.answer_with_llm: any parse failure is the reply.
+            # The GUI's boundary for the LLM parse: any failure is the reply.
             chat.parse_failed(state, exc)
         finally:
             self.parsing = False

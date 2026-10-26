@@ -64,15 +64,19 @@ def apply_ligand_uploads(state, paths: Sequence[Path], *, folder_mode: bool = Fa
     Processing mode a ligand folder. The reply names them all.
 
     A dropped file named like one already set replaces it (owner's choice,
-    Review Stage R3): two files of one name would fail the run's "Local
-    ligand filename collision" check."""
-    dropped = [str(p) for p in paths]
-    dropped_names = {PurePath(f).name for f in dropped}
-    kept: list[str] = []
+    Review Stage R3), and so does a later file of the same name in the same
+    drop (Review Stage R4): two files of one name would fail the run's
+    "Local ligand filename collision" check."""
+    # Keyed by file name, in order: a replacement moves to the end. One pass,
+    # so a Batch Processing drop of thousands of files stays cheap.
+    by_name = {PurePath(f).name: f for f in state.params.get("ligand_files") or []}
     replaced: list[str] = []
-    for f in state.params.get("ligand_files") or []:
-        (replaced if PurePath(f).name in dropped_names else kept).append(f)
-    files = [*kept, *dropped]
+    for path in paths:
+        name = PurePath(path).name
+        if by_name.pop(name, None) is not None:
+            replaced.append(name)
+        by_name[name] = str(path)
+    files = list(by_name.values())
     state.params["ligand_files"] = files
     state.params.pop("ligand_ids", None)
     if folder_mode:
@@ -80,7 +84,7 @@ def apply_ligand_uploads(state, paths: Sequence[Path], *, folder_mode: bool = Fa
     names = [PurePath(f).name for f in files]
     message = f"{len(names)} local ligand file(s) set: **{', '.join(names)}**"
     if replaced:
-        message += f" (replaced the earlier {', '.join(PurePath(f).name for f in replaced)})"
+        message += f" (replaced the earlier {', '.join(replaced)})"
     reply(state, message)
 
 

@@ -78,6 +78,8 @@ def _read_listing(output_base: Path, state_manager, previous: Optional[_Listing]
 class _Row:
     """One session row's widgets that sync() updates."""
 
+    label: ui.markdown
+    detail: str
     load: ui.button
     load_tip: ui.tooltip
     rename: ui.button
@@ -179,6 +181,14 @@ class SessionsView:
                 )
 
     def _draw_rows(self, listing: _Listing) -> None:
+        # DEFERRED (Review Stage R4, docs/reviews/stage_16_r4.md, Deferred #1):
+        # a changed listing (a delete, a run finishing or another session
+        # appearing while the tab is shown) rebuilds every row, ~13 elements
+        # each, rename editor included -- ~2,500 elements for 190 sessions, an
+        # estimated 0.1-0.3 s on the event loop -- and a click landing during
+        # the rebuild is lost (R4 Correctness #7; a rename no longer rebuilds).
+        # Fix if such a lost click or a stall is noticed: keep rows by job_id,
+        # add/remove only the changed rows, build the rename editor on demand.
         # A name being typed survives the redraw (a run finishing re-lists).
         typed = self._rows[self._renaming].name_input.value if self._renaming in self._rows else None
         self._rows = {}
@@ -209,7 +219,7 @@ class SessionsView:
                         value=job_id in self._selected,
                         on_change=lambda e, j=job_id: self._on_select(j, e.value),
                     ).mark(f"select-{job_id}")
-                markdown(sessions.session_row_label(job, detail)).classes("grow")
+                label = markdown(sessions.session_row_label(job, detail)).classes("grow")
                 load = ui.button("Load", on_click=lambda j=job: self._on_load(j)).props("dense").mark(
                     f"load-{job_id}"
                 )
@@ -232,7 +242,7 @@ class SessionsView:
                 ui.button("Cancel", on_click=self._on_rename_cancel).props("dense flat").mark(
                     f"rename-cancel-{job_id}"
                 )
-        return _Row(load, load_tip, rename, delete, running, editor, name_input, rename_save)
+        return _Row(label, detail, load, load_tip, rename, delete, running, editor, name_input, rename_save)
 
     # ── Sync (state -> widgets) ──────────────────────────────────────────────
 
@@ -448,7 +458,13 @@ class SessionsView:
         else:
             sessions.apply_session_rename(self.state, job, new_name)
             self._renaming = None
-            self._drawn = None  # the row shows the new name now, not after the re-list
+            # The row shows the new name now, in place. The re-list then finds
+            # the same sessions (the entry *job* already has the new name) and
+            # keeps the rows: rebuilding them all lost a click made meanwhile,
+            # e.g. a Delete right after the rename (Review Stage R4).
+            row = self._rows.get(job["job_id"])
+            if row is not None:
+                row.label.set_content(sessions.session_row_label(job, row.detail))
         self._relist()
 
     def _on_delete(self, job: dict) -> None:

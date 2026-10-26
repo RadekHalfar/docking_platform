@@ -11,6 +11,7 @@ import pytest
 
 from services.llm_orchestrator.workflow_parser import WorkflowParser
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
+from tests.ui_fakes import inline_run_save
 from ui.core import chat
 from ui.core.state import GuiSession
 from ui.worker_cap import WorkerCap
@@ -41,12 +42,16 @@ def _contents(state):
     return [m["content"] for m in state.messages]
 
 
+def _submit(state, message, output_base):
+    return chat.submit(state, message, output_base, FakeBridge, run_save=inline_run_save(state, output_base))
+
+
 # ---------------------------------------------------------------------------
 # submit: deterministic commands never reach the LLM
 # ---------------------------------------------------------------------------
 
 def test_plain_message_is_posted_and_left_for_the_llm(state, tmp_path):
-    assert chat.submit(state, "dock ATP into 6lu7", tmp_path, FakeBridge) is False
+    assert _submit(state, "dock ATP into 6lu7", tmp_path) is False
     assert state.messages == [{"role": "user", "content": "dock ATP into 6lu7"}]
 
 
@@ -57,7 +62,7 @@ def test_geometry_command_uses_a_loaded_receptor(state, tmp_path):
     receptor.write_text(FIXTURE_PDB.read_text())
     state.box_picker_receptor_pdb = str(receptor)
 
-    assert chat.submit(state, "look across all protein", tmp_path, FakeBridge) is True
+    assert _submit(state, "look across all protein", tmp_path) is True
 
     assert "box_size" in state.params
     assert "cover the whole protein" in state.messages[-1]["content"]
@@ -66,7 +71,7 @@ def test_geometry_command_uses_a_loaded_receptor(state, tmp_path):
 def test_geometry_command_without_a_receptor_starts_the_prep_and_waits(state, tmp_path):
     state.form.update(input_mode="rcsb", param_protein_id="6lu7")
 
-    assert chat.submit(state, "set box center as protein center", tmp_path, FakeBridge) is True
+    assert _submit(state, "set box center as protein center", tmp_path) is True
 
     assert state.pending_geometry_targets == ("center",)
     assert isinstance(state.box_picker_bridge, FakeBridge)
@@ -138,7 +143,7 @@ def test_algorithm_command_switches_the_selector(state, tmp_path, active, hint):
     if active:
         state.interactive_session.activate("job_x", WorkflowStateManager(tmp_path / "job_x"))
 
-    assert chat.submit(state, "use vina", tmp_path, FakeBridge) is True
+    assert _submit(state, "use vina", tmp_path) is True
 
     assert state.form["param_docking_algorithm"] == "vina"
     assert state.params["docking_algorithm"] == "vina"
@@ -147,7 +152,7 @@ def test_algorithm_command_switches_the_selector(state, tmp_path, active, hint):
 
 
 def test_history_command_is_answered(state, tmp_path):
-    assert chat.submit(state, "show history", tmp_path, FakeBridge) is True
+    assert _submit(state, "show history", tmp_path) is True
     assert state.messages[-1]["content"] == "No active session — no history yet."
 
 
@@ -156,7 +161,7 @@ def test_history_command_is_answered(state, tmp_path):
     ("save results as", "Give the bundle a name"),
 ])
 def test_save_command_is_answered(state, tmp_path, message, reply):
-    assert chat.submit(state, message, tmp_path, FakeBridge) is True
+    assert _submit(state, message, tmp_path) is True
     assert state.messages[-1]["content"].startswith(reply)
 
 
@@ -233,16 +238,28 @@ def test_unknown_algorithm_keeps_the_selection_and_says_so(state):
     assert "docking_algorithm" not in reply.split("Still needed:")[-1]
 
 
-def test_answer_with_llm_seeds_the_follow_up(state):
+def _answer(state, message, *, parse_workflow, parse_followup):
+    """The GUI's LLM path, run inline: parse, apply, any failure as the reply."""
+    try:
+        parsed, named = chat.parse_message(
+            state.llm_client, message, state.parser.parsed_workflow,
+            parse_workflow=parse_workflow, parse_followup=parse_followup,
+        )
+        chat.apply_parsed_message(state, parsed, named)
+    except Exception as exc:
+        chat.parse_failed(state, exc)
+
+
+def test_a_parse_seeds_the_follow_up(state):
     state.llm_client = "client"
-    chat.answer_with_llm(
+    _answer(
         state, "dock 6lu7",
         parse_workflow=lambda c, m: {"services": ["dock"], "parameters": {"protein_id": "6lu7"}},
         parse_followup=_boom,
     )
     assert state.params["protein_id"] == "6lu7"
 
-    chat.answer_with_llm(
+    _answer(
         state, "pH 6.5", parse_workflow=_boom,
         parse_followup=lambda c, m, **k: {"services_add": [], "parameters": {"ph": 6.5}},
     )
@@ -250,19 +267,19 @@ def test_answer_with_llm_seeds_the_follow_up(state):
     assert state.form["param_protein_id"] == "6lu7"
 
 
-def test_answer_with_llm_reports_a_failure(state):
+def test_a_parse_failure_is_the_reply(state):
     def fail(*_a, **_k):
         raise RuntimeError("LLM offline")
 
-    chat.answer_with_llm(state, "dock 6lu7", parse_workflow=fail, parse_followup=_boom)
+    _answer(state, "dock 6lu7", parse_workflow=fail, parse_followup=_boom)
 
     assert _contents(state) == ["Sorry, I couldn't parse that: LLM offline"]
     assert state.params == {}
 
 
-def test_answer_with_llm_reports_a_missing_parser(state):
+def test_a_missing_parser_is_the_reply(state):
     state.parser = None
-    chat.answer_with_llm(state, "dock 6lu7", parse_workflow=_boom, parse_followup=_boom)
+    _answer(state, "dock 6lu7", parse_workflow=_boom, parse_followup=_boom)
     assert state.messages[-1]["content"].startswith("Sorry, I couldn't parse that:")
 
 

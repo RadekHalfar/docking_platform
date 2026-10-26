@@ -32,7 +32,7 @@ def test_settings_from_form_strips_and_keeps_base_url_only_where_it_has_a_field(
 def test_apply_saves_all_but_the_key_and_rebuilds_the_client(state, settings_file):
     new = llm_settings.settings_from_form("openai", "gpt-x", "", "sk-test", "")
 
-    llm_settings.apply_settings(state, new)
+    llm_settings.use_settings(state, new, llm_settings.persist_settings(new))
 
     assert state.settings == new
     assert state.llm_client is not None and state.llm_client != "old"
@@ -49,8 +49,8 @@ def test_settings_the_client_rejects_change_nothing(state, settings_file, monkey
     monkeypatch.setattr(llm_settings, "build_llm_client", reject)
 
     with pytest.raises(ValueError):
-        llm_settings.apply_settings(state, {"provider": "nope", "model": "", "endpoint": "", "api_key": "",
-                                            "base_url": ""})
+        new = {"provider": "nope", "model": "", "endpoint": "", "api_key": "", "base_url": ""}
+        llm_settings.use_settings(state, new, llm_settings.persist_settings(new))
 
     assert state.settings == {"provider": "ollama"} and state.llm_client == "old"
     assert not settings_file.exists()

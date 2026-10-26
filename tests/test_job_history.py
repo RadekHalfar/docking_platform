@@ -326,7 +326,45 @@ class TestEscapeMarkdown:
         assert escape_markdown("Run 🧬 ligand ähnlich") == "Run 🧬 ligand ähnlich"
 
 
+def _count_reads(monkeypatch):
+    reads = []
+    real = job_history.load_json_dict
+    monkeypatch.setattr(job_history, "load_json_dict", lambda path: (reads.append(path.parent.name), real(path))[1])
+    return reads
+
+
 class TestListCompletedAndFailedJobs:
+    def test_a_relist_reads_only_the_sessions_that_changed(self, tmp_path, monkeypatch):
+        # Review Stage R4: every Sessions tab open re-parsed every session
+        # (4-6 s for ~190 on a bind mount).
+        _write_workflow_results(tmp_path / "job_a", dock_results=[{"ligand_id": "ATP"}])
+        _write_workflow_results(tmp_path / "job_b", status="failed", errors=["boom"])
+        list_completed_and_failed_jobs(str(tmp_path))
+        reads = _count_reads(monkeypatch)
+
+        completed, failed = list_completed_and_failed_jobs(str(tmp_path))
+        assert reads == [] and [j["job_id"] for j in completed + failed] == ["job_a", "job_b"]
+
+        rename_job(str(tmp_path / "job_a"), "renamed and longer")
+        completed, _ = list_completed_and_failed_jobs(str(tmp_path))
+        assert reads == ["job_a"] and completed[0]["job_name"] == "renamed and longer"
+
+    def test_a_listing_entry_changed_by_the_caller_does_not_change_the_next_listing(self, tmp_path):
+        # The GUI writes a rename into the entry it holds (Review Stage R3).
+        _write_workflow_results(tmp_path / "job_a", job_name="old")
+        completed, _ = list_completed_and_failed_jobs(str(tmp_path))
+        completed[0]["job_name"] = "changed"
+        assert list_completed_and_failed_jobs(str(tmp_path))[0][0]["job_name"] == "old"
+
+    def test_a_deleted_session_leaves_the_listing(self, tmp_path):
+        import shutil
+        _write_workflow_results(tmp_path / "job_a")
+        _write_workflow_results(tmp_path / "job_b")
+        list_completed_and_failed_jobs(str(tmp_path))
+        shutil.rmtree(tmp_path / "job_a")
+        completed, _ = list_completed_and_failed_jobs(str(tmp_path))
+        assert [j["job_id"] for j in completed] == ["job_b"]
+
     def test_one_scan_gives_both_lists(self, tmp_path, monkeypatch):
         # Parsing every results file is the slow part (4-6 s for ~170
         # sessions on a bind mount); the GUI read them twice (Review Stage R3).
@@ -334,9 +372,7 @@ class TestListCompletedAndFailedJobs:
         _write_workflow_results(tmp_path / "job_b", status="failed", errors=["boom"])
         _write_workflow_results(tmp_path / "job_c", status="cancelled")
         _write_workflow_results(tmp_path / "job_d", status="running")
-        reads = []
-        real_loads = job_history.json.loads
-        monkeypatch.setattr(job_history.json, "loads", lambda text: (reads.append(1), real_loads(text))[1])
+        reads = _count_reads(monkeypatch)
 
         completed, failed = list_completed_and_failed_jobs(str(tmp_path))
 

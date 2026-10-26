@@ -4,7 +4,7 @@
 the form's field values under the ``param_*`` keys of
 :func:`ui.core.state.form_defaults` (plus ``input_mode``); ``state.params``
 holds the workflow parameters, including what the form doesn't show
-(upload paths, chat-parsed values). Each GUI keeps its widgets in step with
+(upload paths, chat-parsed values). The GUI keeps its widgets in step with
 ``state.form``.
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ from common.docking_algorithm import (
     docking_algorithm_label,
     normalize_docking_algorithm,
 )
+from common.utils import whole_number
 from services.llm_orchestrator.interactive_session import InteractiveSession
 from ui.core.state import GREETING_MESSAGE, GuiSession, reply
 from ui.worker_cap import default_worker_count, max_workers_for
@@ -34,18 +35,23 @@ def selected_docking_algorithm(state) -> str:
     return state.form.get("param_docking_algorithm", DEFAULT_DOCKING_ALGORITHM)
 
 
-def effective_cpu(state) -> int:
-    """CPUs per ligand the form docks with: the "CPUs per ligand" field in
-    Vina mode, always 1 for Moldina (PSO), which ignores --cpu
-    (:func:`cpus_per_ligand`, the same rule as the server's worker clamp).
-    Sending 1 for PSO also keeps a cpu left over from Vina mode out of
-    parameters.txt.
+def form_cpu(state) -> int:
+    """The "CPUs per ligand" field as a whole number >= 1 (1 if unset).
 
-    The field is a whole-number input (min 1; a cleared field is not
-    written), so the form holds an int, or nothing yet (counts as 1).
+    The form holds an int (the field's own values, and what
+    :func:`apply_parsed_params` writes); the parse is a guard, since an
+    unparsable value used to raise on every redraw (Review Stage R4).
     """
-    cpu = int(state.form.get("param_cpu") or 1)
-    return cpus_per_ligand(selected_docking_algorithm(state), cpu)
+    return whole_number(state.form.get("param_cpu")) or 1
+
+
+def effective_cpu(state) -> int:
+    """CPUs per ligand the form docks with: :func:`form_cpu` in Vina mode,
+    always 1 for Moldina (PSO), which ignores --cpu (:func:`cpus_per_ligand`,
+    the same rule as the server's worker clamp). Sending 1 for PSO also
+    keeps a cpu left over from Vina mode out of parameters.txt.
+    """
+    return cpus_per_ligand(selected_docking_algorithm(state), form_cpu(state))
 
 
 def max_workers(state) -> int:
@@ -117,13 +123,14 @@ def apply_parsed_params(state, parsed_params: dict) -> None:
     if parsed_params.get("exhaustiveness") is not None:
         form["param_exhaustiveness"] = str(parsed_params["exhaustiveness"])
 
-    if parsed_params.get("cpu") is not None:
-        form["param_cpu"] = str(parsed_params["cpu"])
+    cpu = whole_number(parsed_params.get("cpu"))
+    if cpu is not None:
+        form["param_cpu"] = cpu
 
     # The chat callers pass only what the message named, never the
     # validator's defaults, so this moves the selector only on an explicit
-    # choice (Phase 15 finding 8). An unrecognised name is not applied: a
-    # value outside the selector's options makes st.radio raise.
+    # choice (Phase 15 finding 8). An unrecognised name is not applied: the
+    # selector has no option to show it.
     algorithm = normalize_docking_algorithm(parsed_params.get("docking_algorithm"))
     if algorithm is not None:
         set_docking_algorithm(state, algorithm)
@@ -157,7 +164,7 @@ def load_session_params(state, loaded_params: dict) -> None:
         # Clamped to the field's own bounds (a checkpoint may come from a
         # machine with more cores than this one, or ran more CPUs per ligand).
         state.form["param_max_workers"] = min(
-            max(1, int(loaded_params["max_workers"])),
+            whole_number(loaded_params["max_workers"]) or 1,
             max_workers_for(state.worker_cap, effective_cpu(state)),
         )
 
@@ -214,10 +221,7 @@ def collect_form_params(state) -> dict:
     params["cpu"] = effective_cpu(state)
 
     params["parallel"] = bool(form.get("param_parallel", False))
-    try:
-        params["max_workers"] = max(1, int(form.get("param_max_workers", 1)))
-    except (ValueError, TypeError):
-        params["max_workers"] = 1
+    params["max_workers"] = whole_number(form.get("param_max_workers")) or 1
 
     return params
 
@@ -230,7 +234,7 @@ def sync_form_into_params(state) -> dict:
 
 
 def clear_box_picker_state(state) -> None:
-    """Discard the box picker's loaded receptor and click marker.
+    """Discard the box picker's loaded receptor and its pending state.
 
     Used whenever that state might no longer correspond to the protein
     actually in play: starting a fresh box-picker load, the user
@@ -245,7 +249,6 @@ def clear_box_picker_state(state) -> None:
     it shouldn't fire against a different job.
     """
     state.box_picker_receptor_pdb = None
-    state.box_picker_last_click = None
     state.pending_geometry_targets = None
     state.box_picker_error = None
 
@@ -336,6 +339,11 @@ def params_summary(state) -> Optional[str]:
     if params.get("ligand_ids"):
         ligands = ", ".join(params["ligand_ids"])
     elif params.get("ligand_files"):
+        # DEFERRED (Review Stage R4, docs/reviews/stage_16_r4.md, Deferred #2):
+        # every file is listed, and the summary is redrawn on each Docking Box
+        # keystroke -- about 30 KB of markdown per keystroke with 1000 files.
+        # Fix if a large Batch Processing drop makes typing in the box fields
+        # lag: list the first few and "(+N more)".
         ligands = ", ".join(Path(p).name for p in params["ligand_files"])
     else:
         ligands = "—"

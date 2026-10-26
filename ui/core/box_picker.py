@@ -107,7 +107,6 @@ def start_box_picker_prep(state, output_base: Path, bridge_factory: Callable) ->
         return False, f"Provide a protein source first — missing: {', '.join(missing)}", "warning"
 
     job_id = generate_job_id()
-    state.box_picker_job_id = job_id
     clear_box_picker_state(state)
 
     bridge = bridge_factory()

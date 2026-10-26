@@ -565,6 +565,31 @@ class TestDockingAlgorithmParameter:
         assert arguments["docking_algorithm"] == expected
 
 
+class TestCpuParameter:
+    """Review Stage R4: cpu is a whole number >= 1 once parsed, whatever the
+    LLM returned, so neither the GUI form nor run_docking gets "all"."""
+
+    def _validate(self, cpu):
+        parser = WorkflowParser()
+        result = parser.validate_workflow(
+            {"services": ["dock"], "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"],
+                                                  "center": [1, 2, 3], "box_size": [20, 20, 20], "cpu": cpu}}
+        )
+        return parser, result
+
+    @pytest.mark.parametrize("cpu, expected", [(4, 4), ("4", 4), ("4.0", 4), (2.5, 2), ("all", 1), (0, 1)])
+    def test_validate_makes_cpu_a_whole_number_or_the_default(self, cpu, expected):
+        _, result = self._validate(cpu)
+        assert result["parameters"]["cpu"] == expected
+
+    def test_update_with_a_bad_cpu_keeps_the_current_one(self):
+        parser, _ = self._validate(4)
+        parser.update_parameters({"cpu": "all"}, persist=False)
+        assert parser.parsed_workflow["parameters"]["cpu"] == 4
+        parser.update_parameters({"cpu": "8.0"}, persist=False)
+        assert parser.parsed_workflow["parameters"]["cpu"] == 8
+
+
 class TestDockingTimeout:
     """Review Stage R1, Phase 15, correctness #1: the run_docking HTTP
     timeout assumed PSO's 120 s per ligand per worker, which Vina exceeds."""

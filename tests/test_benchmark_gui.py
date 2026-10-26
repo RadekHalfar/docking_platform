@@ -128,3 +128,36 @@ class TestDriverHelpers:
         renders = [{"render_ms": r, "frame_ms": r + 10, "atoms": 5} for r in (10.0, 30.0, 20.0)]
         assert drv.summarize_renders(renders) == {"renders": 3, "median_render_ms": 20.0,
                                                   "median_frame_ms": 30.0, "atoms": 5}
+
+    @pytest.mark.parametrize("argv, gui, url", [
+        ([], "nicegui", "http://localhost:3001"),
+        (["--gui", "streamlit"], "streamlit", "http://localhost:3000"),
+        (["--gui", "nicegui", "--url", "http://ui:9000"], "nicegui", "http://ui:9000"),
+    ])
+    def test_gui_picks_the_default_url(self, argv, gui, url):
+        import benchmark_gui_browser as drv
+        args = drv.parse_args(argv + ["--out", "x.json"])
+        assert (args.gui, args.url) == (gui, url)
+
+    def test_unknown_gui_is_rejected(self):
+        import benchmark_gui_browser as drv
+        with pytest.raises(SystemExit):
+            drv.parse_args(["--gui", "tk", "--out", "x.json"])
+
+    def test_only_nicegui_filters_quasar_animations(self):
+        import benchmark_gui_browser as drv
+        assert drv.make_driver("streamlit", page=_FakePage()).latency_ignore == []
+        assert ".q-ripple" in drv.make_driver("nicegui", page=_FakePage()).latency_ignore
+
+    def test_format_timed_shows_the_filtered_median_only_when_it_differs(self):
+        import benchmark_gui_browser as drv
+        viewer = {"renders_per_action": 1.0}
+        same = drv.format_timed("box", {"median_ms": 500, "median_filtered_ms": 500, "n": 10, "viewer": viewer})
+        assert "filtered" not in same
+        differs = drv.format_timed("box", {"median_ms": 700, "median_filtered_ms": 150, "n": 10, "viewer": viewer})
+        assert "median 700 ms (n=10), filtered 150 ms" in differs
+
+
+class _FakePage:
+    def on(self, event, handler):
+        pass

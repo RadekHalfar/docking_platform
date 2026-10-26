@@ -15,6 +15,12 @@
  * no changes (the page has finished reacting). Clicks inside an iframe (the
  * Streamlit 3Dmol viewer) are not seen; measure the controls around it.
  *
+ * Filtered latency (Stage 16.8): set __lat.ignore to a list of CSS
+ * selectors, e.g. [".q-ripple", ".q-tooltip"] for NiceGUI's Quasar
+ * animations. A sample still closes after QUIET_MS of no DOM changes at
+ * all, but median_filtered_ms ends at the last change outside those
+ * elements. Empty by default, so median_filtered_ms equals median_ms.
+ *
  * Caveats:
  * - While a docking job runs, the Streamlit page reruns itself every 2 s.
  *   A poll landing inside a sample stretches it, so report the median of
@@ -33,21 +39,45 @@
   if (window.__lat && window.__lat.detach) window.__lat.detach();
 
   var current = null;
-  var lat = { results: [], dropped: 0 };
+  var lat = { results: [], dropped: 0, ignore: [] };
 
   function finish(capped) {
     if (!current) return;
     clearTimeout(current.quietTimer);
     clearTimeout(current.maxTimer);
     var ms = current.lastMutation - current.start;
-    lat.results.push({ ms: +ms.toFixed(1), kind: current.kind, target: current.target, capped: capped });
+    var filtered = current.lastKept - current.start;
+    lat.results.push({ ms: +ms.toFixed(1), filtered_ms: +filtered.toFixed(1), kind: current.kind,
+                       target: current.target, capped: capped });
     console.info("[lat] " + ms.toFixed(0) + " ms" + (capped ? " (capped)" : "") + "  " + current.kind + " " + current.target);
     current = null;
   }
 
-  var observer = new MutationObserver(function () {
+  // A node inside (or being) one of the ignored elements.
+  function ignoredNode(node) {
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!el) return false;
+    for (var i = 0; i < lat.ignore.length; i++) {
+      var sel = lat.ignore[i];
+      if (el.closest(sel) || (node.nodeType === 1 && node.querySelector(sel))) return true;
+    }
+    return false;
+  }
+
+  // A change made only to ignored elements: inside one, or adding or
+  // removing them (Quasar inserts the ripple into the button).
+  function ignoredRecord(record) {
+    if (ignoredNode(record.target)) return true;
+    if (record.type !== "childList") return false;
+    var nodes = Array.prototype.slice.call(record.addedNodes).concat(Array.prototype.slice.call(record.removedNodes));
+    return nodes.length > 0 && nodes.every(ignoredNode);
+  }
+
+  var observer = new MutationObserver(function (records) {
     if (!current) return;
-    current.lastMutation = performance.now();
+    var now = performance.now();
+    current.lastMutation = now;
+    if (!lat.ignore.length || !records.every(ignoredRecord)) current.lastKept = now;
     clearTimeout(current.quietTimer);
     current.quietTimer = setTimeout(function () { finish(false); }, QUIET_MS);
   });
@@ -65,7 +95,7 @@
       lat.dropped += 1;
     }
     var now = performance.now();
-    current = { start: now, lastMutation: now, kind: event.type === "keydown" ? "enter" : "click",
+    current = { start: now, lastMutation: now, lastKept: now, kind: event.type === "keydown" ? "enter" : "click",
                 target: describe(event.target) };
     // A click that changes nothing closes as a 0 ms sample after QUIET_MS.
     current.quietTimer = setTimeout(function () { finish(false); }, QUIET_MS);
@@ -84,11 +114,16 @@
   // for chat commands, so the click that focused the chat box is left out).
   lat.summary = function (label, kind) {
     var picked = lat.results.filter(function (r) { return !kind || r.kind === kind; });
+    function median(values) {
+      var v = values.slice().sort(function (a, b) { return a - b; });
+      var k = v.length;
+      return k ? (k % 2 ? v[(k - 1) / 2] : (v[k / 2 - 1] + v[k / 2]) / 2) : null;
+    }
     var ms = picked.map(function (r) { return r.ms; }).sort(function (a, b) { return a - b; });
     var n = ms.length;
-    var median = n ? (n % 2 ? ms[(n - 1) / 2] : (ms[n / 2 - 1] + ms[n / 2]) / 2) : null;
     var out = {
-      label: label || "", n: n, median_ms: median,
+      label: label || "", n: n, median_ms: median(ms),
+      median_filtered_ms: median(picked.map(function (r) { return r.filtered_ms; })),
       min_ms: n ? ms[0] : null, max_ms: n ? ms[n - 1] : null,
       capped: picked.filter(function (r) { return r.capped; }).length,
       dropped: lat.dropped,

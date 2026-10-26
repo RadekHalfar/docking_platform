@@ -601,14 +601,18 @@ the same tools and the same reference session.
 | Interaction latency: from a click (or Enter in a text field) until the page stops changing for 300 ms | [`benchmark_gui_latency.js`](../benchmark_gui_latency.js), a DevTools console snippet. By hand: paste it into the console (Chrome blocks the first paste into DevTools; type `allow pasting` and press Enter, then paste again), do the action 5+ times, letting the page settle in between, then run `__lat.summary("<label>")`. For chat commands, run `__lat.summary("<label>", "enter")` instead, so the click that focused the chat box is left out. The median is the figure to record. |
 | GUI container CPU% and memory | [`benchmark_gui.py`](../benchmark_gui.py), `docker stats` on `mcp-ui`. Either for a fixed `--duration`, or with `--from-driver` between the driver's `SAMPLE-START` / `SAMPLE-STOP` lines. |
 | Viewer re-render time and render count | `?perf` in `ui/components/mol_viewer/index.html` (Streamlit) and `ui_nice/mol_viewer.js` (NiceGUI, `http://localhost:3001/?perf`; there a full scene build logs `mode=box_picker` / `view`, and a box-only redraw `mode=box`). With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
-| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. |
+| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. `--gui streamlit` or `--gui nicegui` (the default) picks the selectors; the scenarios are the same. |
+| Latency without Quasar's animations | Set `__lat.ignore = [".q-ripple", ".q-tooltip"]` in the snippet (the driver does this for NiceGUI). A sample still closes after 300 ms with no change at all, but `median_filtered_ms` ends at the last change outside those elements. Both medians are recorded; the raw one compares with Streamlit, which has neither animation. |
 
 The scripted measurement is one pipeline, run from the repo root in Git
 Bash, with the stack running:
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --out /out/<date>_gui_streamlit_browser.json --screenshot /out/<date>_gui_streamlit_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui            --json-out docs/benchmarks/<date>_gui_streamlit_stats.json
+MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui-nice     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --gui nicegui --out /out/<date>_gui_nicegui_browser.json --screenshot /out/<date>_gui_nicegui_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui-nice            --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
 ```
+
+For the Streamlit GUI (16.0) it was `container:mcp-ui`, `--gui streamlit`
+and `--container mcp-ui`.
 
 The pipeline starts a real docking run on the live stack, so a new session
 appears in Session History. It takes about 5 minutes. The Box X steps are
@@ -650,20 +654,29 @@ Stage 16.0 baseline, Streamlit, 2026-10-07, run by `benchmark_gui_browser.py`
   per-window `started_at` was added after this run.
 - **Latency:** median of 5 actions; Box X ± is 5 pairs, so 10 samples.
 
+Stage 16.8 re-time, NiceGUI, 2026-10-25, same driver (`--gui nicegui`),
+same browser and inputs, against the live `mcp-ui-nice`, on mains power.
+- **Session:** `job_20261025_070358_cbca43`, 25 of 25 docked, Moldina,
+  1 worker, about 123 s.
+- **Raw data:** [`docs/benchmarks/2026-10-25_gui_nicegui_browser.json`](benchmarks/2026-10-25_gui_nicegui_browser.json)
+  and [`docs/benchmarks/2026-10-25_gui_nicegui_stats.json`](benchmarks/2026-10-25_gui_nicegui_stats.json).
+- **Latency:** the raw median compares with Streamlit; the filtered one
+  (in brackets) leaves out Quasar's ripple and tooltip (see Tools).
+
 | Phase | Measurement | Streamlit (16.0) | NiceGUI (16.8) |
 |---|---|---|---|
-| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | |
-| setup | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 184 ms | |
-| running | `show history` latency, median (min–max) | 4,736 ms (2,492–12,823) | |
-| running | `mcp-ui` CPU mean / peak | 10.1% / 27.6% (52 samples, 115 s) | |
-| running | `mcp-ui` memory mean / peak | 132 MiB / 141 MiB | |
-| completed | `mcp-ui` CPU mean / peak, idle 60 s | 2.0% / 8.7% (26 samples) | |
-| completed | `mcp-ui` memory mean / peak, idle | 141 MiB / 142 MiB | |
-| completed | Viewer renders while idle | 0 | |
-| completed | `show history` latency, median (min–max) | 926 ms (243–954) | |
-| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | |
-| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | |
-| completed | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 190 ms | |
+| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | 679 ms (621–689) [30 ms] |
+| setup | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 184 ms | 1.0 (box only, camera kept); 117 ms |
+| running | `show history` latency, median (min–max) | 4,736 ms (2,492–12,823) | 62 ms (28–337) |
+| running | GUI container CPU mean / peak | 10.1% / 27.6% (52 samples, 115 s) | 1.2% / 6.8% (60 samples) |
+| running | GUI container memory mean / peak | 132 MiB / 141 MiB | 183 MiB / 184 MiB |
+| completed | GUI container CPU mean / peak, idle 60 s | 2.0% / 8.7% (26 samples) | 1.0% / 5.1% (29 samples) |
+| completed | GUI container memory mean / peak, idle | 141 MiB / 142 MiB | 183 MiB / 184 MiB |
+| completed | Viewer renders while idle | 0 | 1 (the Results viewer's first build, once) |
+| completed | `show history` latency, median (min–max) | 926 ms (243–954) | 77 ms (65–108) |
+| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | 1,287 ms (1,207–2,511) [1,219 ms] |
+| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | 728 ms (685–771) [31 ms] |
+| completed | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 190 ms | 1.0 (box only, camera kept); 146 ms |
 
 What the numbers say about Streamlit:
 - **Every box step rebuilds the whole viewer scene** (about 190 ms of JS
@@ -679,6 +692,31 @@ What the numbers say about Streamlit:
 - **Interactions are slower on a finished session than in setup** (box step
   899 ms vs 491 ms), most likely because each rerun also redraws the results panel, which is
   now full (not separately verified).
+
+What the 16.8 numbers say about NiceGUI:
+- **A running job no longer slows the page.** `show history` while a job
+  runs went from 4.7 s to 62 ms, and the GUI container's CPU from 10% to
+  1%: live progress is a 1 s timer reading two small things, not a page
+  rerun.
+- **A finished session costs nothing extra.** Interactions on it are as
+  fast as in setup; no results panel is redrawn on every click.
+- **Box X ± does about 30 ms of DOM work.** The raw 679–728 ms is Quasar's
+  click ripple (it ends about 760 ms after the click) and the next
+  button's tooltip, animations Streamlit lacks. The viewer redraws only
+  the box (117–146 ms of JS) and keeps the camera.
+- **Load reads slower, 1.29 s against 1.03 s, but its work is done by
+  about 0.4–0.6 s.** A Load also switches to the Results tab. A mutation
+  timeline (scratch probe, 2026-10-25) shows the session drawn and the
+  viewer's canvas painted by 400–600 ms, then Quasar's tab-panel slide
+  transition and scroll-area thumb until about 1.3 s. The ripple filter
+  doesn't cover the transition, so the filtered median stays at 1.22 s.
+  The first Load of a session also builds its viewer (one 381 ms render).
+- **Memory is about 50 MiB higher** (183 MiB against 132–142 MiB):
+  NiceGUI's FastAPI/uvicorn process holds every page element server-side.
+  It stays flat between running and idle.
+- **Not measured: a 295-ligand session.** The 25-ligand numbers answer the
+  question the baseline asked (the polling and the full reruns are gone),
+  so no 295-ligand run was made.
 
 ### Stage 16.5 interim: the NiceGUI box picker
 
@@ -705,9 +743,10 @@ Measured 2026-10-12 in the setup phase only (the full re-time is 16.8).
   - the hover tooltip of the next button appears about 390 ms after it.
 
   Streamlit's buttons have neither.
-- **For 16.8:** decide whether the snippet should ignore `.q-ripple` and
-  `.q-tooltip` mutations. That would leave the 16.0 baseline valid, since
-  Streamlit has neither.
+- **Decided in 16.8 (owner, 2026-10-24):** the snippet can ignore
+  `.q-ripple` and `.q-tooltip` mutations (`__lat.ignore`), and both the raw
+  and the filtered median are recorded. The 16.0 baseline stays valid,
+  since Streamlit has neither animation.
 - **3Dmol labels are slow:** each `addLabel` draws a texture and
   re-renders, and `removeLabel` re-renders too. A first version that
   recreated the X/Y/Z labels on each step took 298 ms per redraw. The

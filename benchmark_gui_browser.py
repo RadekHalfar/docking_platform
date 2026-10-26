@@ -23,22 +23,32 @@ lines, and `benchmark_gui.py --from-driver` reads them on stdin and runs its
 docker-stats sampler in between -- one pipeline does both.
 
 Run it inside the Playwright image, sharing the GUI container's network so
-localhost is the GUI. From the repo root, in Git Bash:
+localhost is the GUI. From the repo root, in Git Bash (NiceGUI on
+`mcp-ui-nice`, port 3001; for Streamlit use `--gui streamlit`,
+`container:mcp-ui` and `--container mcp-ui`):
 
-    MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui \\
+    MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui-nice \\
         -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out" \\
         mcr.microsoft.com/playwright/python:v1.55.0-noble \\
         sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py \\
-               --out /out/<date>_gui_streamlit_browser.json" \\
-      | python3 benchmark_gui.py --from-driver --container mcp-ui \\
-               --json-out docs/benchmarks/<date>_gui_streamlit_stats.json
+               --gui nicegui --out /out/<date>_gui_nicegui_browser.json" \\
+      | python3 benchmark_gui.py --from-driver --container mcp-ui-nice \\
+               --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
 
 This starts a real docking run on the live stack (a new session appears in
 the GUI's history). It changes nothing else: the Box X steps are made in
 +/− pairs, so the box ends where it started.
 
-The selectors below are Streamlit's (`st-key-<widget key>` classes).
-Stage 16.8 adds the NiceGUI equivalents behind --gui.
+--gui picks the selectors: Streamlit's `st-key-<widget key>` classes, or
+NiceGUI's roles, labels and texts (its `.mark()` markers exist only for
+the User fixture, not in the page). The scenarios and markers are the same
+for both, so their numbers compare like for like. NiceGUI's Load and box
+picker are on the Sessions and Setup tabs; the tab click before a timed
+action is not counted (`Driver.timed(prepare=...)`).
+
+For NiceGUI the latency snippet also reports a *filtered* median that
+ignores Quasar's button ripple and tooltip (animation, not the page's
+work; Stage 16.8). The raw median is the one to compare with Streamlit's.
 """
 from __future__ import annotations
 
@@ -57,6 +67,11 @@ DEFAULT_LIGANDS = REPO_IN_CONTAINER / "data" / "benchmark_gui" / "actives_first2
 DEFAULT_CENTER = ("19.354", "16.789", "29.19")
 DEFAULT_BOX = ("20", "20", "20")
 LATENCY_SNIPPET = "benchmark_gui_latency.js"
+GUIS = ("streamlit", "nicegui")
+DEFAULT_URLS = {"streamlit": "http://localhost:3000", "nicegui": "http://localhost:3001"}
+# Quasar's click ripple and tooltip: DOM changes the filtered latency ignores.
+NICEGUI_LATENCY_IGNORE = [".q-ripple", ".q-tooltip", '[id^="q-portal--tooltip"]']
+_JOB_ID_RE = re.compile(r"job_\d{8}_\d{6}_[0-9a-f]+")
 
 _PERF_RE = re.compile(
     r"\[perf\] render #(?P<n>\d+) mode=(?P<mode>\S+) atoms=(?P<atoms>\d+) "
@@ -90,8 +105,26 @@ def marker(kind: str, label: str) -> None:
     print(f"{kind} {label}", flush=True)
 
 
+def default_url(gui: str, url: Optional[str]) -> str:
+    """--url if given, else the GUI's default address."""
+    return url or DEFAULT_URLS[gui]
+
+
+def format_timed(label: str, summary: dict) -> str:
+    """One progress line for a timed action."""
+    line = f"  {label}: median {summary['median_ms']} ms (n={summary['n']})"
+    filtered = summary.get("median_filtered_ms")
+    if filtered is not None and filtered != summary["median_ms"]:
+        line += f", filtered {filtered} ms"
+    return line + f", viewer renders/action {summary['viewer']['renders_per_action']:.1f}"
+
+
 class Driver:
-    """The Streamlit GUI, driven through Playwright."""
+    """Timing shared by both GUIs: perf console lines, settling, the latency
+    snippet. The controls are in the subclasses."""
+
+    latency_ignore: List[str] = []
+    prepare_load = None  # an untimed step before each Load click, if any
 
     def __init__(self, page, quiet_ms: int = 300):
         self.page = page
@@ -124,25 +157,67 @@ class Driver:
     # ---- latency -------------------------------------------------------------
     def inject_latency_snippet(self, repo: Path) -> None:
         self.page.evaluate((repo / LATENCY_SNIPPET).read_text(encoding="utf-8"))
+        self.page.evaluate("ignore => { window.__lat.ignore = ignore; }", self.latency_ignore)
 
-    def timed(self, action, label: str, repeats: int) -> Dict[str, float]:
+    def timed(self, action, label: str, repeats: int, prepare=None) -> Dict[str, float]:
         """Run *action* repeats times, one latency sample each; return the
-        snippet's summary plus the viewer renders seen during the samples."""
+        snippet's summary plus the viewer renders seen during the samples.
+        *prepare* (e.g. a tab click) runs before each action, untimed: its
+        samples and renders are left out."""
         self.page.evaluate("window.__lat.results = []; window.__lat.dropped = 0")
-        renders_before = len(self.renders)
+        renders: List[Dict[str, float]] = []
         for _ in range(repeats):
+            if prepare is not None:
+                kept = self.page.evaluate("window.__lat.results.length")
+                prepare()
+                self._wait_sample(kept)
+                self.settle()
+                self.page.evaluate(f"window.__lat.results.length = {kept}")
             before = self.page.evaluate("window.__lat.results.length")
+            renders_before = len(self.renders)
             action()
             self._wait_sample(before)
             self.settle()
+            renders += self.renders[renders_before:]
         summary = self.page.evaluate(f"window.__lat.summary({json.dumps(label)})")
-        summary["viewer"] = summarize_renders(self.renders[renders_before:])
+        summary["viewer"] = summarize_renders(renders)
         summary["viewer"]["renders_per_action"] = summary["viewer"]["renders"] / repeats
-        print(f"  {label}: median {summary['median_ms']} ms (n={summary['n']}), "
-              f"viewer renders/action {summary['viewer']['renders_per_action']:.1f}", flush=True)
+        print(format_timed(label, summary), flush=True)
         return summary
 
-    # ---- Streamlit controls --------------------------------------------------
+
+class StreamlitDriver(Driver):
+    """The Streamlit GUI (`st-key-<widget key>` classes)."""
+
+    def open(self, url: str) -> None:
+        self.page.goto(f"{url}/?perf")
+        self.page.get_by_test_id("stChatInputTextArea").wait_for()
+        self.settle()
+
+    def setup_inputs(self, receptor: Path, ligands: Path) -> None:
+        self.page.get_by_text("Local Files", exact=True).click()
+        self.settle()
+        self.key("upload_protein").locator('input[type="file"]').set_input_files(str(receptor))
+        self.settle()
+        self.key("upload_ligands").locator('input[type="file"]').set_input_files(str(ligands))
+        self.settle()
+        for axis, c, b in zip("xyz", DEFAULT_CENTER, DEFAULT_BOX):
+            self.fill(f"param_center_{axis}", c)
+            self.fill(f"param_box_{axis}", b)
+
+    def box_step(self, up: bool) -> None:
+        self.click_key("box_step_x_up" if up else "box_step_x_down")
+
+    def start_run(self) -> str:
+        self.page.get_by_role("button", name="Run Docking").click()
+        return self.running_job_id()
+
+    def wait_run_end(self, job_id: str, timeout_s: int) -> None:
+        self.page.locator(f".st-key-stop_{job_id}").wait_for(state="detached", timeout=timeout_s * 1000)
+
+    def load_session(self, job_id: str) -> None:
+        self.click_key(f"job_load_{job_id}")
+
     def key(self, widget_key: str):
         return self.page.locator(f".st-key-{widget_key}")
 
@@ -174,45 +249,109 @@ class Driver:
         return re.search(r"st-key-stop_(job_\S+)", cls).group(1)
 
 
+class NiceGuiDriver(Driver):
+    """The NiceGUI GUI, by role, label and text."""
+
+    latency_ignore = NICEGUI_LATENCY_IGNORE
+
+    def open(self, url: str) -> None:
+        self.page.goto(f"{url}/?perf")
+        self.chat_input().wait_for()
+        self.settle()
+
+    def chat_input(self):
+        return self.page.get_by_placeholder("Describe your workflow...")
+
+    def chat(self, text: str) -> None:
+        box = self.chat_input()
+        box.fill(text)
+        box.press("Enter")
+
+    def tab(self, name: str) -> None:
+        self.page.get_by_role("tab", name=name, exact=True).click()
+
+    def setup_inputs(self, receptor: Path, ligands: Path) -> None:
+        self.tab("Setup")
+        self.settle()
+        self.page.get_by_text("Local Files", exact=True).click()
+        self.settle()
+        uploaders = self.page.locator(".q-uploader:visible")
+        uploaders.filter(has_text="Protein file").locator('input[type="file"]').set_input_files(str(receptor))
+        self.page.get_by_text(f"Protein: {receptor.name}", exact=True).wait_for()
+        uploaders.filter(has_text="Ligand file(s)").locator('input[type="file"]').set_input_files(str(ligands))
+        self.page.get_by_text("ligand file(s) ready").locator("visible=true").wait_for()
+        self.settle()
+        for name, c, b in zip("XYZ", DEFAULT_CENTER, DEFAULT_BOX):
+            self.page.get_by_label(f"Center {name}", exact=True).fill(c)
+            self.page.get_by_label(f"Box {name}", exact=True).fill(b)
+        self.settle()
+
+    def load_receptor_for_picking(self) -> None:
+        self.tab("Setup")
+        self.settle()
+        load = self.page.get_by_role("button", name="Load receptor for box picking")
+        if load.is_visible():
+            load.click()
+        self.page.get_by_role("button", name="X +", exact=True).wait_for(timeout=180000)
+        self.settle()
+
+    def box_step(self, up: bool) -> None:
+        self.page.get_by_role("button", name="X +" if up else "X \u2212", exact=True).click()
+
+    def _run_card(self):
+        # The card with the Stop button; the chat says "is running" too.
+        return self.page.locator(".q-card").filter(has=self.page.get_by_role("button", name="Stop", exact=True))
+
+    def start_run(self) -> str:
+        self.page.get_by_role("button", name="Run Docking").click()
+        card = self._run_card()
+        card.wait_for(timeout=120000)
+        return _JOB_ID_RE.search(card.inner_text()).group(0)
+
+    def wait_run_end(self, job_id: str, timeout_s: int) -> None:
+        self._run_card().wait_for(state="hidden", timeout=timeout_s * 1000)
+
+    def prepare_load(self) -> None:
+        self.tab("Sessions")
+
+    def load_session(self, job_id: str) -> None:
+        load = self.page.get_by_role("button", name="Load", exact=True)
+        row = self.page.locator(".nicegui-row").filter(has_text=job_id).filter(has=load)
+        row.get_by_role("button", name="Load", exact=True).first.click()
+
+
+def make_driver(gui: str, page) -> Driver:
+    return {"streamlit": StreamlitDriver, "nicegui": NiceGuiDriver}[gui](page)
+
+
 def run(args) -> dict:
     from playwright.sync_api import sync_playwright
 
-    result = {"url": args.url, "receptor": str(args.receptor), "ligands": str(args.ligands),
-              "center": DEFAULT_CENTER, "box": DEFAULT_BOX, "scenarios": {}}
+    result = {"gui": args.gui, "url": args.url, "receptor": str(args.receptor),
+              "ligands": str(args.ligands), "center": DEFAULT_CENTER, "box": DEFAULT_BOX, "scenarios": {}}
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.set_default_timeout(60000)
-        d = Driver(page)
-        page.goto(f"{args.url}/?perf")
-        page.get_by_test_id("stChatInputTextArea").wait_for()
-        d.settle()
+        d = make_driver(args.gui, page)
+        d.open(args.url)
         d.inject_latency_snippet(args.repo)
 
         print("setup: upload inputs, box fields, receptor for picking", flush=True)
-        page.get_by_text("Local Files", exact=True).click()
-        d.settle()
-        d.key("upload_protein").locator('input[type="file"]').set_input_files(str(args.receptor))
-        d.settle()
-        d.key("upload_ligands").locator('input[type="file"]').set_input_files(str(args.ligands))
-        d.settle()
-        for axis, c, b in zip("xyz", DEFAULT_CENTER, DEFAULT_BOX):
-            d.fill(f"param_center_{axis}", c)
-            d.fill(f"param_box_{axis}", b)
+        d.setup_inputs(args.receptor, args.ligands)
         d.load_receptor_for_picking()
         setup = result["scenarios"]["setup"] = {}
         setup["box_step"] = _box_steps(d, "setup: box X +/-", args.repeats)
 
         print("running: Run Docking", flush=True)
-        page.get_by_role("button", name="Run Docking").click()
-        job_id = d.running_job_id()
+        job_id = d.start_run()
         result["job_id"] = job_id
         marker("SAMPLE-START", "running-25")
         t0 = time.monotonic()
         renders_before = len(d.renders)
         running = result["scenarios"]["running"] = {}
         running["show_history"] = d.timed(lambda: d.chat("show history"), "running: show history", args.repeats)
-        page.locator(f".st-key-stop_{job_id}").wait_for(state="detached", timeout=args.run_timeout * 1000)
+        d.wait_run_end(job_id, args.run_timeout)
         marker("SAMPLE-STOP", "running-25")
         running["run_seconds_observed"] = round(time.monotonic() - t0, 1)
         running["viewer_while_running"] = summarize_renders(d.renders[renders_before:])
@@ -226,7 +365,8 @@ def run(args) -> dict:
         marker("SAMPLE-STOP", "idle-completed-25")
         completed["viewer_while_idle"] = summarize_renders(d.renders[renders_before:])
         completed["show_history"] = d.timed(lambda: d.chat("show history"), "completed: show history", args.repeats)
-        completed["load"] = d.timed(lambda: d.click_key(f"job_load_{job_id}"), "completed: Load", args.repeats)
+        completed["load"] = d.timed(lambda: d.load_session(job_id), "completed: Load", args.repeats,
+                                    prepare=d.prepare_load)
         d.load_receptor_for_picking()
         completed["box_step"] = _box_steps(d, "completed: box X +/-", args.repeats)
 
@@ -238,13 +378,14 @@ def run(args) -> dict:
 
 def _box_steps(d: Driver, label: str, repeats: int) -> Dict[str, float]:
     """Box X + then −, repeats times: 2 x repeats samples, box size unchanged."""
-    steps = iter(["box_step_x_up", "box_step_x_down"] * repeats)
-    return d.timed(lambda: d.click_key(next(steps)), label, repeats * 2)
+    steps = iter([True, False] * repeats)
+    return d.timed(lambda: d.box_step(next(steps)), label, repeats * 2)
 
 
-def main() -> None:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Time the GUI in a headless browser (run in the Playwright image).")
-    parser.add_argument("--url", default="http://localhost:3000")
+    parser.add_argument("--gui", choices=GUIS, default="nicegui", help="Whose selectors to use (default: nicegui)")
+    parser.add_argument("--url", default=None, help="The GUI's address (default: the --gui's port on localhost)")
     parser.add_argument("--repo", type=Path, default=REPO_IN_CONTAINER, help="Repo root as mounted (default: /repo)")
     parser.add_argument("--receptor", type=Path, default=DEFAULT_RECEPTOR)
     parser.add_argument("--ligands", type=Path, default=DEFAULT_LIGANDS)
@@ -253,8 +394,13 @@ def main() -> None:
     parser.add_argument("--run-timeout", type=int, default=1800, help="Seconds to wait for the docking run")
     parser.add_argument("--screenshot", type=Path, default=None, help="Optional final screenshot path")
     parser.add_argument("--out", type=Path, required=True, help="Write the results JSON here")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.url = default_url(args.gui, args.url)
+    return args
 
+
+def main(argv=None) -> None:
+    args = parse_args(argv)
     result = run(args)
     args.out.write_text(json.dumps(result, indent=2))
     print(f"Wrote {args.out}", flush=True)

@@ -1,0 +1,114 @@
+{
+  "gui": "nicegui",
+  "url": "http://localhost:3001",
+  "receptor": "/repo/data/benchmark_gui/receptor.pdb",
+  "ligands": "/repo/data/benchmark_gui/actives_first25.sdf",
+  "center": [
+    "19.354",
+    "16.789",
+    "29.19"
+  ],
+  "box": [
+    "20",
+    "20",
+    "20"
+  ],
+  "scenarios": {
+    "setup": {
+      "box_step": {
+        "label": "setup: box X +/-",
+        "n": 10,
+        "median_ms": 678.8,
+        "median_filtered_ms": 29.950000000000003,
+        "min_ms": 621.3,
+        "max_ms": 688.7,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 10,
+          "median_render_ms": 116.95,
+          "median_frame_ms": 118.15,
+          "atoms": 2186,
+          "renders_per_action": 1.0
+        }
+      }
+    },
+    "running": {
+      "show_history": {
+        "label": "running: show history",
+        "n": 5,
+        "median_ms": 61.5,
+        "median_filtered_ms": 61.5,
+        "min_ms": 27.6,
+        "max_ms": 336.8,
+        "capped": 0,
+        "dropped": 1,
+        "viewer": {
+          "renders": 0,
+          "renders_per_action": 0.0
+        }
+      },
+      "run_seconds_observed": 125.4,
+      "viewer_while_running": {
+        "renders": 0
+      }
+    },
+    "completed": {
+      "viewer_while_idle": {
+        "renders": 1,
+        "median_render_ms": 441.6,
+        "median_frame_ms": 487.1,
+        "atoms": 3672
+      },
+      "show_history": {
+        "label": "completed: show history",
+        "n": 5,
+        "median_ms": 76.8,
+        "median_filtered_ms": 76.8,
+        "min_ms": 65.3,
+        "max_ms": 108.4,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 0,
+          "renders_per_action": 0.0
+        }
+      },
+      "load": {
+        "label": "completed: Load",
+        "n": 5,
+        "median_ms": 1287.4,
+        "median_filtered_ms": 1219,
+        "min_ms": 1206.5,
+        "max_ms": 2510.7,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 1,
+          "median_render_ms": 381.2,
+          "median_frame_ms": 396.2,
+          "atoms": 3672,
+          "renders_per_action": 0.2
+        }
+      },
+      "box_step": {
+        "label": "completed: box X +/-",
+        "n": 10,
+        "median_ms": 727.65,
+        "median_filtered_ms": 30.95,
+        "min_ms": 685.4,
+        "max_ms": 770.6,
+        "capped": 0,
+        "dropped": 0,
+        "viewer": {
+          "renders": 10,
+          "median_render_ms": 146.35000000000002,
+          "median_frame_ms": 147.35,
+          "atoms": 2186,
+          "renders_per_action": 1.0
+        }
+      }
+    }
+  },
+  "job_id": "job_20261025_070358_cbca43"
+}

@@ -24,7 +24,7 @@ from ui.worker_cap import detect_moldina_worker_cap
 from ui_nice.layout import PAGE_TITLE, build_page
 from ui_nice.mol_viewer import serve_vendor_files
 
-PORT = 3001
+PORT = 3000
 
 # Read once from docker-compose.yml / the environment: shared config, not
 # per-user state.

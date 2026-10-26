@@ -1,8 +1,8 @@
 """Tests for ui/core/chat.py (Stage 16.2) -- hermetic, plain GuiSession,
 fake LLM parse functions (no LLM client is ever called).
 
-The Streamlit page's own wiring over the same code is covered by
-tests/test_ui_app_helpers.py and tests/test_ui_apptest.py (ui tier).
+The NiceGUI page's own wiring over the same code is covered by
+tests/test_nicegui_*.py (GUI test tier).
 """
 import copy
 from pathlib import Path

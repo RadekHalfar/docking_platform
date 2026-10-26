@@ -45,8 +45,8 @@ class WorkflowStateManager:
 
     def __init__(self, job_dir: Path):
         self.job_dir = Path(job_dir)
-        # Shared, not plain mkdir: two GUIs running as different uids (root
-        # Streamlit, non-root NiceGUI, Phase 16) write the same session.
+        # Shared, not plain mkdir: different uids (the non-root GUI, sessions
+        # the former root Streamlit GUI created, Phase 16) write a session.
         # Every write below is tmp + os.replace, which needs only write
         # permission on the directory, so this is enough for either uid to
         # update files the other created.

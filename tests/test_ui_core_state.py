@@ -1,9 +1,8 @@
 """Tests for ui/core/state.py and ui/core/form.py (Stage 16.1).
 
-Framework-free: these run in the hermetic suite (no streamlit, no
-nicegui), against a plain GuiSession. The Streamlit page's own behaviour
-over the same code is covered by tests/test_ui_session_state.py and
-tests/test_ui_apptest.py (ui tier).
+Framework-free: these run in the hermetic suite (no nicegui), against a
+plain GuiSession. The NiceGUI page's own behaviour over the same code is
+covered by tests/test_nicegui_*.py (GUI test tier).
 """
 import ast
 import subprocess
@@ -76,19 +75,18 @@ def test_no_ui_core_module_imports_a_gui_framework():
                 continue
             for name in names:
                 assert name.split(".")[0] not in ("streamlit", "nicegui"), f"{path.name} imports {name}"
-                assert name not in ("ui.session_state", "ui.app"), f"{path.name} imports {name}"
+                assert name.split(".")[0] != "ui_nice", f"{path.name} imports {name}"
 
 
 def test_importing_ui_core_loads_no_gui_framework_indirectly():
     """The check above sees only ui/core's own imports. This one also
     catches a framework pulled in through a module ui/core imports (e.g.
     ui.job_history, ui.worker_cap), and works in the ui image, where
-    streamlit is installed (Review Stage R1, Phase 16)."""
+    nicegui is installed (Review Stage R1, Phase 16)."""
     modules = ", ".join(f"ui.core.{p.stem}" for p in sorted(CORE_DIR.glob("*.py")) if p.stem != "__init__")
     code = (
         f"import sys, {modules}\n"
-        "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('streamlit', 'nicegui')"
-        " or m in ('ui.app', 'ui.session_state'))\n"
+        "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('streamlit', 'nicegui', 'ui_nice'))\n"
         "print(','.join(bad))\n"
     )
     result = subprocess.run(
@@ -103,7 +101,7 @@ def test_importing_ui_core_loads_no_gui_framework_indirectly():
 
 @pytest.mark.parametrize(
     "algorithm, cpu, expected",
-    [("moldina", "4", 1), ("vina", "4", 4), ("vina", "four", 1), ("vina", "", 1)],
+    [("moldina", 4, 1), ("vina", 4, 4), ("vina", None, 1)],
 )
 def test_effective_cpu(state, algorithm, cpu, expected):
     state.form["param_docking_algorithm"] = algorithm
@@ -315,7 +313,7 @@ def test_start_new_session_detaches_but_keeps_the_form(state):
 
 
 # ---------------------------------------------------------------------------
-# Stage 16.4: helpers both GUIs share (moved from ui/app.py)
+# Stage 16.4: form helpers
 # ---------------------------------------------------------------------------
 
 def test_reset_session_restores_a_fresh_session_but_keeps_llm_settings(state):

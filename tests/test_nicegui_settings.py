@@ -1,6 +1,5 @@
 """The NiceGUI settings dialog (Phase 16, Stage 16.7): the LLM provider,
-endpoint, model and API key -- Streamlit's sidebar settings form, which
-has no AppTest of its own. Runs in the ui-nice tier only (see
+endpoint, model and API key. Runs in the GUI test tier only (see
 tests/test_nicegui_setup.py).
 """
 import json

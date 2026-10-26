@@ -1,4 +1,4 @@
-"""Pure data-processing helpers for the results panel (no Streamlit dependency)."""
+"""Pure data-processing helpers for the results panel (no GUI framework dependency)."""
 from __future__ import annotations
 
 import html as _html
@@ -69,12 +69,11 @@ def build_comparison_dataframe(comparison: Dict[str, Any]):
 def build_comparison_html(comparison: Dict[str, Any]) -> str:
     """Render a ligand x job affinity table as a self-contained HTML string.
 
-    Built as raw HTML/inline-CSS rather than a pandas Styler passed to
-    st.dataframe: Streamlit's interactive dataframe grid draws on a <canvas>
-    and does not reliably apply Styler background colors across the
-    light/dark theme toggle — it was rendering highlighted cells as black
-    text on a black background in dark mode. Plain st.markdown content
-    follows normal DOM/CSS and inherits the app's theme correctly, so only
+    Built as raw HTML/inline-CSS (the GUI shows it with ``ui.html``) rather
+    than a styled grid: the former Streamlit GUI's canvas-drawn dataframe
+    grid rendered highlighted cells as black text on a black background in
+    dark mode. Plain HTML follows normal DOM/CSS and inherits the page's
+    theme, so only
     the highlighted "best" cells need an explicit (theme-independent)
     background + text color; all other cells are left unstyled and inherit
     the correct default color for whichever theme is active.

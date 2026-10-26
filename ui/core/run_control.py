@@ -1,6 +1,6 @@
 """Run, redock, stop and save-session actions (Phase 16, Stage 16.1).
 
-Moved from ``ui/app.py``. Replies go into ``state.messages``; what else
+Replies go into ``state.messages``; what else
 the page must do comes back as an :class:`~ui.core.state.Outcome`
 (``refresh``: redraw now; ``error``: an inline error next to the control).
 

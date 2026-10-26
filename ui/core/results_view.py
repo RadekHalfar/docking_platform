@@ -1,12 +1,11 @@
 """What the results panel shows, as data (Phase 16, Stage 16.2).
 
-Moved unchanged in behaviour from ``ui/app.py``'s render functions; the
-widgets stay in each GUI. Paths in a workflow result are the MCP
+The widgets stay in the GUI. Paths in a workflow result are the MCP
 services' own (``/app/orchestrator_output/...``) and are mapped onto
 *output_base* with ``common.path_utils.from_container_path``.
 
 Helpers that read result files take *read_bytes*, so a GUI can pass a
-cached reader (Streamlit re-reads them on every rerun otherwise).
+cached reader.
 
 Stage 16.6 adds what NiceGUI's Results tab needs: :func:`read_results_data`
 does all of one result's file reads at once, so a GUI with an event loop
@@ -43,8 +42,7 @@ OTHER_DOWNLOAD_SUFFIXES = {".pml", ".json", ".png"}
 
 
 def _read_path(path: Path) -> bytes:
-    # Uncached. Streamlit passes its mtime-keyed st.cache_data reader;
-    # NiceGUI reads a result once (read_results_data) and job.log only when
+    # Uncached: the GUI reads a result once (read_results_data) and job.log only when
     # it changed (job_log_if_changed) -- Review Stage R1, deferred #3.
     return path.read_bytes()
 

@@ -8,8 +8,9 @@ The workflow uses a hybrid persistence model that combines:
 This is implemented in `services/llm_orchestrator/workflow_state_manager.py` and integrated into parser, orchestrator, and CLI flow.
 
 **GUI and CLI, as of Stage 11.2.** `ui/orchestrator_bridge.py::start_workflow()`
-now accepts and threads through a `state_manager`, and `ui/app.py` keeps one
-`InteractiveSession` (`st.session_state.interactive_session`) bound to the
+now accepts and threads through a `state_manager`, and the GUI keeps one
+`InteractiveSession` per browser client (`GuiSession.interactive_session`,
+`ui/core/state.py`; the Streamlit page until Phase 16) bound to the
 active job's `WorkflowStateManager` — the first "Run Docking" click creates
 it (`save_parameters_checkpoint(..., source="initial_parse")`), and every
 later click while that job is active diffs the form against the last
@@ -32,16 +33,16 @@ parameters are pending" below). Everything below
 describes the interactive CLI session (`nlp_orchestrator.py --interactive`)
 except where a Stage 11.2/11.3 note calls out GUI behavior explicitly.
 
-**Stage 11.3** added GUI-side session resumption: the sidebar's **Load**
+**Stage 11.3** added GUI-side session resumption: the **Load**
 button (both Session History and Failed Sessions) reconstructs a
 `WorkflowStateManager` against the selected job's existing `job_dir` and
 calls `session.activate(job_id, state_manager, last_results=...)`, so a
-session picked up after a browser refresh (which resets Streamlit's
+session picked up after a browser refresh (which resets the GUI's
 in-memory state entirely) can be redocked immediately rather than only
 viewed read-only — see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#session-history). An unplanned fix
 (2026-09-14, see `dev_plan.md`'s Phase 11 changelog) made this also
-restore `st.session_state.params` and the parameter widgets from that
+restore the session's parameters and the parameter widgets from that
 job's saved parameters (draft or checkpoint, see `draft_parameters.json`
 below) — before that fix, Load only resumed the job/results state, not
 the displayed parameters. Stage 11.3 also added a

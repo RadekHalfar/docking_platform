@@ -1,8 +1,7 @@
 """Isolation and helpers for the NiceGUI User-fixture tests (Phase 16).
 
 Loaded as a pytest plugin by ui_nice/pytest.ini, so it applies to every test
-of the ui-nice tier. It mirrors the AppTest ``app`` fixture in
-tests/test_ui_apptest.py: no network, no MCP services, no real orchestrator
+of the GUI test tier: no network, no MCP services, no real orchestrator
 threads, nothing written outside tmp_path.
 
 - ``OUTPUT_BASE`` points to a fresh dir in tmp_path. NiceGUI's user_plugin
@@ -14,8 +13,7 @@ threads, nothing written outside tmp_path.
 - Any run gets a finished :class:`~tests.ui_fakes.FakeBridge`.
 - The progress timer ticks every 50 ms instead of every second.
 - :class:`Page` (the autouse ``page`` fixture) seeds each client's
-  ``GuiSession`` before its page is drawn -- what AppTest tests do through
-  ``app.session_state`` -- and keeps every page built.
+  ``GuiSession`` before its page is drawn, and keeps every page built.
 
 The 3Dmol viewer needs no recorder (Stage 16.5): a
 :class:`~ui_nice.mol_viewer.MolViewer` keeps what it last sent to the
@@ -231,8 +229,7 @@ def load_picker_receptor(page: Page, center, size) -> None:
 
 
 def with_worker_cap(page: Page, cap: WorkerCap) -> None:
-    """Dock against *cap*, whatever the real compose says (AppTest patches
-    ``ui.session_state.WORKER_CAP`` and the frozen widget default)."""
+    """Dock against *cap*, whatever the real compose says."""
     def seed(state):
         state.worker_cap = cap
         state.form["param_max_workers"] = default_worker_count(cap)
@@ -241,7 +238,7 @@ def with_worker_cap(page: Page, cap: WorkerCap) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenarios (as tests/test_ui_apptest.py builds them)
+# Scenarios
 # ---------------------------------------------------------------------------
 
 HISTORY_JOB_ID = "job_20261001_000002_cafe01"

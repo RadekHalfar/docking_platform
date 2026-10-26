@@ -1,8 +1,8 @@
-"""Test doubles shared by both GUI test tiers: Streamlit's AppTest cases
-(tests/test_ui_apptest.py) and NiceGUI's User-fixture cases
-(tests/test_nicegui_*.py, harness in tests/nicegui_harness.py).
+"""Test doubles for the GUI tests: NiceGUI's User-fixture cases
+(tests/test_nicegui_*.py, harness in tests/nicegui_harness.py) and the
+hermetic ui/core tests.
 
-No GUI framework import, so either tier's image can load it.
+No GUI framework import, so the hermetic suite can load it.
 """
 from pathlib import Path
 

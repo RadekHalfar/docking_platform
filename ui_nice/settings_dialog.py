@@ -1,5 +1,5 @@
 """The settings dialog (Phase 16, Stage 16.7): the LLM provider, endpoint,
-model and API key -- Streamlit's sidebar settings form.
+model and API key.
 
 The fields are filled from the session's settings each time the dialog
 opens. With Ollama, the model is picked from the models the endpoint
@@ -187,7 +187,7 @@ class SettingsView:
         try:
             client = await run.io_bound(llm_settings.persist_settings, new_settings)
         except Exception as exc:
-            # As Streamlit's Apply: any failure to build or save is shown.
+            # Any failure to build or save is shown.
             logger.warning("applying the LLM settings failed", exc_info=True)
             self.message.set_text(f"Could not apply settings: {exc}")
             self.message.classes(replace="text-negative")

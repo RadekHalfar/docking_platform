@@ -1,14 +1,8 @@
 """The GUI's per-client state as a plain object (Phase 16, Stage 16.1).
 
-``GuiSession`` holds everything the GUI's logic reads and writes -- what
-Streamlit keeps in ``st.session_state``. Widget-local state (rename/delete
-toggles, the revision selector, pose pickers, upload bookkeeping) stays in
-each GUI framework; it is not logic state.
-
-The Streamlit page keeps its state in ``st.session_state`` under the
-existing keys and passes a view with these same attributes
-(``ui.session_state.gui_session()``), so the ``ui/core`` functions run
-unchanged against either.
+``GuiSession`` holds everything the GUI's logic reads and writes, one per
+browser client. Widget-local state (rename toggles, the revision selector,
+pose grids, upload bookkeeping) stays in the views; it is not logic state.
 """
 from __future__ import annotations
 
@@ -32,9 +26,8 @@ DEFAULT_INPUT_MODE = "local_files"
 
 
 def form_defaults(worker_cap: WorkerCap) -> Dict[str, Any]:
-    """The parameter form's fields and their empty values. The keys are the
-    Streamlit widget keys (``param_*``), kept as the form's field names so
-    both GUIs share them. ``input_mode`` is not here: a Load resets every
+    """The parameter form's fields and their empty values, under the
+    ``param_*`` field names. ``input_mode`` is not here: a Load resets every
     field below except the session name, but keeps the input mode."""
     return {
         "param_job_name": "",
@@ -65,7 +58,7 @@ def reply(state, content: str) -> None:
 @dataclass(frozen=True)
 class Outcome:
     """What a GUI action asks of the page beyond the replies it appended to
-    ``messages``: ``refresh`` -- redraw now (Streamlit: ``st.rerun()``);
+    ``messages``: ``refresh`` -- redraw now;
     ``error`` -- show this next to the control, not in the chat."""
 
     refresh: bool = False

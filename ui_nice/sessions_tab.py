@@ -1,10 +1,9 @@
 """The Sessions tab (Phase 16, Stage 16.7): the active session's revision
 history with Restore, Session History (Load, Rename, Delete, Compare) and
-Failed Sessions -- Streamlit's sidebar lists and its "Revision history"
-expander.
+Failed Sessions.
 
-Unlike Streamlit's 10 newest, every session is listed (owner's decision,
-2026-10-13).
+Every session is listed, not only the 10 newest as the former Streamlit
+GUI did (owner's decision, 2026-10-13).
 
 :meth:`SessionsView.sync` touches no file, and does nothing while the tab
 is hidden. The listing and the revision history are read off the event
@@ -24,7 +23,7 @@ or the controller is busy with a save or a delete (Rename only for the
 latter)
 (:meth:`~ui_nice.controller.PageController.blocked_reason`; Review Stage
 R2, Deferred #3), except that a Delete of another session is allowed while
-a run goes, as in Streamlit.
+a run goes.
 """
 from __future__ import annotations
 
@@ -509,7 +508,7 @@ class SessionsView:
         try:
             comparison = await run.io_bound(compare_jobs, job_dirs)
         except Exception as exc:
-            # As Streamlit's Compare: any failure of the comparison is shown.
+            # Any failure of the comparison is shown.
             logger.warning("comparing %s failed", job_dirs, exc_info=True)
             self.error = f"Comparison failed: {exc}"
             self.sync()

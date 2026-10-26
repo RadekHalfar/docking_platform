@@ -6,8 +6,7 @@ progress timer, and redraws the views after anything changes state.
 
 Each event handler calls a ``ui/core`` action and then :meth:`sync`, which
 asks every view to bring its widgets in line with the state. The views
-update only what changed, so a redraw costs little: this is NiceGUI's
-equivalent of Streamlit's rerun.
+update only what changed, so a redraw costs little.
 
 All clients share one event loop, so slow file work runs off it
 (``run.io_bound``): the views' timer reads (:meth:`View.poll`), a geometry
@@ -116,7 +115,7 @@ class PageController:
 
     def start_action(self) -> None:
         """Called first by every action handler: an earlier action's
-        messages are cleared, as Streamlit drops them on the next run."""
+        messages are cleared."""
         self.error = None
         self.picker_message = None
 

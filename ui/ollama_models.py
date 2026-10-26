@@ -1,4 +1,4 @@
-"""Discover locally available Ollama models (no Streamlit dependency)."""
+"""Discover locally available Ollama models (no GUI framework dependency)."""
 from __future__ import annotations
 
 from typing import List

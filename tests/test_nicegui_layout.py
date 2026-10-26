@@ -1,13 +1,13 @@
 """Smoke tests for the NiceGUI page shell (Phase 16, Stage 16.3).
 
-nicegui is only installed in the ui-nice image, so this file skips under the
+nicegui is only installed in the ui image, so this file skips under the
 default suite/CI and really runs via
 
-    docker compose run --rm --no-deps ui-nice \
+    docker compose run --rm --no-deps ui \
         python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py
 
 Isolation comes from tests/nicegui_harness.py (loaded by that config).
-The Streamlit-to-NiceGUI parity table lives in tests/test_nicegui_parity.py.
+The Streamlit-to-NiceGUI test mapping is in docs/reviews/stage_16_8_parity.md.
 """
 import pytest
 

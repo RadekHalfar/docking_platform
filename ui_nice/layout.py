@@ -59,7 +59,7 @@ def build_page(state: GuiSession, output_base: Path) -> PageParts:
     """Draw the whole page for one client. ``state`` is that client's own."""
     controller = PageController(state, output_base)
     # A job that finished before this page was built is handled before the
-    # first draw, as Streamlit handles it at the top of the script.
+    # first draw.
     controller.process()
     settings = SettingsView(controller)
     chat_drawer, chat = _chat_drawer(controller)

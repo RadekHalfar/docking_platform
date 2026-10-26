@@ -143,12 +143,12 @@ single trusted machine. Remaining open items are carried forward in
   `pymol_visualizer`/`pymol_interactive` remain root — see `dev_plan.md`'s
   Future Work for why and what's left.
 
-## v2.0 — GUI Sessions, Box Geometry, Algorithms, NiceGUI groundwork (Phases 11–16)
+## v2.0 — GUI Sessions, Box Geometry, Algorithms, NiceGUI GUI (Phases 11–16)
 
 The Streamlit GUI caught up with the CLI's interactive session (redock,
 resume, history, undo, save-as), docking gained a second search algorithm,
 parallel docking defaults are now measured rather than guessed, and the GUI
-logic was pulled out of Streamlit as the first half of a NiceGUI migration.
+moved from Streamlit to NiceGUI.
 `VERSION` (repo root) says `2.0` since Phase 11. Backfilled 2026-10-11 from
 `dev_plan.md`; every phase's review report is in `docs/reviews/`.
 
@@ -240,7 +240,7 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
     full-stack rebuild was done on 2026-10-11 (see Phase 16): health check,
     stop integration test, and a GUI-driven 2-ligand Vina run recording
     `workers: 2`.
-- **Phase 16 — GUI migration to NiceGUI (in progress, started 2026-10-07).**
+- **Phase 16 — GUI migration to NiceGUI (2026-10-07 – 10-26).**
   - **16.0:** the Streamlit GUI's baseline timing, scripted and headless
     (`benchmark_gui*.py`, `?perf` marks in the viewer), and a spike
     answering five NiceGUI questions. Baseline numbers are in
@@ -372,4 +372,22 @@ logic was pulled out of Streamlit as the first half of a NiceGUI migration.
       shared helper.
     - **Fresh stack:** every image rebuilt, `down` / `up`, `--check-health`,
       a CLI workflow and a NiceGUI-driven run all passed.
-  - **Next:** Stage 16.8, parity sign-off and Streamlit removal.
+  - **16.8 (2026-10-25 – 10-26): parity sign-off and the cutover.**
+    - **Re-timed** against the 16.0 baseline (`docs/GUI_GUIDE.md`
+      "Performance"): `show history` during a run went from 4.7 s to
+      62 ms and the GUI's CPU while running from 10% to 1%; a box step
+      redraws only the box, keeping the camera.
+    - **Parity:** a 36-row browser checklist covering the original feature
+      list (`docs/reviews/stage_16_8_parity.md`), pre-run headless and
+      signed off by the owner.
+    - **The GUI at http://localhost:3000 is now NiceGUI.** The `ui` service
+      (container `mcp-ui`) runs it as the non-root `appuser`, with a
+      `/health` route (the installer's health check moved there). The
+      `ui-nice` service (port 3001) is gone.
+    - **Removed:** the Streamlit page and its adapter, the Streamlit viewer
+      component (its vendored 3Dmol.js stays), the Streamlit test tier,
+      the unused `ui/pymol_client.py`, core paths only Streamlit used, and
+      the PyMOL env vars and `pymol-interactive` dependency the GUI never
+      read.
+    - **Linux hosts:** sessions created by the old root Streamlit GUI before
+      Stage 16.3 may need a one-time `chown` (`docs/DOCKER_DEPLOYMENT.md`).

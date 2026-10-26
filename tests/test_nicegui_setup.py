@@ -1,15 +1,15 @@
 """The NiceGUI Setup tab (Phase 16, Stage 16.4): form, Advanced, actions,
 redock dialog and live progress.
 
-Ports the Setup rows of the parity table (tests/test_nicegui_parity.py)
-from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
-Runs in the ui-nice tier only:
+Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
+each ported test keeps its old name.
+Runs in the GUI test tier only:
 
-    docker compose run --rm --no-deps ui-nice \
+    docker compose run --rm --no-deps ui \
         python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py
 
 ``page.seed(...)`` sets up the client's GuiSession before the page is
-drawn, as the AppTest cases set ``app.session_state``.
+drawn.
 """
 from pathlib import Path
 
@@ -632,8 +632,8 @@ async def test_a_sync_does_not_start_another_sync(user: User, page):
 
 
 async def test_a_second_ligand_drop_adds_to_the_list(user: User, page):
-    # Streamlit's uploader kept the files it had; NiceGUI's resets after
-    # each drop, so a second drop replaced the first (Review Stage R2).
+    # The uploader resets after each drop, so a second drop used to
+    # replace the first (Review Stage R2).
     page.seed(lambda state: state.form.update(input_mode="local_files"))
     await user.open("/")
     upload = element(user, "upload-ligands")

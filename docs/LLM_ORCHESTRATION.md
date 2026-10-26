@@ -193,7 +193,7 @@ For docking one protein against every ligand file in a folder, see
 ### Interactive Mode
 
 This section describes `nlp_orchestrator.py`'s interactive terminal
-session. The Streamlit web UI (`ui/`) runs on the same
+session. The web GUI (`ui_nice/`, logic in `ui/core/`) runs on the same
 `InteractiveSession`/`WorkflowStateManager` and covers part of it with its
 own controls: redocking after a parameter change, Load/resume, revision
 history/undo, and named result bundles. GUI chat also accepts `show
@@ -1078,7 +1078,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 ### Already Shipped (moved out of "planned")
 
 - [x] Local ligand/protein files, not just RCSB (`--protein-file`, `--ligand-files`, `--ligand-folder` — see [Local File Input](#local-file-input))
-- [x] Web UI (the Streamlit GUI, `ui/app.py` — see [GUI_GUIDE.md](GUI_GUIDE.md))
+- [x] Web UI (NiceGUI, `ui_nice/` — see [GUI_GUIDE.md](GUI_GUIDE.md); Streamlit until Phase 16)
 - [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
 - [x] More LLM backends (OpenAI, Anthropic, MetaCentrum, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
 - [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))

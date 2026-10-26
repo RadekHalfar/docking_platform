@@ -23,32 +23,30 @@ lines, and `benchmark_gui.py --from-driver` reads them on stdin and runs its
 docker-stats sampler in between -- one pipeline does both.
 
 Run it inside the Playwright image, sharing the GUI container's network so
-localhost is the GUI. From the repo root, in Git Bash (NiceGUI on
-`mcp-ui-nice`, port 3001; for Streamlit use `--gui streamlit`,
-`container:mcp-ui` and `--container mcp-ui`):
+localhost is the GUI. From the repo root, in Git Bash:
 
-    MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui-nice \\
+    MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui \\
         -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out" \\
         mcr.microsoft.com/playwright/python:v1.55.0-noble \\
         sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py \\
-               --gui nicegui --out /out/<date>_gui_nicegui_browser.json" \\
-      | python3 benchmark_gui.py --from-driver --container mcp-ui-nice \\
+               --out /out/<date>_gui_nicegui_browser.json" \\
+      | python3 benchmark_gui.py --from-driver --container mcp-ui \\
                --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
 
 This starts a real docking run on the live stack (a new session appears in
 the GUI's history). It changes nothing else: the Box X steps are made in
 +/− pairs, so the box ends where it started.
 
---gui picks the selectors: Streamlit's `st-key-<widget key>` classes, or
-NiceGUI's roles, labels and texts (its `.mark()` markers exist only for
-the User fixture, not in the page). The scenarios and markers are the same
-for both, so their numbers compare like for like. NiceGUI's Load and box
-picker are on the Sessions and Setup tabs; the tab click before a timed
-action is not counted (`Driver.timed(prepare=...)`).
+Selectors are roles, labels and texts (NiceGUI's `.mark()` markers exist
+only for its User fixture, not in the page). Load and the box picker are on
+the Sessions and Setup tabs; the tab click before a timed action is not
+counted (`Driver.timed(prepare=...)`). The scenarios are the ones the
+Streamlit GUI was timed with in Stage 16.0 (the Streamlit selectors were
+removed with it in 16.8), so the numbers compare like for like.
 
-For NiceGUI the latency snippet also reports a *filtered* median that
-ignores Quasar's button ripple and tooltip (animation, not the page's
-work; Stage 16.8). The raw median is the one to compare with Streamlit's.
+The latency snippet also reports a *filtered* median that ignores Quasar's
+button ripple and tooltip (animation, not the page's work; Stage 16.8). The
+raw median is the one to compare with Streamlit's.
 """
 from __future__ import annotations
 
@@ -67,8 +65,7 @@ DEFAULT_LIGANDS = REPO_IN_CONTAINER / "data" / "benchmark_gui" / "actives_first2
 DEFAULT_CENTER = ("19.354", "16.789", "29.19")
 DEFAULT_BOX = ("20", "20", "20")
 LATENCY_SNIPPET = "benchmark_gui_latency.js"
-GUIS = ("streamlit", "nicegui")
-DEFAULT_URLS = {"streamlit": "http://localhost:3000", "nicegui": "http://localhost:3001"}
+DEFAULT_URL = "http://localhost:3000"
 # Quasar's click ripple and tooltip: DOM changes the filtered latency ignores.
 NICEGUI_LATENCY_IGNORE = [".q-ripple", ".q-tooltip", '[id^="q-portal--tooltip"]']
 _JOB_ID_RE = re.compile(r"job_\d{8}_\d{6}_[0-9a-f]+")
@@ -105,11 +102,6 @@ def marker(kind: str, label: str) -> None:
     print(f"{kind} {label}", flush=True)
 
 
-def default_url(gui: str, url: Optional[str]) -> str:
-    """--url if given, else the GUI's default address."""
-    return url or DEFAULT_URLS[gui]
-
-
 def format_timed(label: str, summary: dict) -> str:
     """One progress line for a timed action."""
     line = f"  {label}: median {summary['median_ms']} ms (n={summary['n']})"
@@ -120,11 +112,10 @@ def format_timed(label: str, summary: dict) -> str:
 
 
 class Driver:
-    """Timing shared by both GUIs: perf console lines, settling, the latency
-    snippet. The controls are in the subclasses."""
+    """Timing: perf console lines, settling, the latency snippet. The
+    controls are in :class:`NiceGuiDriver`."""
 
     latency_ignore: List[str] = []
-    prepare_load = None  # an untimed step before each Load click, if any
 
     def __init__(self, page, quiet_ms: int = 300):
         self.page = page
@@ -184,69 +175,6 @@ class Driver:
         summary["viewer"]["renders_per_action"] = summary["viewer"]["renders"] / repeats
         print(format_timed(label, summary), flush=True)
         return summary
-
-
-class StreamlitDriver(Driver):
-    """The Streamlit GUI (`st-key-<widget key>` classes)."""
-
-    def open(self, url: str) -> None:
-        self.page.goto(f"{url}/?perf")
-        self.page.get_by_test_id("stChatInputTextArea").wait_for()
-        self.settle()
-
-    def setup_inputs(self, receptor: Path, ligands: Path) -> None:
-        self.page.get_by_text("Local Files", exact=True).click()
-        self.settle()
-        self.key("upload_protein").locator('input[type="file"]').set_input_files(str(receptor))
-        self.settle()
-        self.key("upload_ligands").locator('input[type="file"]').set_input_files(str(ligands))
-        self.settle()
-        for axis, c, b in zip("xyz", DEFAULT_CENTER, DEFAULT_BOX):
-            self.fill(f"param_center_{axis}", c)
-            self.fill(f"param_box_{axis}", b)
-
-    def box_step(self, up: bool) -> None:
-        self.click_key("box_step_x_up" if up else "box_step_x_down")
-
-    def start_run(self) -> str:
-        self.page.get_by_role("button", name="Run Docking").click()
-        return self.running_job_id()
-
-    def wait_run_end(self, job_id: str, timeout_s: int) -> None:
-        self.page.locator(f".st-key-stop_{job_id}").wait_for(state="detached", timeout=timeout_s * 1000)
-
-    def load_session(self, job_id: str) -> None:
-        self.click_key(f"job_load_{job_id}")
-
-    def key(self, widget_key: str):
-        return self.page.locator(f".st-key-{widget_key}")
-
-    def fill(self, widget_key: str, value: str) -> None:
-        box = self.key(widget_key).locator("input")
-        box.fill(value)
-        box.press("Enter")
-        self.settle()
-
-    def chat(self, text: str) -> None:
-        box = self.page.get_by_test_id("stChatInputTextArea")
-        box.fill(text)
-        box.press("Enter")
-
-    def click_key(self, widget_key: str) -> None:
-        # A button with help= renders two <button>s in its container (the
-        # tooltip wrapper); click the visible one.
-        self.key(widget_key).locator("button:visible").first.click()
-
-    def load_receptor_for_picking(self) -> None:
-        self.page.get_by_role("button", name="Load receptor for box picking").click()
-        self.key("box_step_x_up").wait_for(timeout=180000)
-        self.settle()
-
-    def running_job_id(self) -> str:
-        stop = self.page.locator('[class*="st-key-stop_"]').first
-        stop.wait_for(timeout=120000)
-        cls = stop.get_attribute("class")
-        return re.search(r"st-key-stop_(job_\S+)", cls).group(1)
 
 
 class NiceGuiDriver(Driver):
@@ -320,20 +248,16 @@ class NiceGuiDriver(Driver):
         row.get_by_role("button", name="Load", exact=True).first.click()
 
 
-def make_driver(gui: str, page) -> Driver:
-    return {"streamlit": StreamlitDriver, "nicegui": NiceGuiDriver}[gui](page)
-
-
 def run(args) -> dict:
     from playwright.sync_api import sync_playwright
 
-    result = {"gui": args.gui, "url": args.url, "receptor": str(args.receptor),
+    result = {"gui": "nicegui", "url": args.url, "receptor": str(args.receptor),
               "ligands": str(args.ligands), "center": DEFAULT_CENTER, "box": DEFAULT_BOX, "scenarios": {}}
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.set_default_timeout(60000)
-        d = make_driver(args.gui, page)
+        d = NiceGuiDriver(page)
         d.open(args.url)
         d.inject_latency_snippet(args.repo)
 
@@ -384,8 +308,7 @@ def _box_steps(d: Driver, label: str, repeats: int) -> Dict[str, float]:
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Time the GUI in a headless browser (run in the Playwright image).")
-    parser.add_argument("--gui", choices=GUIS, default="nicegui", help="Whose selectors to use (default: nicegui)")
-    parser.add_argument("--url", default=None, help="The GUI's address (default: the --gui's port on localhost)")
+    parser.add_argument("--url", default=DEFAULT_URL, help=f"The GUI's address (default: {DEFAULT_URL})")
     parser.add_argument("--repo", type=Path, default=REPO_IN_CONTAINER, help="Repo root as mounted (default: /repo)")
     parser.add_argument("--receptor", type=Path, default=DEFAULT_RECEPTOR)
     parser.add_argument("--ligands", type=Path, default=DEFAULT_LIGANDS)
@@ -394,9 +317,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--run-timeout", type=int, default=1800, help="Seconds to wait for the docking run")
     parser.add_argument("--screenshot", type=Path, default=None, help="Optional final screenshot path")
     parser.add_argument("--out", type=Path, required=True, help="Write the results JSON here")
-    args = parser.parse_args(argv)
-    args.url = default_url(args.gui, args.url)
-    return args
+    return parser.parse_args(argv)
 
 
 def main(argv=None) -> None:

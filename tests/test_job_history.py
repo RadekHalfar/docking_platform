@@ -7,10 +7,16 @@ from ui import job_history
 from ui.job_history import (
     escape_markdown,
     list_completed_and_failed_jobs,
-    list_completed_jobs,
-    list_failed_jobs,
     rename_job,
 )
+
+
+def list_completed_jobs(output_base):
+    return list_completed_and_failed_jobs(output_base)[0]
+
+
+def list_failed_jobs(output_base):
+    return list_completed_and_failed_jobs(output_base)[1]
 
 
 def _write_workflow_results(
@@ -335,8 +341,6 @@ class TestListCompletedAndFailedJobs:
         completed, failed = list_completed_and_failed_jobs(str(tmp_path))
 
         assert len(reads) == 4
-        assert completed == list_completed_jobs(str(tmp_path))
-        assert failed == list_failed_jobs(str(tmp_path))
         assert [j["job_id"] for j in completed] == ["job_a"]
         assert [(j["job_id"], j["first_error"]) for j in failed] == [
             ("job_c", "Unknown error"), ("job_b", "boom"),

@@ -1,12 +1,11 @@
 """The NiceGUI box picker and 3Dmol viewer element (Phase 16, Stage 16.5).
 
-Ports the box-picker rows of the parity table (tests/test_nicegui_parity.py)
-from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
-Where AppTest asserted on its viewer recorder, these read what the
-:class:`~ui_nice.mol_viewer.MolViewer` element last sent to the browser.
-Runs in the ui-nice tier only:
+Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
+each ported test keeps its old name.
+The viewer tests read what the :class:`~ui_nice.mol_viewer.MolViewer`
+element last sent to the browser. Runs in the GUI test tier only:
 
-    docker compose run --rm --no-deps ui-nice \
+    docker compose run --rm --no-deps ui \
         python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py
 """
 import asyncio
@@ -114,7 +113,7 @@ async def test_deferred_geometry_command_reports_failed_fetch(user: User, page):
     error = element(user, "box-picker-error")
     assert error.visible and error.text == "Could not prepare receptor: RCSB download failed"
     assert page.chat_texts()[-1] == "Could not fetch the protein: RCSB download failed"
-    # Streamlit showed it for one rerun; here it stays until the next Load.
+    # It stays until the next Load.
     click(user, "load-receptor")
     await eventually(lambda: not element(user, "box-picker-error").visible)
 
@@ -189,7 +188,7 @@ async def test_small_positive_box_size_is_drawn_as_typed(user: User, page):
 
 
 async def test_typed_center_survives_after_a_viewer_click(user: User, page):
-    # Streamlit's component kept returning its last click, which once
+    # The former Streamlit viewer kept returning its last click, which once
     # reverted a typed center to the clicked atom. A click here is an event,
     # sent once; a typed center must still survive the next redraws.
     shown = await _picker_with_box_set(user, page)

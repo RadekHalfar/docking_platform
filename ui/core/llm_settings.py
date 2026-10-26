@@ -1,6 +1,5 @@
-"""The LLM settings form's logic, shared by both GUIs (Phase 16, Stage 16.7).
+"""The LLM settings form's logic (Phase 16, Stage 16.7).
 
-Moved from ``ui/app.py``'s settings sidebar and ``ui/session_state.py``.
 Loading and saving the settings file is ``ui.settings``' job.
 """
 from __future__ import annotations

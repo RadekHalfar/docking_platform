@@ -156,10 +156,8 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 
 # 5. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
-# GUI (Streamlit) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-streamlit-unit-tests):
-docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
-# NiceGUI GUI tests (Phase 16) need the ui-nice image (see docs/DOCKER_DEPLOYMENT.md#gui-nicegui-tests):
-docker compose run --rm --no-deps ui-nice python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
+# GUI (NiceGUI) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-tests):
+docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
 
 # 6. Interactive PyMOL in browser is already running (started in step 2 along
 #    with everything else -- no extra flag or command needed)
@@ -360,21 +358,17 @@ docking_platform/
 │       ├── job_comparator.py   # Cross-job binding-affinity comparison
 │       └── job_cleanup.py      # Opt-in job-directory retention/cleanup
 │
-├── ui/                          # Streamlit web UI (persistent sessions: redock, history/undo, save-as; see docs/GUI_GUIDE.md)
-│   ├── app.py                  # Main Streamlit entry point
-│   ├── core/                   # Framework-free GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view, llm_settings (Phase 16)
-│   ├── session_state.py        # Streamlit adapter: st.session_state as a GuiSession view, init
+├── ui/                          # GUI logic and helpers, framework-free (the NiceGUI app is ui_nice/; see docs/GUI_GUIDE.md)
+│   ├── core/                   # GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view, llm_settings (Phase 16)
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-run log sink (no stdout capture)
-│   ├── job_history.py          # Sidebar job history scan, job naming/rename
+│   ├── job_history.py          # Session list scan, job naming/rename
 │   ├── ollama_models.py        # Ollama model listing
-│   ├── pymol_client.py         # pymol-interactive helper-API client (box selection only)
-│   ├── mol_viewer.py           # Python wrapper for the 3Dmol.js viewer/box-picker component
-│   ├── components/mol_viewer/  # Vendored 3Dmol.js + vanilla-JS Streamlit component (no build step)
+│   ├── components/mol_viewer/vendor/  # Vendored 3Dmol.js, served to the viewer element (no build step)
 │   ├── results.py              # Results/comparison rendering
 │   └── settings.py             # Persisted LLM provider settings, LLM client builder
 │
-├── ui_nice/                     # NiceGUI web UI on port 3001 (Phase 16; replaces ui/app.py at Stage 16.8)
+├── ui_nice/                     # The web GUI (NiceGUI, port 3000; persistent sessions: redock, history/undo, save-as)
 │   ├── app.py                  # Entry point: the page (one GuiSession per client), /health, /files downloads
 │   ├── layout.py               # Header, settings dialog, chat drawer, Setup/Results/Sessions tabs
 │   ├── controller.py           # Per-client page controller: progress timer, sync of the views
@@ -385,8 +379,8 @@ docking_platform/
 │   ├── sessions_tab.py         # Sessions tab: revision history + Restore, session lists (Load/Rename/Delete/Compare)
 │   ├── settings_dialog.py      # Settings dialog: LLM provider, endpoint, model (Ollama list), API key
 │   ├── mol_viewer.py           # 3Dmol.js viewer element (camera kept; box/poses redrawn in place)
-│   ├── mol_viewer.js           # Its Vue component (scene code ported from ui/components/mol_viewer)
-│   └── pytest.ini              # ui-nice test tier config (NiceGUI User fixture)
+│   ├── mol_viewer.js           # Its Vue component (3Dmol.js scene, box overlay, poses)
+│   └── pytest.ini              # GUI test tier config (NiceGUI User fixture)
 │
 ├── installer/                   # Standalone PyInstaller installer
 │   ├── install.py              # Installer entry point (Docker check/install, build, launch)
@@ -411,7 +405,7 @@ docking_platform/
 │
 ├── docs/                        # Documentation
 │   ├── API.md                  # MCP tool specifications
-│   ├── GUI_GUIDE.md            # Streamlit UI guide (3Dmol.js viewer, visual box picker)
+│   ├── GUI_GUIDE.md            # Web GUI guide (3Dmol.js viewer, visual box picker)
 │   ├── INSTALLATION.md         # Installation guide
 │   ├── DOCKER_DEPLOYMENT.md    # Docker deployment guide (incl. security model)
 │   ├── LLM_ORCHESTRATION.md    # Natural language interface guide
@@ -438,9 +432,8 @@ docking_platform/
 ├── example_prepare_ligand.py    # Example ligand preparation
 │
 ├── docker-compose.yml           # Multi-service Docker orchestration
-├── Dockerfile.ui                # Streamlit UI image
-├── Dockerfile.ui_nice           # NiceGUI UI image (non-root appuser, Phase 16)
-├── docker_build.ps1/.sh         # Docker build scripts (incl. ui and ui-nice images)
+├── Dockerfile.ui                # GUI image (NiceGUI, non-root appuser)
+├── docker_build.ps1/.sh         # Docker build scripts
 ├── docking-platform-installer.spec  # PyInstaller-generated (not committed, see installer/build.sh)
 │
 ├── requirements.txt             # Python dependencies
@@ -514,7 +507,7 @@ python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
 
 ## Documentation
 
-- **[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)** - Streamlit UI guide: sessions/redock, revision history + undo, saved result bundles, 3Dmol.js viewer, visual docking-box picker, download formats
+- **[docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)** - Web GUI guide: sessions/redock, revision history + undo, saved result bundles, 3Dmol.js viewer, visual docking-box picker, download formats
 - **[docs/VERBOSITY_LEVELS.md](docs/VERBOSITY_LEVELS.md)** - Guide to verbosity levels (`low`, `normal`, `mcp_demo`)
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages

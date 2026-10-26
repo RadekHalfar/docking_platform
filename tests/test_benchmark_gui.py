@@ -129,25 +129,18 @@ class TestDriverHelpers:
         assert drv.summarize_renders(renders) == {"renders": 3, "median_render_ms": 20.0,
                                                   "median_frame_ms": 30.0, "atoms": 5}
 
-    @pytest.mark.parametrize("argv, gui, url", [
-        ([], "nicegui", "http://localhost:3001"),
-        (["--gui", "streamlit"], "streamlit", "http://localhost:3000"),
-        (["--gui", "nicegui", "--url", "http://ui:9000"], "nicegui", "http://ui:9000"),
+    @pytest.mark.parametrize("argv, url", [
+        ([], "http://localhost:3000"),
+        (["--url", "http://ui:9000"], "http://ui:9000"),
     ])
-    def test_gui_picks_the_default_url(self, argv, gui, url):
+    def test_url_defaults_to_the_gui_port(self, argv, url):
         import benchmark_gui_browser as drv
-        args = drv.parse_args(argv + ["--out", "x.json"])
-        assert (args.gui, args.url) == (gui, url)
+        assert drv.parse_args(argv + ["--out", "x.json"]).url == url
 
-    def test_unknown_gui_is_rejected(self):
+    def test_the_driver_filters_quasar_animations(self):
         import benchmark_gui_browser as drv
-        with pytest.raises(SystemExit):
-            drv.parse_args(["--gui", "tk", "--out", "x.json"])
-
-    def test_only_nicegui_filters_quasar_animations(self):
-        import benchmark_gui_browser as drv
-        assert drv.make_driver("streamlit", page=_FakePage()).latency_ignore == []
-        assert ".q-ripple" in drv.make_driver("nicegui", page=_FakePage()).latency_ignore
+        assert drv.Driver(page=_FakePage()).latency_ignore == []
+        assert ".q-ripple" in drv.NiceGuiDriver(page=_FakePage()).latency_ignore
 
     def test_format_timed_shows_the_filtered_median_only_when_it_differs(self):
         import benchmark_gui_browser as drv

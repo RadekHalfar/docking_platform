@@ -546,7 +546,7 @@ ligands concurrently); workers × `cpu` never exceeds the docking service's CPU 
 
 ### Method 0: GUI's Visual Box Picker (Easiest)
 
-The Streamlit GUI's **Pick Docking Box Visually** control does this for you
+The GUI's **Pick Docking Box Visually** control does this for you
 in-browser, no PyMOL required: load the receptor, click an atom to set the
 center (a box outline shows the resulting region), and grow/shrink it with
 the X/Y/Z − / + buttons (1 Å per click) or by typing in the Docking Box

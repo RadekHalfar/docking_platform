@@ -173,7 +173,7 @@ class TestLLMArchitecture:
 
     def test_chat_followup_merge_preserves_prior_params(self):
         """End-to-end: merging a follow-up delta onto prior state should keep
-        already-known params, matching what ui.app._on_chat_submit does."""
+        already-known params, matching what ui.core.chat.parse_message does."""
         parser = WorkflowParser()
         prior = parser.validate_workflow({
             "services": ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],

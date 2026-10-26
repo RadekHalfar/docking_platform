@@ -5,7 +5,7 @@ The atom-line parser (`parse_pdb_atom_line`) is the single definition of
 "how to read one ATOM/HETATM line" for this codebase -- used both by the
 geometry computation below (`center`/`box_size` auto-fill: "set box center
 as protein center" / "look across all protein" chat commands, GUI:
-`ui/app.py`, CLI: `nlp_orchestrator.py`, both routed through
+`ui/core/chat.py`, CLI: `nlp_orchestrator.py`, both routed through
 `services/llm_orchestrator/workflow_llm_parser.py::detect_protein_geometry_command()`)
 and by `services/protein_preparer/__init__.py`'s manual-rigid-receptor PDBQT
 fallback, which previously duplicated this same column parsing independently

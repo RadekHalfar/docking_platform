@@ -174,8 +174,8 @@ def save_results_bundle(
     try:
         for leftover in (staging_dir, replaced_dir):
             shutil.rmtree(leftover, ignore_errors=True)
-        # Shared: two GUIs running as different uids (root Streamlit,
-        # non-root NiceGUI, Phase 16) save bundles into the same session.
+        # Shared: sessions the former root Streamlit GUI created get
+        # bundles from the non-root GUI too (Phase 16).
         ensure_shared_directory(bundle_dir.parent)
         staging_dir.mkdir()
         included = _write_bundle_contents(job_dir, staging_dir, name, scope, revision, parameters)

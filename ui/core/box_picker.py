@@ -1,6 +1,6 @@
 """The box picker and protein geometry (Phase 16, Stage 16.2).
 
-Moved unchanged in behaviour from ``ui/app.py``. The picker keeps no box
+The picker keeps no box
 of its own: the Docking Box form fields (``form.BOX_FORM_KEYS``) are the
 only box state, and a viewer click or a − / + step writes them. The
 receptor it shows comes from a background get_input_files +
@@ -168,8 +168,8 @@ def geometry_failed(state, exc: Exception) -> None:
 def apply_protein_geometry(state, receptor_path: Path, target: str) -> None:
     """Compute center/box_size from *receptor_path*'s bounding box, apply it
     to the Docking Box fields, and report the result in chat -- all at once
-    (Streamlit; NiceGUI passes its own *apply_geometry*, which reads off the
-    event loop).
+    (the GUI passes its own *apply_geometry*, which reads off the event
+    loop).
 
     The default *apply_geometry* of the immediate path
     (:func:`ui.core.chat.protein_geometry_command`, a receptor is already

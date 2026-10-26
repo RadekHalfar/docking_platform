@@ -38,9 +38,10 @@ def make_mcp_response():
 def umask_022():
     """Run with the usual umask, under which a plain mkdir gives 0o755.
 
-    For the shared-directory checks (Phase 16, Stage 16.3): the root
-    Streamlit UI and the non-root NiceGUI UI write the same session, so
-    directories they create must be 0o777 whatever the umask."""
+    For the shared-directory checks (Phase 16, Stage 16.3): several uids
+    write a session (the non-root GUI, the services, sessions the former
+    root Streamlit GUI created), so shared directories must be 0o777
+    whatever the umask."""
     old = os.umask(0o022)
     yield
     os.umask(old)

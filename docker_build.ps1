@@ -64,13 +64,7 @@ $allServices = @{
     "ui" = @{
         dockerfile = "Dockerfile.ui"
         tag = "mcp-docking-ui:latest"
-        description = "Streamlit web UI"
-        depends = @("base")
-    }
-    "ui-nice" = @{
-        dockerfile = "Dockerfile.ui_nice"
-        tag = "mcp-docking-ui-nice:latest"
-        description = "NiceGUI web UI (Phase 16, port 3001)"
+        description = "NiceGUI web UI"
         depends = @("base")
     }
 }

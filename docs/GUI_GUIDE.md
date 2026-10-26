@@ -1,34 +1,31 @@
 # GUI Guide
 
-The Streamlit UI (`ui/app.py`) is a browser front-end for the docking platform,
-served at http://localhost:3000 by the `ui` service in `docker-compose.yml`.
-It has three panels — Chat, Input & Parameters, Results — plus a sidebar for
-LLM settings and session history.
+The web GUI (`ui_nice/`, built with NiceGUI) is a browser front-end for the
+docking platform, served at http://localhost:3000 by the `ui` service in
+`docker-compose.yml`. The page has:
 
-Phase 16 is moving the GUI to NiceGUI. Until that is finished (Stage 16.8),
-the NiceGUI version runs alongside as the `ui-nice` service at
-http://localhost:3001: a header with Settings, a collapsible chat drawer on
-the right, and the tabs Setup / Results / Sessions. Since Stage 16.4 the
-chat drawer takes every command and LLM message, and the Setup tab has the
-whole form (inputs, Docking Box, Advanced, Run / Save Session / New
-Session / Reset, Stop and live progress). Since Stage 16.5 the Setup tab's
-right side has the 3D box picker. Since Stage 16.6 the Results tab shows
-the session's results (see "The NiceGUI Results tab" below). Since Stage
-16.7 the Sessions tab (history, Load, Rename, Delete, Compare and the
-revision history) and the Settings dialog are there too (see "The NiceGUI
-Sessions tab" below), so every feature of the Streamlit GUI is ported. The
-Streamlit GUI on port 3000 stays until the owner's parity check in Stage
-16.8. Where the two differ, this guide says so.
+- a **header** with the **Settings** gear and a button that shows or hides
+  the chat;
+- a **chat drawer** on the right, for chat commands and LLM requests;
+- three tabs: **Setup** (the parameter form on the left, the 3D box picker
+  on the right, with a draggable divider), **Results** (the viewed
+  session's results, and Compare Sessions) and **Sessions** (the active
+  session's revision history, and every session on disk).
 
-Uploaded files (either GUI) are each saved in a folder of their own under
+Until Phase 16 (Stage 16.8, 2026-10-26) the GUI was a Streamlit app; the
+NiceGUI GUI replaced it with the same features (the parity check is in
+[reviews/stage_16_8_parity.md](reviews/stage_16_8_parity.md)).
+
+Uploaded files are each saved in a folder of their own under
 `orchestrator_output/uploads/`, so uploading another file with the same
-name, from another tab or the other GUI, never changes the file an earlier
-session docked. In the NiceGUI GUI each drop of ligand files adds to the
-list ("N ligand file(s) ready"); **Clear** empties it. A dropped file
-named like one already in the list replaces it (the chat says so): two
-files with one name would fail the run.
+name, from another browser tab, never changes the file an earlier session
+docked. Each drop of ligand files adds to the list ("N ligand file(s)
+ready"); **Clear** empties it. A multi-molecule `.sdf` counts as one file
+there and is split into one ligand per molecule when the run prepares the
+ligands. A dropped file named like one already in the list replaces it
+(the chat says so): two files with one name would fail the run.
 
-Whenever a session is active, the Chat panel shows a small **Session:
+Whenever a session is active, the chat drawer shows a small **Session:
 name (`job_id`)** line above the "Chat" title, so it stays clear which
 session you're currently in — this disappears once you click **New
 Session**/**Reset** or before you've started a first session.
@@ -42,8 +39,9 @@ Session**/**Reset** or before you've started a first session.
 
 ## Persistent Settings
 
-The sidebar **Settings** panel lets you change the LLM provider, model,
-endpoint, and API key without editing `.env` or restarting the container.
+The **Settings** dialog (the gear in the header) lets you change the LLM
+provider, model, endpoint, and API key without editing `.env` or
+restarting the container.
 
 - **LLM Provider**: `Ollama (local)`, `OpenAI`, `Anthropic`,
   `MetaCentrum (e-INFRA CZ)`, or `Other local server` (any OpenAI-compatible
@@ -65,30 +63,31 @@ endpoint, and API key without editing `.env` or restarting the container.
   MetaCentrum, Other local server). Entered per-session — **never written to
   disk**.
 
-Click **Apply settings** to rebuild the LLM client immediately and persist
+Each time the dialog opens it shows the current session's settings and asks
+Ollama for its models afresh, and again when you change the Ollama endpoint
+(press Enter or leave the field).
+
+Click **Apply settings** to rebuild the LLM client and persist
 provider/model/endpoint to `~/.docking_platform_settings.json` inside the
 container (mounted to `./cache/.docking_platform_settings.json` on the host
 via `docker-compose.yml`, so it survives both a browser refresh — which
-resets Streamlit's in-memory session — and a container restart).
+resets the page's in-memory session — and a container restart). The client
+is built before anything is saved, so settings the client rejects are
+neither saved nor used, and the error is shown in the dialog. Settings are
+per browser tab; the file on disk is shared, so a newly opened tab starts
+from the last ones applied.
 
 To reset to the values from `.env` / `docker-compose.yml`, delete
 `cache/.docking_platform_settings.json` and refresh the page.
-
-In the NiceGUI GUI (port 3001) the same fields are in the **Settings**
-dialog (the gear in the header). Each time it opens it shows the current
-session's settings and asks Ollama for its models afresh, and again when you
-change the Ollama endpoint (press Enter or leave the field). Apply builds
-the client before saving, so settings the client rejects are neither saved
-nor used, and the error is shown in the dialog. Settings are per browser
-tab, as in Streamlit; the file on disk is shared, so a newly opened tab
-starts from the last ones applied.
 
 ## Chat: Describing Your Workflow
 
 Type a request into the chat box (e.g. "Download 6lu7 and dock ATP with
 center 10 20 30 box 25 30 35") and the LLM extracts protein/ligand/box
-parameters into the Input & Parameters panel, telling you what's still
-missing if anything is.
+parameters into the Setup form, telling you what's still missing if
+anything is. **A chat message only fills in the form: docking starts when
+you click Run Docking** on the Setup tab (unlike the CLI, which asks to run
+straight away).
 
 Follow-up messages in the same chat build on what's already been
 collected rather than starting over — e.g. after the message above,
@@ -102,10 +101,10 @@ always parsed as a complete, standalone request.
 
 While a session runs, its step-by-step log streams into a **Run log**
 expander under the chat, not into the chat messages themselves, so a
-message you send mid-run stays as you typed it. In the NiceGUI GUI the chat
-input is disabled while the LLM reads a message ("Parsing with LLM...").
-If you Load a session, restore a revision, click **Run Docking** or start a
-**New Session** before it answers, the answer is not applied: it says the
+message you send mid-run stays as you typed it. The chat input is disabled
+while the LLM reads a message ("Parsing with LLM..."). If you Load a
+session, restore a revision, click **Run Docking** or start a **New
+Session** before it answers, the answer is not applied: it says the
 session changed and asks you to send the message again.
 
 ### Auto-Filling the Docking Box from the Protein
@@ -130,19 +129,22 @@ Both commands write straight into the same **Docking Box** manual fields
 every other box-setting path uses (typed values, the visual picker), so
 **Run Docking** needs no separate step afterward, and a value can still be
 fine-tuned by hand or overwritten by a later command. If no protein is
-loaded yet, the assistant asks you to load one first rather than guessing —
-this codebase never invents `center`/`box_size` values. These two commands
-are recognized directly by pattern matching, not sent to the LLM (which has
-no access to the protein's coordinates and must never guess them either).
+prepared yet but the form names one, the GUI fetches and prepares it first
+("fetching and preparing it now") and applies the command once it is ready;
+with no protein at all, the assistant asks you to give one rather than
+guessing — this codebase never invents `center`/`box_size` values. These
+two commands are recognized directly by pattern matching, not sent to the
+LLM (which has no access to the protein's coordinates and must never guess
+them either).
 
 ## Naming a Session
 
-The **Input & Parameters** panel has an optional **Session name** field, just
-above the **Run Docking** button (60 characters max). It's a free-text label
-purely for your own reference — it doesn't need to be unique, and it never
+The Setup form has an optional **Session name** field, just above the
+**Run Docking** button (60 characters max). It's a free-text label purely
+for your own reference — it doesn't need to be unique, and it never
 replaces the system-generated job ID, which remains the actual unique
 identifier on disk and everywhere else in the app. Leave it blank and the
-session just shows up under its job ID, exactly as before this field existed.
+session just shows up under its job ID.
 
 ## Choosing the Docking Algorithm
 
@@ -153,9 +155,9 @@ algorithm** selector:
   ligand), always 1 CPU per ligand, and ignores **Exhaustiveness**.
 - **Vina (Monte Carlo)** — AutoDock Vina's own search in the same binary.
   Much slower per ligand (about 1.5 minutes for 6lu7/ATP at the defaults),
-  but its search is more thorough. A **CPUs per ligand** field appears, and
-  both it and Exhaustiveness change how long each ligand takes. In the
-  NiceGUI GUI it is a number field that takes whole numbers from 1 up.
+  but its search is more thorough. A **CPUs per ligand** field appears (whole
+  numbers from 1 up), and both it and Exhaustiveness change how long each
+  ligand takes.
 
 The chat commands "use vina", "switch to PSO" and "set algorithm to vina" move
 the selector too, without an LLM call (see
@@ -163,15 +165,16 @@ the selector too, without an LLM call (see
 the fields it names: one that doesn't name an algorithm, CPUs per ligand,
 Exhaustiveness or pH leaves your values in those fields alone.
 
-**Max parallel workers** goes up to the docking service's CPU limit divided by
-CPUs per ligand, so workers × CPUs never oversubscribe it. Switching algorithm
-resets it to that algorithm's benchmarked best
+**Max parallel workers** (enabled with **Parallel ligand docking**) goes up
+to the docking service's CPU limit divided by CPUs per ligand, so workers ×
+CPUs never oversubscribe it. Switching algorithm resets it to that
+algorithm's benchmarked best
 ([BATCH_DOCKING.md](BATCH_DOCKING.md#benchmark-baseline-2026-10-05)); the
 caption under it says which. Loading a session keeps the worker count it was
 saved with.
 
-The **Current parameters** summary shows the selected algorithm, the results
-panel says which one produced a session's results ("Docked with …"), and the
+The **Current parameters** summary shows the selected algorithm, the Results
+tab says which one produced a session's results ("Docked with …"), and the
 Compare Sessions table has an **Algorithm** row. Sessions from before the
 selector existed read as Moldina (PSO), which is what they ran. Switching
 algorithm in an active session and clicking **Run Docking** redocks only
@@ -180,29 +183,31 @@ docking and visualization.
 ## Redocking After a Parameter Change
 
 The GUI keeps a continuing **session** for the job you just ran, the same way
-the CLI's `--interactive` mode does: `st.session_state.interactive_session`
-holds one `InteractiveSession` bound to that job's `WorkflowStateManager`, so
-editing parameters and clicking **Run Docking** again doesn't start a
-brand-new, unrelated session — it redocks the same one.
+the CLI's `--interactive` mode does: each browser tab's state holds one
+`InteractiveSession` bound to that job's `WorkflowStateManager`, so editing
+parameters and clicking **Run Docking** again doesn't start a brand-new,
+unrelated session — it redocks the same one.
 
-- **First click** (no active session yet): behaves exactly as before — a new
-  job ID is generated and all five steps run.
+- **First click** (no active session yet): a new job ID is generated and all
+  five steps run.
 - **Later clicks**, with a session already active: the form's current
   parameters are diffed against the last-saved checkpoint. If nothing
   changed, you're told there's nothing to redock. If something did, only the
   steps that actually depend on the changed parameter(s) are planned for
   re-execution (e.g. changing the docking box only reruns **Run docking**
   and **Generate visualization** — protein/ligand preparation is skipped).
-  The **Run Docking**/**New Session**/**Reset** buttons are replaced by a
-  **rerun plan** summary and a **Confirm redock** / **Cancel** button pair —
-  nothing runs until you click **Confirm redock**, mirroring the CLI's
-  `[Y/n]` prompt before a partial rerun.
+  A **Confirm redock** dialog lists the rerun plan — nothing runs until you
+  click **Confirm redock**, mirroring the CLI's `[Y/n]` prompt before a
+  partial rerun; **Cancel** closes it.
+- **Run Docking** is off while this tab's session is running (its tooltip
+  says why): a redock confirmed mid-run would replace the running job and
+  leave it running unseen.
 - If a required parameter for one of the planned steps is missing (e.g. you
   cleared the docking box), redocking is blocked with an error naming exactly
   which parameter and step need it, instead of silently failing partway
   through.
 - `job.log` and `workflow_results.json` for that session accumulate across
-  every redock — the results panel and downloads always reflect the full
+  every redock — the Results tab and downloads always reflect the full
   history, not just the most recent partial run.
 - Clicking **Run Docking** checkpoints the new parameters straight away,
   before you confirm. If you then **Cancel** (or the run is stopped or
@@ -220,11 +225,11 @@ brand-new, unrelated session — it redocks the same one.
 
 Every parameter checkpoint (first run, each redock, each restore) is a
 numbered **revision** of the session. While a session is active, the
-**Revision history** expander under **Current parameters** shows them as a
-table (revision, time, event, details), with a caption naming the revision
-the parameters are currently at.
+**Revision history** panel at the top of the **Sessions** tab (under
+**Active session**) shows them as a table (revision, time, event, details),
+with a caption naming the revision the parameters are currently at.
 
-To go back to earlier parameters, pick a revision in the expander's
+To go back to earlier parameters, pick a revision in the panel's
 **Revision** dropdown and click **Restore revision**. The dropdown lists only
 revisions that have parameters. Restoring:
 
@@ -234,14 +239,15 @@ revisions that have parameters. Restoring:
 - is recorded as a new `undo_restore` revision, so it is in `job.log` and
   can itself be undone;
 - discards any **Save Session** draft and any staged redock plan;
-- does **not** change the results panel, which still shows the last run.
+- does **not** change the Results tab, which still shows the last run.
   Click **Run Docking** afterwards. The plan reruns every step the restored
   parameters affect (normally all of them), even though the form now matches
   the checkpoint.
 
 **Restore revision** is disabled while the session is running: the running
 job re-reads the latest parameters before each step, so a restore would
-change it mid-run.
+change it mid-run. It is also off while results are being saved or a
+session deleted.
 
 The same commands work in chat, without an LLM call: `show history` (or
 `history`) posts the table, and `undo 3` (or `undo rev 3`) restores
@@ -250,16 +256,11 @@ sentence like "undo the box change and set exhaustiveness to 16", asks which
 revision instead of guessing. Like the dropdown, chat only restores
 revisions marked `[params]` in the table.
 
-In the NiceGUI GUI the **Revision history** panel is at the top of the
-**Sessions** tab, under **Active session**, rather than in the form. It
-works the same way, and is also off while results are being saved or a
-session deleted.
-
 ## Saving Results Bundles
 
 To keep a copy of a run's results under a name of your own, before a redock
-replaces them, open **Save results as…** in the results panel. It sits right
-below the 3D viewer, above **Session Log**.
+replaces them, open **Save results as…** on the Results tab. It sits right
+below the 3D viewer and its grids, above **Session Log**.
 It appears only when you view the **active** session's completed results.
 Enter a **Bundle name**, choose what to **Include** (docking + visualization,
 docking results only, or visualization only) and click **Save results
@@ -274,7 +275,7 @@ orchestrator_output/job_<id>/saved_results/<name>/
 ```
 
 This is the same layout the CLI's `save results as <name>` writes. The chat
-replies with the bundle's path and contents. The results panel's **Other
+replies with the bundle's path and contents. The Results tab's **Other
 Files** downloads don't list bundle files, since they are copies of files
 already listed there.
 
@@ -303,10 +304,11 @@ trial_a` or `save visualization as trial_a`. If the name exists, the chat
 points you to the same Overwrite / Save as buttons.
 
 Copying a session's results can take a while (half a minute for a large
-session on a Docker Desktop bind mount). The NiceGUI GUI copies in the
-background: the chat shows "Saving results...", and the chat input,
-**Run Docking**, **New Session** and **Reset** are off until the reply
-comes, while other tabs keep working.
+session on a Docker Desktop bind mount), so it runs in the background, from
+the panel, the conflict buttons or the chat: the chat shows "Saving
+results...", and the chat input, **Run Docking**, **New Session** and
+**Reset** are off until the reply comes, while other browser tabs keep
+working.
 
 Not to be confused with **Save Session** (next section), which saves the
 form's *parameters* as a draft, not results.
@@ -326,8 +328,7 @@ earlier, so setting a field back and clicking **Save Session** really undoes
 the saved edit (otherwise **Load** would bring the draft back).
 
 If you edit a parameter and switch sessions **without** clicking **Save
-Session** first, that edit is lost, the same as before this button
-existed — it's an explicit, not automatic, save.
+Session** first, that edit is lost — it's an explicit, not automatic, save.
 
 ## Starting Fresh: New Session vs. Reset
 
@@ -346,82 +347,76 @@ different ways to move on, each preserving something different:
   genuinely blank slate. Disabled while this browser tab has a session
   actively running, for the same reason as New Session above.
 
+Both are also off while results are being saved or a session deleted.
+
 ## Session History
 
-Every completed session (one whose `workflow_results.json` has
-`"status": "completed"`) appears as a row in the sidebar's **Session
-History** list, newest first. If you gave the session a name, that name is
-shown in bold ahead of the job ID; otherwise the row falls back to the job
-ID, protein ID, and ligand count only. The list is rebuilt from disk on
-every page load, so it reflects sessions run from the GUI or the CLI
+The **Sessions** tab lists every completed session (one whose
+`workflow_results.json` has `"status": "completed"`) under **Session
+History**, newest first — all of them, not only the newest few. If you
+gave the session a name, that name is shown in bold ahead of the job ID;
+otherwise the row falls back to the job ID, protein ID, and ligand count
+only. The lists reflect sessions run from the GUI or the CLI
 (`nlp_orchestrator.py`). Each row has:
 
 - A **checkbox** — select 2+ sessions to compare (see below).
-- A **Load** button — both shows that session's results in the **Session
-  Viewer** tab (see below) *and* resumes it as the active interactive
-  session, so you can immediately continue redocking it (with a changed
-  parameter, say) instead of only viewing it read-only. This also means a
-  browser refresh followed by **Load** picks a session back up exactly where
-  you left off, rather than starting a new one on the next "Run Docking".
-  It also restores that session's parameters into the **Current
-  parameters** panel and the input widgets (preferring anything saved via
-  **Save Session** over the last checkpoint, if the two differ), and the
-  session indicator above the chat updates to it. Every **Load** button
-  is disabled while this browser tab has a session actively running —
-  switching sessions mid-run would leave the running one orphaned in the
-  background, same as New Session/Reset above.
-- A **Rename** button — toggles an inline text field to change the
-  session's name after the fact (e.g. once you know which run turned out to
-  matter). Click **Save** to write the new name straight into that session's
-  `workflow_results.json`, or **Cancel** to leave it unchanged.
-- A **Delete** button — toggles a warning plus **Confirm delete** /
-  **Cancel**; confirming permanently removes the session's entire output
-  directory. Disabled (with an explanatory caption) if this browser tab is
-  currently running a redock of that same session — use **Stop** (see
-  below) first. This only detects the current tab's own in-progress run; it
-  cannot see another browser tab or the CLI acting on the same job ID.
+- A **Load** button — opens the **Results** tab with that session's results
+  *and* resumes it as the active interactive session, so you can
+  immediately continue redocking it (with a changed parameter, say) instead
+  of only viewing it read-only. This also means a browser refresh followed
+  by **Load** picks a session back up exactly where you left off, rather
+  than starting a new one on the next "Run Docking". It also restores that
+  session's parameters into the **Current parameters** summary and the
+  Setup form (preferring anything saved via **Save Session** over the last
+  checkpoint, if the two differ), and the session indicator above the chat
+  updates to it. Every **Load** button is disabled while this browser tab
+  has a session actively running — switching sessions mid-run would leave
+  the running one orphaned in the background, same as New Session/Reset
+  above.
+- A **Rename** button — opens an inline text field to change the session's
+  name after the fact (e.g. once you know which run turned out to matter).
+  Click **Save** to write the new name straight into that session's
+  `workflow_results.json`, or **Cancel** to leave it unchanged. The new name
+  shows in its row at once.
+- A **Delete** button — asks in a dialog ("Delete session … and all its
+  files? This cannot be undone.") with **Confirm delete** / **Cancel**;
+  confirming permanently removes the session's entire output directory, in
+  the background (the chat input shows "Deleting session..." meanwhile).
+  Disabled if this browser tab is currently running a redock of that same
+  session — use **Stop** (see below) first. This only detects the current
+  tab's own in-progress run; it cannot see another browser tab or the CLI
+  acting on the same job ID.
+
+While results are being saved (or a session deleted), Load, Delete, Rename
+and Restore revision are off, as Run, New Session and Reset are: deleting
+the session being copied, or loading another one, would leave the save
+writing into, or reporting to, the wrong place.
+
+**The lists are read from disk** when you open the tab, after your own
+Rename / Delete, while the tab is open when a run finishes or another
+session becomes active, and on **Refresh**. Reading them parses every
+session's results file, which takes seconds with many sessions, so a chat
+reply (Save Session, `undo`) re-reads only the revision history. A session
+another tab or the CLI finished meanwhile shows up on the next read, so
+click **Refresh** if you are waiting for one.
 
 ## Failed Sessions
 
 A session that ended with `"status": "failed"` or `"cancelled"` (stopped via
 the **Stop** button, see below) doesn't show up in Session History — it
-appears instead in the sidebar's **Failed Sessions** list, with the same
-Load/Rename/Delete controls, plus a short preview of the first recorded
-error in place of the ligand count. This keeps a failed or intentionally
-stopped run from silently disappearing while still keeping it out of the
-"successful runs" list Session History and job comparison rely on.
-
-### The NiceGUI Sessions tab
-
-The NiceGUI GUI (port 3001) has these lists on its **Sessions** tab:
-**Active session** with the revision history (see "Revision History and
-Undo"), then **Session History** and **Failed Sessions**, each row with
-the same Load / Rename / Delete controls. Where it differs:
-
-- **Every session is listed,** not only the 10 newest, in each list.
-- **Load opens the Results tab** with the loaded session, and fills the
-  Setup form as in Streamlit.
-- **Delete asks in a dialog** ("Delete session … and all its files?
-  This cannot be undone.") with **Confirm delete** / **Cancel**. The
-  folder is removed in the background; the chat input shows "Deleting
-  session..." meanwhile.
-- **While results are being saved** (or a session deleted), Load, Delete,
-  Rename and Restore revision are off, as Run, New Session and Reset are:
-  deleting the session being copied, or loading another one, would leave
-  the save writing into, or reporting to, the wrong place.
-- **The lists are read from disk** when you open the tab, after your own
-  Rename / Delete, while the tab is open when a run finishes or another
-  session becomes active, and on **Refresh**. Reading them parses every
-  session's results file, which takes seconds with many sessions, so a
-  chat reply (Save Session, `undo`) re-reads only the revision history. A
-  session another tab or the CLI finished meanwhile shows up on the next
-  read, so click **Refresh** if you are waiting for one. A rename shows in
-  its row at once.
+appears instead in the Sessions tab's **Failed Sessions** list, with the
+same Load/Rename/Delete controls, plus a short preview of the first
+recorded error in place of the ligand count. This keeps a failed or
+intentionally stopped run from silently disappearing while still keeping it
+out of the "successful runs" list Session History and job comparison rely
+on.
 
 ## Stopping a Running Session
 
-While a session is running, the results panel shows a **Stop** button next
-to the progress bar. What happens depends on the step that's running:
+While a session is running, the Setup tab shows a run card under the
+buttons: "Session … is running...", a progress bar ("N / M ligands
+docked"), the ligands being docked right now, and a **Stop** button. What
+happens depends on the step that's running:
 
 - **During docking**, the stop takes effect within about a second: no
   further ligands start, and any ligand being docked at that moment has
@@ -436,16 +431,20 @@ The session then settles as `"cancelled"` in `job.log` and
 under **Failed Sessions** so it can be inspected, redocked, or deleted like
 any other non-completed session. Ligands docked before the stop keep their
 output files in `docking_results/`, but the session isn't treated as
-docked: a later redock docks every ligand again.
+docked: a later redock docks every ligand again. A stopped redock marks the
+whole session cancelled the same way, so the Results tab no longer shows
+the earlier run's results.
 
 ## Viewing a Session (Live or Historical)
 
-The Results panel's **Session Viewer** tab shows either:
+The Results tab's **Session Viewer** shows either:
 
-- the session you just started with **Run Docking** — progress streams in
-  while it runs, then the chart/image/downloads appear on completion; or
-- a past session you clicked **Load** on in the sidebar — its results are
-  read directly from `workflow_results.json` on disk, so this works for
+- the session you just started with **Run Docking** — while it runs, the tab
+  says so and shows the Session Log as it grows (progress and **Stop** are
+  on the Setup tab); the tab **opens by itself** when the run (or redock)
+  finishes, completed or failed (a run you stopped leaves you on Setup); or
+- a past session you clicked **Load** on in the Sessions tab — its results
+  are read directly from `workflow_results.json` on disk, so this works for
   sessions from a previous browser session or run via the CLI, with no
   re-run needed.
 
@@ -460,21 +459,22 @@ Once a session's results are showing, you get:
   window so a long chart doesn't push the 3D viewer down the page.
 - An in-browser **3Dmol.js** viewer (no PyMOL, no noVNC — renders entirely
   client-side): the prepared receptor as cartoon, and each docked ligand as
-  colored sticks (green = best affinity, red = worst).
-- A **Session Log** expander directly below the viewer (running, completed,
-  or failed/cancelled) — the last ~500 lines of `job.log`, the same
-  human-readable narration the CLI's interactive session writes (start/step/
-  finish lines, parameter diffs, full tracebacks on failure), plus a button
-  to download the whole file. When a session has no visualization yet (still
-  running, or failed before the `visualize` step), the log still appears in
-  this same spot — it isn't skipped just because there's nothing to render
-  above it.
-- If a ligand has more than one docked pose, a **Pose per ligand** dropdown
-  below the log switches which mode is shown in the viewer above, labeled
-  with that pose's affinity.
+  colored sticks (green = best affinity, red = worst). It keeps its camera,
+  as in the box picker.
+- Beside the viewer (drag the divider), a **Ligands** grid listing every
+  docked ligand with its best affinity, number of poses and the pose shown.
+  Click a ligand to list its poses below, then click a pose to show it in
+  the viewer; the caption names the pose and its affinity.
+- **Save results as…** (above), then a **Session Log** expander (running,
+  completed, or failed/cancelled) — the last ~500 lines of `job.log`, the
+  same human-readable narration the CLI's interactive session writes
+  (start/step/finish lines, parameter diffs, full tracebacks on failure),
+  plus a link to download the whole file. When a session has no
+  visualization yet (still running, or failed before the `visualize` step),
+  the log still appears.
 - A **Docked Poses** download section: a single **Download format** picker
   (`pdbqt` / `pdb` / `sdf` / `mol2`, defaulting to `pdbqt` — Moldina's native
-  output) applies to every ligand's download button, so you can grab the
+  output) applies to every ligand's download link, so you can grab the
   whole multi-pose file per ligand in whichever format your downstream tool
   expects. PDB/SDF/MOL2 are generated once per session (during the same step
   that used to run PyMOL) via a Meeko PDBQT→RDKit round trip that restores
@@ -483,39 +483,18 @@ Once a session's results are showing, you get:
 - An **Other Files** section below it for anything else in the session's
   directory (e.g. `workflow_results.json`).
 
-### The NiceGUI Results tab
-
-The NiceGUI GUI (port 3001) shows the same things in its **Results** tab,
-under **Session Viewer** (and **Compare Sessions**). Where it differs:
-
-- **It opens by itself** when a run (or redock) finishes, completed or
-  failed. A run you stopped leaves you on Setup.
-- **While a run goes,** the tab says it is running and shows the Session
-  Log as it grows. The progress bar and **Stop** are on the Setup tab.
-- **The viewer and the pose pickers sit side by side** (drag the divider).
-  The **Ligands** grid lists every docked ligand with its best affinity,
-  number of poses and the pose shown. Click a ligand to list its poses
-  below, then click a pose to show it. The viewer keeps its camera, as
-  in the box picker.
-- **The order** below the viewer: **Save results as…**, **Session Log**,
-  then the downloads.
-- **Downloads are links.** The browser fetches each file straight from the
-  `ui-nice` service at `/files/<job_id>/<path>`, so no file is held in
-  memory and the page doesn't slow down with large sessions. The route
-  serves only files inside that session's folder. `saved_results/`
-  bundles, other sessions, uploads and anything outside are refused
-  (404).
-- **Saving a bundle** runs in the background, from the panel, from the
-  conflict's **Overwrite** / **Save as …** buttons, or from the chat. The
-  chat input shows "Saving results..." until it is done, and the other
-  browser tabs stay responsive.
+**Downloads are links.** The browser fetches each file straight from the
+`ui` service at `/files/<job_id>/<path>`, so no file is held in memory and
+the page doesn't slow down with large sessions. The route serves only files
+inside that session's folder: `saved_results/` bundles, other sessions,
+uploads and anything outside are refused (404).
 
 ### Picking the Docking Box Visually
 
-Before running a session, the **Input & Parameters** panel has a **Pick
-Docking Box Visually** control: click **Load receptor for box picking** to
-run just enough of the workflow to fetch and prepare the receptor (no
-ligands, no docking yet), then the same 3Dmol.js viewer appears with:
+The right side of the Setup tab has a **Pick Docking Box Visually** control:
+click **Load receptor for box picking** to run just enough of the workflow
+to fetch and prepare the receptor (no ligands, no docking yet), then the
+same 3Dmol.js viewer appears with:
 
 - **X − / X + … Z − / Z +** buttons above the viewer — grow or shrink the
   box along one axis by 1 Å per click (never below 1 Å).
@@ -527,7 +506,7 @@ ligands, no docking yet), then the same 3Dmol.js viewer appears with:
 - Red/green/blue arrows from the box center, labeled **X**/**Y**/**Z**,
   show which box edge each Box size field controls.
 
-The viewer always draws exactly what the **Docking Box** fields below it
+The viewer always draws exactly what the **Docking Box** fields on the left
 hold — those six fields are the only copy of the box. A click writes the
 center into them, the − / + buttons write the size, and anything else that
 sets the box (typing, a chat message with coordinates, a geometry command,
@@ -535,19 +514,17 @@ sets the box (typing, a chat message with coordinates, a geometry command,
 already set shows as soon as the receptor loads, and **Run Docking** needs
 no separate step.
 
+The viewer keeps your camera: rotate or zoom it, then click an atom, press
+− / + or type in the Docking Box fields, and only the box redraws — the view
+stays where you left it. The clicked atom's label stays while the box is
+centred on that atom. A failed receptor load's error stays shown until the
+next **Load receptor for box picking**.
+
 While the Box size fields are empty (or hold something that isn't a
 positive number), the viewer draws a 20 Å placeholder and says so under
 the viewer; a click or a − / + step fills that 20 Å size into all three
 fields (a step then changes its own axis, e.g. **X +** gives 21 / 20 / 20),
 so the box you saw is the box that gets docked.
-
-In the NiceGUI GUI the picker sits on the right of the Setup tab, next to
-the form, and its viewer keeps your camera. Rotate or zoom it, then click
-an atom, press − / + or type in the Docking Box fields: only the box
-redraws, and the view stays where you left it. Streamlit rebuilt the whole
-scene on every change and reset the camera. The clicked atom's label stays
-while the box is centred on that atom. A failed receptor load's error
-stays shown until the next **Load receptor for box picking**.
 
 This is a lighter, purely in-browser alternative to the CLI's
 `pymol-interactive`-based box selection (see
@@ -569,30 +546,26 @@ for the new protein if you want to pick visually.
 
 ## Comparing Sessions
 
-Check two or more sessions in the sidebar's Session History and click
-**Compare selected sessions**. The **Compare Sessions** tab in the Results
-panel shows a table with ligands as rows and sessions as columns — column
-headers use each session's name when it has one, falling back to the job ID
-otherwise; cells are the best binding affinity (kcal/mol) for that ligand in
-that session, or "N/A" if the ligand wasn't docked in that session. An
-**Algorithm** row under the headers names the docking algorithm each session
-used. The
+Tick two or more sessions in the Sessions tab's Session History and click
+**Compare selected sessions**: it opens **Results › Compare Sessions**, a
+table with ligands as rows and sessions as columns — column headers use each
+session's name when it has one, falling back to the job ID otherwise; cells
+are the best binding affinity (kcal/mol) for that ligand in that session,
+or "N/A" if the ligand wasn't docked in that session. An **Algorithm** row
+under the headers names the docking algorithm each session used. The
 strongest predicted binder per ligand (most negative kcal/mol) is
-highlighted green — rendered as a plain HTML table (not `st.dataframe`) so
-the highlight stays readable in both light and dark theme. When two of the
-sessions share a name, each column header gets its job ID in brackets, so
-they stay apart (before Stage 16.7 such a pair made the table fail).
-
-In the NiceGUI GUI, tick the sessions on the **Sessions** tab; **Compare
-selected sessions** appears once two are ticked and opens **Results ›
-Compare Sessions**.
+highlighted green — rendered as a plain HTML table so the highlight stays
+readable in both light and dark theme. When two of the sessions share a
+name, each column header gets its job ID in brackets, so they stay apart
+(before Stage 16.7 such a pair made the table fail).
 
 ## Performance
 
-Phase 16 replaces this Streamlit GUI with NiceGUI (`dev_plan.md`, Part 9).
+Phase 16 replaced the Streamlit GUI with NiceGUI (`dev_plan.md`, Part 9).
 To show whether the port helped, the Streamlit GUI was timed before it
-(Stage 16.0), and the NiceGUI GUI is timed after it (Stage 16.8). Both use
-the same tools and the same reference session.
+(Stage 16.0), and the NiceGUI GUI after it (Stage 16.8). Both used the same
+tools and the same reference session; the Streamlit numbers are kept below
+as the baseline.
 
 ### Tools
 
@@ -600,19 +573,19 @@ the same tools and the same reference session.
 |---|---|
 | Interaction latency: from a click (or Enter in a text field) until the page stops changing for 300 ms | [`benchmark_gui_latency.js`](../benchmark_gui_latency.js), a DevTools console snippet. By hand: paste it into the console (Chrome blocks the first paste into DevTools; type `allow pasting` and press Enter, then paste again), do the action 5+ times, letting the page settle in between, then run `__lat.summary("<label>")`. For chat commands, run `__lat.summary("<label>", "enter")` instead, so the click that focused the chat box is left out. The median is the figure to record. |
 | GUI container CPU% and memory | [`benchmark_gui.py`](../benchmark_gui.py), `docker stats` on `mcp-ui`. Either for a fixed `--duration`, or with `--from-driver` between the driver's `SAMPLE-START` / `SAMPLE-STOP` lines. |
-| Viewer re-render time and render count | `?perf` in `ui/components/mol_viewer/index.html` (Streamlit) and `ui_nice/mol_viewer.js` (NiceGUI, `http://localhost:3001/?perf`; there a full scene build logs `mode=box_picker` / `view`, and a box-only redraw `mode=box`). With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
-| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. `--gui streamlit` or `--gui nicegui` (the default) picks the selectors; the scenarios are the same. |
+| Viewer re-render time and render count | `?perf` in `ui_nice/mol_viewer.js`: a full scene build logs `mode=box_picker` / `view`, a box-only redraw `mode=box`, a pose change `mode=ligands`. (The Streamlit viewer of 16.0 logged the same line.) With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
+| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. Its scenarios are the ones 16.0 timed Streamlit with (Streamlit's selectors went with it in 16.8). |
 | Latency without Quasar's animations | Set `__lat.ignore = [".q-ripple", ".q-tooltip"]` in the snippet (the driver does this for NiceGUI). A sample still closes after 300 ms with no change at all, but `median_filtered_ms` ends at the last change outside those elements. Both medians are recorded; the raw one compares with Streamlit, which has neither animation. |
 
 The scripted measurement is one pipeline, run from the repo root in Git
 Bash, with the stack running:
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui-nice     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --gui nicegui --out /out/<date>_gui_nicegui_browser.json --screenshot /out/<date>_gui_nicegui_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui-nice            --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
+MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --out /out/<date>_gui_nicegui_browser.json --screenshot /out/<date>_gui_nicegui_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui            --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
 ```
 
-For the Streamlit GUI (16.0) it was `container:mcp-ui`, `--gui streamlit`
-and `--container mcp-ui`.
+(The 16.8 run used `mcp-ui-nice`, the NiceGUI container on port 3001 before
+the cutover, and `--gui nicegui`, an option removed with Streamlit.)
 
 The pipeline starts a real docking run on the live stack, so a new session
 appears in Session History. It takes about 5 minutes. The Box X steps are
@@ -636,11 +609,11 @@ made in + / − pairs, so the box ends where it started.
   - **running**: from Run Docking until the Stop button goes away.
   - **completed**: the finished session, first left idle for 60 s, then
     clicked.
-- **Not measured: a 295-ligand session.** Session History lists only the 10
-  newest sessions, so `job_20260817_111507_854b2c` can't be loaded from
-  it. Measuring a large session needs a fresh 295-ligand run, about
-  11 minutes of sequential docking. Add it in 16.8 if the 25-ligand numbers
-  leave the question open.
+- **Not measured: a 295-ligand session.** In 16.0 Streamlit's Session
+  History listed only the 10 newest sessions, so
+  `job_20260817_111507_854b2c` couldn't be loaded from it, and a fresh
+  295-ligand run takes about 11 minutes. 16.8 judged the 25-ligand numbers
+  enough (see below).
 
 ### Results
 
@@ -754,18 +727,18 @@ Measured 2026-10-12 in the setup phase only (the full re-time is 16.8).
 
 ## Code Structure (for developers)
 
-Since Phase 16 (Stages 16.1–16.2, plus 16.4's additions) the GUI's logic is
-split from Streamlit, so the NiceGUI port (`ui_nice/`, below) reuses it
-rather than rewriting it:
+Since Phase 16 the GUI's logic lives in framework-free `ui/core/`
+(extracted from the Streamlit page in Stages 16.1–16.2, before the NiceGUI
+port), and `ui_nice/` draws it:
 
-- **`ui/core/`** — framework-free, no `streamlit` or `nicegui` import:
+- **`ui/core/`** — framework-free, no GUI framework import:
   - `state.py`: `GuiSession`, one browser client's state, never module-global.
   - `form.py`: form ↔ workflow parameters, the "Current parameters"
     summary, the worker-count bound, Protein/Ligand ID commits, New Session
     and Reset.
   - `uploads.py`: saving an uploaded file (basename only, in a new
     directory of its own under the shared upload dir) and taking uploads
-    into the parameters (NiceGUI appends each drop: `append=True`).
+    into the parameters (each drop is added to the list).
   - `run_control.py`: Run, redock plan/confirm/cancel, Stop, Save Session,
     bridge polling. A run's log lines go to `state.run_log`, a fresh list
     per run, never into the chat messages.
@@ -804,17 +777,10 @@ rather than rewriting it:
   `ui.core.state.reply()`. It returns an
   `Outcome`: `refresh` to redraw the page, `error` to show next to the
   control. The bridge class and the LLM parse functions are passed in, so
-  tests swap in fakes. File reads that Streamlit caches take a `read_bytes`
+  tests swap in fakes. Helpers that read result files take a `read_bytes`
   callable.
-- **`ui/session_state.py`** — the Streamlit adapter. `gui_session()` is a
-  view of `st.session_state` with `GuiSession`'s attributes. The page's
-  keys are unchanged (`_job_done`, `_pending_rerun`, the `param_*` widget
-  keys), so the `ui/core` functions run against it as they are.
-- **`ui/app.py`** — the Streamlit page; its handlers are thin wrappers that
-  carry out an `Outcome` with `st.error` / `st.rerun()`, and its render
-  functions draw `ui/core`'s data with Streamlit widgets.
-- **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui-nice`
-  service on port 3001 as the non-root `appuser`:
+- **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui`
+  service on port 3000 as the non-root `appuser`:
   - `app.py`: the `/` page, which gives each client its own `GuiSession`
     (with the LLM settings and client), the `/health` route the compose
     healthcheck uses, and (Stage 16.6) the `/files/{job_id}/{path}`
@@ -851,12 +817,12 @@ rather than rewriting it:
     receptor; a receptor that can't be read is shown with a Reload button
     and not read again. It draws the Docking Box fields on every `sync()`.
   - `mol_viewer.py` + `mol_viewer.js` (Stage 16.5): the 3Dmol.js viewer
-    as a custom element, with the scene code ported from
-    `ui/components/mol_viewer/index.html`. One viewer per element: the
+    as a custom element (scene code first written for the Streamlit
+    viewer). One viewer per element: the
     scene is built once, and `set_box()` / `set_ligands()` redraw only the
     box or the poses by `run_method`, so the camera is kept. They never
     use `update()`, which would resend the receptor PDB. The 3Dmol bundle
-    is served from `/mol-viewer-vendor`.
+    (`ui/components/mol_viewer/vendor/`) is served from `/mol-viewer-vendor`.
   - `results_tab.py` (Stage 16.6): the Results tab. Like the box picker,
     its `sync()` reads no file. When what is shown changes (a run
     finishing, a redock, a Load, New Session), one `run.io_bound` trip
@@ -881,8 +847,8 @@ rather than rewriting it:
     drawer. Widgets and `state.form` are kept in step explicitly (change
     handlers write the form; `sync()` writes it back), not with
     `bind_value`. The LLM parse runs in `run.io_bound`.
-  - `pytest.ini`: the `ui-nice` test tier (see
-    [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#gui-nicegui-tests)).
+  - `pytest.ini`: the GUI test tier (see
+    [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#gui-tests)).
 - **`ui/orchestrator_bridge.py`** gives each run its own log. The bridge
   passes `WorkflowOrchestrator` an `on_message` sink that queues the step
   messages line by line (the CLI keeps the default, `print`), and nothing

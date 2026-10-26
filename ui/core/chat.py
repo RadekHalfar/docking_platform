@@ -1,7 +1,6 @@
 """The chat: deterministic commands and the LLM parameter parse (Phase 16,
 Stage 16.2).
 
-Moved unchanged in behaviour from ``ui/app.py``'s ``_on_chat_submit``.
 :func:`submit` posts the user's message and answers it if it is a command
 (geometry, algorithm, ``show history`` / ``undo``, ``save ... as``);
 otherwise :func:`answer_with_llm` parses it.
@@ -17,7 +16,7 @@ Two commands do slow file work: a geometry command reads the receptor, and
 ``save ... as`` copies the results into a bundle (tens of seconds for a
 real session on a Docker Desktop bind mount, Review Stage R2). A GUI with
 an event loop passes *apply_geometry* / *run_save* to :func:`submit` to
-run those off it; without them they run inline (Streamlit).
+run those off it; without them they run inline (as the tests do).
 """
 from __future__ import annotations
 

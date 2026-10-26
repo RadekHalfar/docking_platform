@@ -28,7 +28,7 @@ import webbrowser
 from pathlib import Path
 from typing import List, Optional
 
-HEALTH_URL = "http://localhost:3000/_stcore/health"
+HEALTH_URL = "http://localhost:3000/health"
 DOCKER_WINDOWS_URL = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
 DOCKER_MAC_URL = "https://desktop.docker.com/mac/main/arm64/Docker.dmg"
 DOCKER_LINUX_SCRIPT_URL = "https://get.docker.com"

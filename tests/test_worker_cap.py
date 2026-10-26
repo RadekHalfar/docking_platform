@@ -1,4 +1,4 @@
-"""Tests for ui.worker_cap.detect_moldina_worker_cap (no Streamlit dependency)."""
+"""Tests for ui.worker_cap.detect_moldina_worker_cap (no GUI framework dependency)."""
 from __future__ import annotations
 
 import json

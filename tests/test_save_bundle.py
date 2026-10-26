@@ -315,8 +315,9 @@ def test_timestamped_bundle_name_truncates_long_names_to_stay_valid(tmp_path):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_saved_results_dir_is_writable_by_every_uid(job_dir, umask_022):
-    # Phase 16, Stage 16.3: a bundle saved from one GUI (root Streamlit)
-    # must not stop the other (non-root NiceGUI) saving the next one.
+    # Phase 16, Stage 16.3: a bundle saved by one uid (e.g. the former
+    # root Streamlit GUI) must not stop another (the non-root GUI) saving
+    # the next one.
     result = save_results_bundle(job_dir, "trial_a", "all", 5, PARAMS)
     assert result["success"] is True
     assert (job_dir / "saved_results").stat().st_mode & 0o777 == 0o777

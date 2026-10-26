@@ -475,8 +475,8 @@ def test_saved_parameters_are_stored_full(mgr):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_job_and_checkpoint_dirs_are_writable_by_every_uid(tmp_path, umask_022):
-    # Two GUIs running as different uids (root Streamlit, non-root NiceGUI)
-    # write the same session's checkpoints.
+    # Different uids (the non-root GUI, sessions the former root Streamlit
+    # GUI created) write the same session's checkpoints.
     mgr = WorkflowStateManager(tmp_path / "job_shared")
     assert mgr.job_dir.stat().st_mode & 0o777 == 0o777
     assert mgr.checkpoints_dir.stat().st_mode & 0o777 == 0o777

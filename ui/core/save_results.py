@@ -1,7 +1,7 @@
 """Save results as… -- copy the active session's results into a named
 bundle (Phase 16, Stage 16.2).
 
-Moved unchanged in behaviour from ``ui/app.py``. Shared by the results
+Shared by the results
 panel's controls and the chat's ``save results/docking/visualization as
 <name>`` command. A name that already exists is not an error: it records
 ``state.save_conflict``, which the panel offers to resolve as Overwrite /
@@ -170,17 +170,6 @@ def plan_conflict_save(
         return None, None
     name = conflict["name"] if overwrite else conflict["suggested"]
     return plan_save(state, output_base, name, conflict["scope"], overwrite=overwrite)
-
-
-def resolve_save_conflict(state, output_base: Path, *, overwrite: bool) -> Optional[str]:
-    """The conflict's buttons, all inline (Streamlit): save again and
-    return the reply, or None with no conflict. NiceGUI copies off its
-    event loop instead: :func:`plan_conflict_save`, then :func:`write_bundle`
-    in ``run.io_bound`` (Review Stage R2, Deferred #2)."""
-    message, job = plan_conflict_save(state, output_base, overwrite=overwrite)
-    if job is None:
-        return message
-    return finish_save(state, job, write_bundle(job))
 
 
 def cancel_save_conflict(state) -> None:

@@ -393,85 +393,37 @@ docker compose --profile dev run --rm \
 
 `SERVICE_HOST=host.docker.internal` allows containerized tests to reach host-published service ports.
 
-### GUI (Streamlit) Unit Tests
+### GUI Tests
 
-`ui/app.py` and `ui/session_state.py` import `streamlit`, which is
-deliberately *not* installed in `script-runner`'s image (or in CI's
-`requirements.txt`) — only the `ui` container's own image has it
-(`Dockerfile.ui` layers streamlit/pandas/plotly on top of the same
-`mcp-docking-base:latest` `script-runner` uses, so `ui` already has
-`pytest`/`pytest-mock` too, no extra install needed). Tests that need
-streamlit (`tests/test_ui_*.py`) use `pytest.importorskip("streamlit")`, so
-they're silently skipped — not errored — under the default suite above.
-Run them for real via the `ui` image:
+`nicegui` and `pytest-asyncio` are only in the `ui` service's image
+(`Dockerfile.ui`), not in `script-runner`'s or CI's `requirements.txt`, so
+`tests/test_nicegui_*.py` files that need them `pytest.importorskip("nicegui")`
+and skip under the default suite. Run them for real via the `ui` image, with
+their own pytest config:
 
 ```bash
-docker compose run --rm ui python -m pytest tests/test_ui_*.py -v
-```
-
-This is a third, explicitly-invoked test tier (alongside the hermetic
-default and the opt-in `integration` marker) — not wired into CI, since
-CI's `requirements.txt`-based environment mirrors `script-runner`'s, not
-`ui`'s. Two kinds of test live in this tier:
-
-- **Helper/state tests** (`tests/test_ui_app_helpers.py`,
-  `tests/test_ui_session_state.py`, `tests/test_ui_streamlit_adapter.py`)
-  call non-widget functions directly (`_collect_form_params`,
-  `_handle_protein_geometry_command`, `apply_parsed_params`,
-  `start_new_session`, the `gui_session()` view, etc.).
-- **Render tests** (`tests/test_ui_apptest.py`, Phase 13) run the whole
-  page through Streamlit's `AppTest` harness (`streamlit.testing.v1`) and
-  assert on what was actually rendered — chat replies, sidebar session
-  rows, results panel, box picker. The `app` fixture keeps them hermetic;
-  reuse it for new render tests rather than rebuilding the setup:
-  - Ollama's model list is stubbed (the settings form otherwise makes a
-    real HTTP request on first render), and `ui.settings.SETTINGS_FILE`
-    is patched directly (it's frozen at import time).
-  - `OUTPUT_BASE` points at a `tmp_path` directory; `st.cache_data` is
-    cleared per test (it's process-global).
-  - The 3Dmol.js custom component can't render without a browser, so
-    `render_mol_viewer` is replaced by a recorder and tests assert on the
-    arguments the page passed it. What the viewer *draws* (the JS in
-    `ui/components/mol_viewer/index.html`) is outside this tier — check it
-    in a real browser.
-  - `OrchestratorBridge` is replaced by a fake, and fake bridges are
-    always already finished: a running one would make the page's
-    bottom-of-script poll (`time.sleep(2); st.rerun()`) spin until the
-    AppTest timeout.
-
-Not every `tests/test_ui_*.py` file needs streamlit. The framework-free GUI
-logic in `ui/core/` (Phase 16) is tested by `tests/test_ui_core_*.py`, and
-`OrchestratorBridge` by `tests/test_ui_orchestrator_bridge.py`. Both run
-for real in the default hermetic suite (and CI) as well as in this tier.
-
-### GUI (NiceGUI) Tests
-
-Phase 16 moves the GUI to NiceGUI. Until the Stage 16.8 cutover it runs as
-a separate service, `ui-nice` (http://localhost:3001), next to the
-Streamlit `ui`. `nicegui` and `pytest-asyncio` are only in its image
-(`Dockerfile.ui_nice`), so `tests/test_nicegui_*.py` files that need them
-`pytest.importorskip("nicegui")` and skip under the default suite. Run them
-for real via the `ui-nice` image, with their own pytest config:
-
-```bash
-docker compose run --rm --no-deps ui-nice \
+docker compose run --rm --no-deps ui \
   python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
 ```
 
+This is a third, explicitly-invoked test tier (alongside the hermetic
+default and the opt-in `integration` marker), not wired into CI. The
+framework-free GUI logic in `ui/core/` is tested by `tests/test_ui_core_*.py`,
+and `OrchestratorBridge` by `tests/test_ui_orchestrator_bridge.py`; both run
+in the default hermetic suite (and CI).
+
 - `ui_nice/pytest.ini` loads NiceGUI's `user_plugin` (the `user` /
   `create_user` fixtures, which simulate a browser without one) and
-  `tests/nicegui_harness.py`. The harness isolates every test the way the
-  AppTest `app` fixture does: `OUTPUT_BASE` in `tmp_path`, Ollama stubbed,
-  `ui.settings.SETTINGS_FILE` patched, `OrchestratorBridge` replaced by the
-  finished fake from `tests/ui_fakes.py` (shared with the AppTest tier).
-  It fixes the `LLM_*` environment variables too (no API key or base URL),
-  since `docker compose run` passes the `.env` ones, real key included.
-  It also shortens the progress timer to 50 ms, and its `page` fixture
-  seeds each client's `GuiSession` before the page is drawn (what AppTest
-  cases do through `app.session_state`) and keeps every page built.
-  `tests/nicegui_harness.py`'s `element()` finds hidden elements too;
-  `user.find` sees only visible ones (not the contents of a closed
-  expansion).
+  `tests/nicegui_harness.py`. The harness isolates every test:
+  `OUTPUT_BASE` in `tmp_path`, Ollama stubbed, `ui.settings.SETTINGS_FILE`
+  patched, `OrchestratorBridge` replaced by the finished fake from
+  `tests/ui_fakes.py`. It fixes the `LLM_*` environment variables too (no
+  API key or base URL), since `docker compose run` passes the `.env` ones,
+  real key included. It also shortens the progress timer to 50 ms, and its
+  `page` fixture seeds each client's `GuiSession` before the page is drawn
+  and keeps every page built. `tests/nicegui_harness.py`'s `element()`
+  finds hidden elements too; `user.find` sees only visible ones (not the
+  contents of a closed expansion).
 - The 3Dmol viewer can't render without a browser, but it needs no
   recorder. The `MolViewer` element keeps what it last sent (`center`,
   `box_size`, `receptor_pdb`, ...), and tests read that through the
@@ -479,21 +431,19 @@ docker compose run --rm --no-deps ui-nice \
   read, which happens off the event loop. `atom_click(user, center)` fires
   the event that a click on a receptor atom sends, and
   `load_picker_receptor(page, center, size)` seeds a loaded receptor.
-- The Results tab (Stage 16.6) reads a result off the event loop, so
-  tests `await results_loaded(page)` first. `completed_job_on_disk()`
-  writes a completed session with a receptor and multi-pose SDFs. The
-  `/files` download route is tested with httpx's `ASGITransport`, but
-  the streaming test calls the ASGI app directly, because that transport
-  buffers the body.
-- The Sessions tab (Stage 16.7) reads its lists off the event loop as
-  well: `open_sessions(user, page)` opens the tab as a click does, and
-  tests `await sessions_listed(page)` before looking at the rows.
-- `tests/test_nicegui_parity.py` holds the Streamlit -> NiceGUI parity
-  table: each Streamlit-tier test maps to the NiceGUI test that ports it,
-  to the `tests/test_ui_core_*.py` test that already covers it, or to
-  "N/A" with a reason. Since Stage 16.7 no row is pending. It needs no GUI framework, so it runs in the hermetic suite and
-  CI, and fails when a Streamlit-tier test has no row. A new Streamlit-tier
-  test therefore needs a row too.
+  What the viewer *draws* (`ui_nice/mol_viewer.js`) is outside this tier;
+  check it in a real browser.
+- The Results tab reads a result off the event loop, so tests
+  `await results_loaded(page)` first. `completed_job_on_disk()` writes a
+  completed session with a receptor and multi-pose SDFs. The `/files`
+  download route is tested with httpx's `ASGITransport`, but the streaming
+  test calls the ASGI app directly, because that transport buffers the
+  body.
+- The Sessions tab reads its lists off the event loop as well:
+  `open_sessions(user, page)` opens the tab as a click does, and tests
+  `await sessions_listed(page)` before looking at the rows.
+- Many tests keep the names of the Streamlit render tests they replaced
+  (Phase 16); the mapping is in `docs/reviews/stage_16_8_parity.md`.
 - The test IDs print as `ui_nice::test_...`: with `-c`, pytest takes the
   config's directory as its rootdir. Cosmetic only.
 
@@ -605,30 +555,27 @@ directory:
 ```bash
 docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orchestrator_output/job_<id>
 ```
-- **Linux hosts, NiceGUI GUI (`ui-nice`, Phase 16): `Permission denied` on a
-  session, upload or settings file the Streamlit GUI created.** The
-  Streamlit `ui` container runs as root; `ui-nice` runs as the non-root
-  `appuser` (uid 1000) and works on the same `orchestrator_output/` and
-  `cache/`. Since Stage 16.3 the directories either GUI creates there (job
+- **Linux hosts, the GUI (Phase 16): `Permission denied` on a session,
+  upload or settings file the former Streamlit GUI created.** Until Stage
+  16.8 the GUI was Streamlit, running as root; the `ui` container now runs
+  as the non-root `appuser` (uid 1000) on the same `orchestrator_output/`
+  and `cache/`. Since Stage 16.3 the directories the GUI creates there (job
   dirs, `checkpoints/`, `saved_results/`, `uploads/`) are writable by every
   uid (`ensure_shared_directory()`), so is each job's `job.log`, and the
   JSON files are replaced rather than rewritten, which needs only the
-  directory's permission. Since Review Stage R2, each upload goes into a
-  new directory of its own (`uploads/upload_<random>/<name>`), so no upload
-  is ever written over, and a saved bundle's own directories are writable
-  by every uid, so either GUI can overwrite a bundle the other saved. That
-  covers sessions created from 16.3 on (bundles: saved from R2 on). Files the root GUI created **before** 16.3, and deleting a job
-  dir the root GUI created, still need root's files handed to uid 1000,
-  once:
+  directory's permission. Each upload goes into a new directory of its own
+  (`uploads/upload_<random>/<name>`), so no upload is ever written over.
+  Files the root GUI created **before** 16.3, and deleting a job dir the
+  root GUI created, still need root's files handed to uid 1000, once:
   ```bash
   sudo chown -R 1000:1000 orchestrator_output cache
   ```
   On Docker Desktop (Windows/macOS) files created now on a bind mount
   show up as owned by the container's user. But files that already
   carry root ownership are enforced: a root-owned 0644 upload from
-  2026-10-02 refused NiceGUI's in-place write with `Errno 13`. If that
-  happens there, run the same `chown` inside a root container, e.g.
-  `docker exec -u root mcp-ui-nice chown -R 1000:1000 /workspace/orchestrator_output /workspace/cache`.
+  2026-10-02 refused an in-place write with `Errno 13`. If that happens
+  there, run the same `chown` inside a root container, e.g.
+  `docker exec -u root mcp-ui chown -R 1000:1000 /workspace/orchestrator_output /workspace/cache`.
 - Settings → Resources → File Sharing
 
 ### Network Issues
@@ -791,7 +738,7 @@ jobs:
 
 **This platform ships with no authentication on any service.** Every MCP service
 (`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
-`pymol-visualizer`, `pymol-interactive`), both GUIs (`ui`, `ui-nice`), and Ollama accept
+`pymol-visualizer`, `pymol-interactive`), the GUI (`ui`), and Ollama accept
 requests from anyone who can reach their port — there is no API key, login, or
 per-request auth check anywhere in `common/mcp_base.py` or the service servers.
 
@@ -858,7 +805,7 @@ services:
   grafana:
     image: grafana/grafana
     ports:
-      - "3002:3000"  # host 3002 -- 3000 and 3001 are this platform's GUIs (`ui`, `ui-nice`)
+      - "3002:3000"  # host 3002 -- 3000 is this platform's GUI (`ui`)
 ```
 
 ---

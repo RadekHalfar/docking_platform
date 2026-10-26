@@ -1,7 +1,8 @@
 """The 3Dmol.js viewer element (Phase 16, Stage 16.5; finding 4).
 
-One viewer per element, built once from the constructor's scene. Streamlit
-rebuilt it, and reset the camera, on every render. Afterwards only the box
+One viewer per element, built once from the constructor's scene (the
+former Streamlit GUI rebuilt it, and reset the camera, on every render).
+Afterwards only the box
 overlay (:meth:`MolViewer.set_box`) and the ligand poses
 (:meth:`MolViewer.set_ligands`) are redrawn, so the camera stays where the
 user put it. A new receptor means a new element.
@@ -14,7 +15,7 @@ latest values.
 
 The attributes ``receptor_pdb``, ``ligands``, ``mode``, ``center`` and
 ``box_size`` hold what was last sent to the browser. The tests assert on
-them, as the AppTest cases did on their viewer recorder.
+them.
 """
 from __future__ import annotations
 

@@ -17,12 +17,11 @@ polled and peaks are lower bounds, not exact values.
 Prerequisites:
 - Run on the host, from the repo root, with Python 3.8+ (`python3`, since
   bare `python` may be Python 2) and `docker` on PATH.
-- The container to sample is running (default: mcp-ui, the Streamlit GUI).
+- The container to sample is running (default: mcp-ui, the GUI).
 
 Usage:
-    python3 benchmark_gui.py --label streamlit-idle-25lig
-    python3 benchmark_gui.py --label streamlit-running-25lig --duration 120 --json-out gui_perf.json
-    python3 benchmark_gui.py --container mcp-ui-nice --label nicegui-idle-25lig --json-out gui_perf.json
+    python3 benchmark_gui.py --label nicegui-idle-25lig
+    python3 benchmark_gui.py --label nicegui-running-25lig --duration 120 --json-out gui_perf.json
 
 --json-out appends one record per run to a JSON list, so one file collects
 every scenario of a measurement session.
@@ -138,7 +137,7 @@ def main() -> None:
                         help="Seconds between samples, on top of the ~1-2 s each `docker stats` call takes "
                              "(default: 1.0)")
     parser.add_argument("--label", default=None,
-                        help="What was measured, e.g. streamlit-idle-25lig (required without --from-driver)")
+                        help="What was measured, e.g. nicegui-idle-25lig (required without --from-driver)")
     parser.add_argument("--from-driver", action="store_true",
                         help="Sample between the SAMPLE-START/SAMPLE-STOP lines benchmark_gui_browser.py "
                              "prints, read from stdin, instead of for --duration")

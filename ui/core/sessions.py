@@ -1,7 +1,7 @@
 """Session history actions: Load, rename, delete, revision history and
 undo (Phase 16, Stage 16.1).
 
-Moved unchanged in behaviour from ``ui/app.py``. Scanning the sessions on
+Scanning the sessions on
 disk is ``ui.job_history``'s job; :func:`list_sessions` does both scans in
 one call, and caching or refreshing them is each GUI's own concern.
 

@@ -107,8 +107,8 @@ class SetupView:
             on_change=lambda e, k=key: self._on_text(k, e.value),
         )
         if commit is not None:
-            # Committed on Enter / leaving the field, as Streamlit's
-            # text_input on_change: not one chat reply per keystroke.
+            # Committed on Enter / leaving the field: not one chat reply
+            # per keystroke.
             # (No parameters: NiceGUI would pass the event to one.)
             def on_commit() -> None:
                 self._on_commit(commit)
@@ -308,7 +308,7 @@ class SetupView:
         blocked = self._blocked()
         idle = blocked is None
 
-        # Unlike Streamlit, Run Docking is off while this client's run is
+        # Run Docking is off while this client's run is
         # going: a redock confirmed then would replace the running bridge
         # and orphan its job. The same while a save copies the results.
         self.run_button.set_enabled(idle)
@@ -456,9 +456,7 @@ class SetupView:
     async def _on_ligand_upload(self, event, *, folder_mode: bool) -> None:
         paths = await self._save_files(event.files, "Could not save the ligand files")
         if paths:
-            uploads.apply_ligand_uploads(
-                self.state, [file.name for file in event.files], paths, folder_mode=folder_mode, append=True,
-            )
+            uploads.apply_ligand_uploads(self.state, paths, folder_mode=folder_mode)
         event.sender.reset()
         self.controller.sync()
 

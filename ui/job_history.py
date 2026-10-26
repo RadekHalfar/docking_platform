@@ -1,6 +1,6 @@
-"""List completed/failed docking jobs for the sidebar session-history / comparison picker.
+"""List completed/failed docking jobs for the Sessions tab and its comparison picker.
 
-No Streamlit dependency — kept pure so it can be unit tested directly.
+No GUI framework dependency -- kept pure so it can be unit tested directly.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ JOB_NAME_MAX_CHARS = 60
 
 
 def escape_markdown(text: str) -> str:
-    """Escape characters Streamlit's markdown renderer treats specially.
+    """Escape characters the GUI's markdown renderer treats specially.
 
     Used for user-supplied job names interpolated into markdown-rendered
     labels/captions, so e.g. a name containing "**" can't visually break
@@ -92,26 +92,14 @@ def _scan_jobs(
     return [sorted(jobs, key=lambda j: j["job_id"], reverse=True) for jobs in found]
 
 
-def list_completed_jobs(output_base: str) -> List[Dict[str, Any]]:
-    """Scan output_base for completed jobs.
-
-    Returns a list of {job_id, job_dir, job_name, protein_id, ligand_count}
-    dicts, sorted newest first.
-    """
-    return _scan_jobs(output_base, [_COMPLETED])[0]
-
-
-def list_failed_jobs(output_base: str) -> List[Dict[str, Any]]:
-    """Scan output_base for failed or user-cancelled jobs.
-
-    Returns a list of {job_id, job_dir, job_name, protein_id, first_error}
-    dicts, sorted newest first.
-    """
-    return _scan_jobs(output_base, [_FAILED])[0]
-
-
 def list_completed_and_failed_jobs(output_base: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """:func:`list_completed_jobs` and :func:`list_failed_jobs` in one scan."""
+    """Scan output_base once for completed jobs and for failed or
+    user-cancelled ones.
+
+    Returns two lists, each sorted newest first: completed jobs as
+    {job_id, job_dir, job_name, protein_id, ligand_count} dicts, failed ones
+    as {job_id, job_dir, job_name, protein_id, first_error} dicts.
+    """
     completed, failed = _scan_jobs(output_base, [_COMPLETED, _FAILED])
     return completed, failed
 

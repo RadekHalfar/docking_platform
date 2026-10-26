@@ -1,9 +1,9 @@
 """The NiceGUI chat drawer (Phase 16, Stage 16.4): commands, the LLM parse
 off the event loop, and the run log.
 
-Ports the chat rows of the parity table (tests/test_nicegui_parity.py)
-from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
-Runs in the ui-nice tier only (see tests/test_nicegui_setup.py).
+Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
+each ported test keeps its old name.
+Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 
 The LLM is never called: tests patch the parse functions on
 ``services.llm_orchestrator.workflow_llm_parser``, which the drawer looks

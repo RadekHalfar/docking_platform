@@ -1,6 +1,6 @@
 """The parameter form <-> workflow parameters (Phase 16, Stage 16.1).
 
-Moved from ``ui/session_state.py`` and ``ui/app.py``. ``state.form`` holds
+``state.form`` holds
 the form's field values under the ``param_*`` keys of
 :func:`ui.core.state.form_defaults` (plus ``input_mode``); ``state.params``
 holds the workflow parameters, including what the form doesn't show
@@ -41,15 +41,10 @@ def effective_cpu(state) -> int:
     Sending 1 for PSO also keeps a cpu left over from Vina mode out of
     parameters.txt.
 
-    NOTE (Review Stage R1, Phase 15): a value that isn't a whole number
-    counts as 1. NiceGUI's field is a number input (min 1, a cleared field
-    is not written) since Stage 16.4, so only Streamlit's text field
-    ("four") reaches the fallback. Remove it with that field in Stage 16.8.
+    The field is a whole-number input (min 1; a cleared field is not
+    written), so the form holds an int, or nothing yet (counts as 1).
     """
-    try:
-        cpu = int(state.form.get("param_cpu", "1"))
-    except (TypeError, ValueError):
-        cpu = 1
+    cpu = int(state.form.get("param_cpu") or 1)
     return cpus_per_ligand(selected_docking_algorithm(state), cpu)
 
 

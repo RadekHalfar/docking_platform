@@ -94,8 +94,8 @@ class TestSaveSettings:
 
     def test_replaces_the_file_rather_than_rewriting_it(self, _isolated_settings_file):
         # Phase 16, Stage 16.3: a new file swapped in needs write permission
-        # on the directory only, so the non-root NiceGUI UI can update a file
-        # the root Streamlit UI created. Also: never a half-written file.
+        # on the directory only, so the non-root GUI can update a file the
+        # former root Streamlit GUI created. Also: never a half-written file.
         _isolated_settings_file.write_text("{}")
         old_inode = _isolated_settings_file.stat().st_ino
 

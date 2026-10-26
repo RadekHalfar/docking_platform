@@ -2,9 +2,9 @@
  * GUI interaction latency, measured in the browser (Phase 16, Stage 16.0).
  *
  * Paste this whole file into the browser DevTools console on the GUI's page
- * (Streamlit now, NiceGUI after the port -- it uses nothing framework-specific,
- * so the before/after numbers in docs/GUI_GUIDE.md "Performance" are measured
- * the same way). Then click the control being measured five or more times,
+ * (it uses nothing framework-specific, so the Stage 16.0 Streamlit and 16.8
+ * NiceGUI numbers in docs/GUI_GUIDE.md "Performance" are measured the same
+ * way). Then click the control being measured five or more times,
  * waiting for the page to settle between clicks, and run:
  *
  *     __lat.summary("box + click")   // prints median/min/max/n, then resets
@@ -12,8 +12,7 @@
  *
  * One sample = time from a click (or Enter in a text field, e.g. a chat
  * command) to the last DOM change before QUIET_MS of
- * no changes (the page has finished reacting). Clicks inside an iframe (the
- * Streamlit 3Dmol viewer) are not seen; measure the controls around it.
+ * no changes (the page has finished reacting).
  *
  * Filtered latency (Stage 16.8): set __lat.ignore to a list of CSS
  * selectors, e.g. [".q-ripple", ".q-tooltip"] for NiceGUI's Quasar
@@ -22,9 +21,9 @@
  * elements. Empty by default, so median_filtered_ms equals median_ms.
  *
  * Caveats:
- * - While a docking job runs, the Streamlit page reruns itself every 2 s.
- *   A poll landing inside a sample stretches it, so report the median of
- *   five or more clicks, not one.
+ * - While a docking job runs, the page updates its progress every second.
+ *   An update landing inside a sample stretches it, so report the median
+ *   of five or more clicks, not one.
  * - A click made before the previous sample settled starts a new sample
  *   and drops the unfinished one (__lat.dropped counts them).
  * - Mutations under QUIET_MS apart chain together, so a spinner or

@@ -1,8 +1,8 @@
 """The Results tab (Phase 16, Stage 16.6): the Session Viewer and Compare
 Sessions.
 
-The Session Viewer shows the viewed session (a Load), else the active one,
-as Streamlit's results panel did: running, failed, or its completed results
+The Session Viewer shows the viewed session (a Load), else the active one:
+running, failed, or its completed results
 -- the "Docked with" caption, the affinity chart, the 3Dmol viewer beside
 the ligand and pose grids, then Save results as…, the Session Log and the
 downloads, in that order.

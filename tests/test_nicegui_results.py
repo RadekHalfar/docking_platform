@@ -2,9 +2,9 @@
 Save results as…, the Session Log, the downloads and their route, Compare
 Sessions, and the switch to Results when a run finishes.
 
-Ports the results rows of the parity table (tests/test_nicegui_parity.py)
-from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
-Runs in the ui-nice tier only (see tests/test_nicegui_setup.py).
+Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
+each ported test keeps its old name.
+Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 """
 import asyncio
 import json
@@ -189,7 +189,7 @@ async def test_a_result_that_cannot_be_read_is_said_so(user: User, page, output_
 
 async def test_a_rename_of_the_viewed_session_follows_into_its_status(user: User, page, output_base):
     # The status line kept the name the session was read with (Review
-    # Stage R3; Streamlit re-reads on every rerun).
+    # Stage R3).
     page.seed(lambda state: completed_session_with_artifacts(state, output_base))
     await user.open("/")
     open_results(user, page)

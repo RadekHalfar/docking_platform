@@ -35,7 +35,8 @@ def test_save_upload_refuses_an_unusable_name(tmp_path, name):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
 def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_022):
-    # The root Streamlit UI and the uid-1000 NiceGUI UI share it (Stage 16.3).
+    # Other uids write there too: the services, and formerly the root
+    # Streamlit GUI (Stage 16.3).
     upload_dir = tmp_path / "uploads"
     dest = uploads.save_upload("a.sdf", b"x", upload_dir)
     assert stat.S_IMODE(upload_dir.stat().st_mode) == 0o777
@@ -93,7 +94,7 @@ def test_ligand_uploads_replace_ligand_ids(state, tmp_path, folder_mode, folder_
     state.params.update(ligand_ids=["ATP"], ligand_folder="/data/ligands")
     paths = [tmp_path / "a.sdf", tmp_path / "b.mol2"]
 
-    uploads.apply_ligand_uploads(state, ["a.sdf", "b.mol2"], paths, folder_mode=folder_mode)
+    uploads.apply_ligand_uploads(state, paths, folder_mode=folder_mode)
 
     assert state.params["ligand_files"] == [str(p) for p in paths]
     assert "ligand_ids" not in state.params
@@ -102,10 +103,10 @@ def test_ligand_uploads_replace_ligand_ids(state, tmp_path, folder_mode, folder_
 
 
 def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_path):
-    # NiceGUI hands over one drop at a time; Streamlit's uploader kept every
-    # file it had been given, so a second drop adds (Review Stage R2).
-    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "1" / "a.sdf"], append=True)
-    uploads.apply_ligand_uploads(state, ["b.mol2"], [tmp_path / "2" / "b.mol2"], append=True)
+    # The uploader hands over one drop at a time, so a second drop adds
+    # (Review Stage R2).
+    uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf"])
+    uploads.apply_ligand_uploads(state, [tmp_path / "2" / "b.mol2"])
 
     assert state.params["ligand_files"] == [str(tmp_path / "1" / "a.sdf"), str(tmp_path / "2" / "b.mol2")]
     assert state.messages[-1]["content"] == "2 local ligand file(s) set: **a.sdf, b.mol2**"
@@ -114,21 +115,14 @@ def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_pa
 def test_a_dropped_ligand_named_like_a_listed_one_replaces_it(state, tmp_path):
     # Two files of one name failed the run's "Local ligand filename
     # collision" check (found in Stage 16.7; owner: the newest replaces it).
-    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "1" / "a.sdf"], append=True)
-    uploads.apply_ligand_uploads(state, ["b.mol2"], [tmp_path / "2" / "b.mol2"], append=True)
-    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "3" / "a.sdf"], append=True)
+    uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf"])
+    uploads.apply_ligand_uploads(state, [tmp_path / "2" / "b.mol2"])
+    uploads.apply_ligand_uploads(state, [tmp_path / "3" / "a.sdf"])
 
     assert state.params["ligand_files"] == [str(tmp_path / "2" / "b.mol2"), str(tmp_path / "3" / "a.sdf")]
     assert state.messages[-1]["content"] == (
         "2 local ligand file(s) set: **b.mol2, a.sdf** (replaced the earlier a.sdf)"
     )
-
-
-def test_an_upload_seen_again_is_not_announced_again(state, tmp_path):
-    uploads.apply_protein_upload(state, "r.pdb", tmp_path / "r.pdb", announce=False)
-    uploads.apply_ligand_uploads(state, ["a.sdf"], [tmp_path / "a.sdf"], announce=False)
-    assert state.messages == []
-    assert set(state.params) == {"protein_file", "ligand_files"}
 
 
 def test_clearing_uploads_drops_only_their_paths(state):

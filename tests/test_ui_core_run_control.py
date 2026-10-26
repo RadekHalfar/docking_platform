@@ -2,9 +2,7 @@
 
 A plain GuiSession, a fake bridge that never starts a thread, and a
 tmp_path OUTPUT_BASE. The ``Outcome`` assertions pin down when the page
-must redraw: the Streamlit adapter turns ``refresh`` into ``st.rerun()``,
-and tests/test_ui_apptest.py's ``page_reruns`` cases rely on it staying
-one for one with the pre-extraction callbacks.
+must redraw.
 """
 import pytest
 

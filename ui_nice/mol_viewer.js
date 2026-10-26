@@ -1,8 +1,6 @@
 // The 3Dmol.js viewer as a NiceGUI custom element (Phase 16, Stage 16.5).
 //
-// The scene code is ui/components/mol_viewer/index.html's (Streamlit's
-// viewer), minus its postMessage layer. Unlike Streamlit, one viewer lives
-// as long as the element: the scene (receptor, ligands, mode) is built once
+// One viewer lives as long as the element: the scene (receptor, ligands, mode) is built once
 // in mounted(), and only setBox / setLigands redraw parts of it, so the
 // camera the user set is kept. Python side: ui_nice/mol_viewer.py.
 
@@ -33,8 +31,9 @@ function affinityColorHex(affinity, minAff, maxAff) {
 }
 
 // ---- ?perf timing (Stage 16.0 baseline; docs/GUI_GUIDE.md "Performance") --
-// Off unless the page URL has ?perf. Same console line as Streamlit's
-// viewer, so benchmark_gui_browser.py parses both; mode is box_picker /
+// Off unless the page URL has ?perf. The console line is the one the
+// Stage 16.0 Streamlit baseline logged, so benchmark_gui_browser.py
+// measures both the same way; mode is box_picker /
 // view for a scene build, box for setBox, ligands for setLigands.
 const perfEnabled = (() => {
   try {

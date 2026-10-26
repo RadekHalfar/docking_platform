@@ -103,6 +103,15 @@ def test_blocked_or_invalid_saves_write_nothing(state, tmp_path):
     assert _bundles(tmp_path) == []
 
 
+def _resolve_conflict(state, output_base, *, overwrite):
+    """The conflict buttons' path, run inline: plan, copy, finish (the GUI
+    copies in ``run.io_bound``); the reply, or None with no conflict."""
+    message, job = save_results.plan_conflict_save(state, output_base, overwrite=overwrite)
+    if job is None:
+        return message
+    return save_results.finish_save(state, job, save_results.write_bundle(job))
+
+
 def test_a_name_clash_offers_overwrite_or_a_new_name(state, tmp_path):
     save_results.save_results(state, tmp_path, "trial_a", "all")
 
@@ -113,7 +122,7 @@ def test_a_name_clash_offers_overwrite_or_a_new_name(state, tmp_path):
     assert conflict["suggested"].startswith("trial_a_")
     assert f"**Save as {conflict['suggested']}**" in reply
 
-    reply = save_results.resolve_save_conflict(state, tmp_path, overwrite=False)
+    reply = _resolve_conflict(state, tmp_path, overwrite=False)
     assert reply.startswith(f"Saved bundle `{conflict['suggested']}`")
     assert state.save_conflict is None
     assert _bundles(tmp_path) == sorted(["trial_a", conflict["suggested"]])
@@ -123,7 +132,7 @@ def test_overwrite_replaces_the_bundle(state, tmp_path):
     save_results.save_results(state, tmp_path, "trial_a", "all")
     save_results.save_results(state, tmp_path, "trial_a", "docking")
 
-    reply = save_results.resolve_save_conflict(state, tmp_path, overwrite=True)
+    reply = _resolve_conflict(state, tmp_path, overwrite=True)
 
     assert reply.startswith("Saved bundle `trial_a` (scope: docking)")
     assert _bundles(tmp_path) == ["trial_a"]
@@ -138,7 +147,7 @@ def test_cancel_drops_the_conflict_and_resolving_none_does_nothing(state, tmp_pa
     save_results.cancel_save_conflict(state)
 
     assert state.save_conflict is None
-    assert save_results.resolve_save_conflict(state, tmp_path, overwrite=True) is None
+    assert _resolve_conflict(state, tmp_path, overwrite=True) is None
     assert _bundles(tmp_path) == ["trial_a"]
 
 

@@ -55,7 +55,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
     """Persist provider/model/endpoint/base_url to disk. Never writes api_key."""
     to_save = {key: settings[key] for key in _PERSISTABLE_KEYS if key in settings}
     # Replaced, not rewritten in place: no half-written file, and the
-    # non-root NiceGUI UI can update a file the root Streamlit UI created.
+    # non-root GUI can update a file the former root Streamlit GUI created.
     atomic_write_json(SETTINGS_FILE, to_save)
 
 

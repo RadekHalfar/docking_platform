@@ -2,9 +2,9 @@
 Failed Sessions (Load, Rename, Delete, Compare) and the active session's
 revision history with Restore.
 
-Ports the sessions rows of the parity table (tests/test_nicegui_parity.py)
-from tests/test_ui_apptest.py; each ported test keeps its AppTest name.
-Runs in the ui-nice tier only (see tests/test_nicegui_setup.py).
+Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
+each ported test keeps its old name.
+Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 """
 import asyncio
 import json
@@ -116,7 +116,7 @@ async def test_sidebar_lists_completed_and_failed_sessions(user: User, page, out
 
 
 async def test_every_session_is_listed_not_only_the_newest_ten(user: User, page, output_base):
-    # Streamlit lists the 10 newest; the Sessions tab lists all (owner, 2026-10-13).
+    # Not only the 10 newest, as the former Streamlit GUI listed (owner, 2026-10-13).
     job_ids = [f"job_20260930_0000{i:02d}_aaaaaa" for i in range(12)]
     for job_id in job_ids:
         _write_job(output_base, job_id, completed_job_data(FIXTURE_PDB))

@@ -81,7 +81,7 @@ class ChatView:
             return
         with self.messages:
             for message in messages[self._drawn_message_count:]:
-                # Markdown, as Streamlit's st.chat_message renders it.
+                # Replies are markdown (bold names, code spans, lists).
                 with ui.chat_message(sent=message["role"] == "user").classes("w-full"):
                     markdown(message["content"])
         self._drawn_message_count = len(messages)

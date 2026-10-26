@@ -1,7 +1,7 @@
-"""Detect the real parallel-docking worker ceiling (no Streamlit dependency).
+"""Detect the real parallel-docking worker ceiling (no GUI framework dependency).
 
-Kept separate from ui/session_state.py so this logic can be unit tested
-directly, matching the same pattern already used by ui/job_history.py and
+Kept separate from the GUI so this logic can be unit tested directly,
+matching the same pattern already used by ui/job_history.py and
 ui/ollama_models.py.
 """
 from __future__ import annotations

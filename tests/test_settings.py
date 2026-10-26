@@ -4,7 +4,7 @@ import json
 import pytest
 
 import ui.settings as settings_module
-from ui.settings import load_settings, save_settings
+from ui.settings import build_llm_client, load_settings, save_settings
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +20,9 @@ def _isolated_settings_file(tmp_path, monkeypatch):
 class TestLoadSettings:
     def test_defaults_when_no_file_and_no_env(self):
         settings = load_settings()
-        assert settings["provider"] == "ollama"
-        assert settings["model"] == "qwen2.5-coder:7b-instruct-q4_K_M"
+        # Phase 18: no LLM until the user picks one.
+        assert settings["provider"] == "none"
+        assert settings["model"] == ""
         assert settings["endpoint"] == "http://localhost:11434"
         assert settings["api_key"] == ""
         assert settings["base_url"] == ""
@@ -49,12 +50,27 @@ class TestLoadSettings:
     def test_missing_file_falls_back_to_env(self, _isolated_settings_file):
         assert not _isolated_settings_file.exists()
         settings = load_settings()
-        assert settings["provider"] == "ollama"
+        assert settings["provider"] == "none"
 
     def test_corrupt_file_falls_back_to_env(self, _isolated_settings_file):
         _isolated_settings_file.write_text("{not valid json")
         settings = load_settings()
-        assert settings["provider"] == "ollama"
+        assert settings["provider"] == "none"
+
+
+    def test_empty_provider_env_var_means_none(self, monkeypatch):
+        # compose passes LLM_PROVIDER through even when .env leaves it empty
+        monkeypatch.setenv("LLM_PROVIDER", "")
+        assert load_settings()["provider"] == "none"
+
+
+class TestBuildLlmClient:
+    def test_none_provider_builds_no_client(self):
+        assert build_llm_client(load_settings()) is None
+
+    def test_a_real_provider_builds_one(self):
+        settings = {"provider": "openai", "model": "gpt-4o-mini", "endpoint": "", "api_key": "sk-x", "base_url": ""}
+        assert build_llm_client(settings) is not None
 
 
 class TestSaveSettings:

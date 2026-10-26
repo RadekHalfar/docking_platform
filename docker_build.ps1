@@ -49,18 +49,6 @@ $allServices = @{
         description = "Moldina molecular docking service"
         depends = @("base")
     }
-    "pymol-visualizer" = @{
-        dockerfile = "docker/pymol_visualizer.Dockerfile"
-        tag = "mcp-pymol-visualizer:latest"
-        description = "PyMOL visualization service"
-        depends = @("base")
-    }
-    "pymol-interactive" = @{
-        dockerfile = "docker/pymol_interactive.Dockerfile"
-        tag = "mcp-pymol-interactive:latest"
-        description = "Interactive PyMOL service (noVNC + helper API)"
-        depends = @("base")
-    }
     "ui" = @{
         dockerfile = "Dockerfile.ui"
         tag = "mcp-docking-ui:latest"

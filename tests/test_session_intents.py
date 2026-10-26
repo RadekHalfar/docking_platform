@@ -55,7 +55,6 @@ def test_classify_deterministic_intents(llm_client, command, expected_intent, ex
     "command,expected_intent",
     [
         ("change ligand to HEM", "update_parameters"),
-        ("use pymol selection sele", "use_pymol_box"),
     ],
 )
 def test_deterministic_classify_parameter_operations(llm_client, command, expected_intent):
@@ -265,8 +264,6 @@ def test_detect_protein_geometry_command_box_size(command):
         "set center to 10,20,30",
         "set box size to 25,30,35",
         "change ligand to HEM",
-        "use pymol box",
-        "use pymol selection sele",
         "rerun",
         "dock",
         "save results as trial_a",
@@ -366,7 +363,6 @@ def test_detect_docking_algorithm_command(command, algorithm, rerun):
         "dock with ATP",
         "use two ATP ligands",
         "set center to 10,20,30",
-        "use pymol box",
         "use protein center",
         "search vina",
         "dock with vina and visualize",

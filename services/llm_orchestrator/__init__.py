@@ -14,13 +14,12 @@ from .llm_adapters import (
     OpenAICompatibleAdapter,
     MetaCentrumAdapter,
 )
-from .llm_factory import create_llm_client
+from .llm_factory import NO_LLM_PROVIDER, create_llm_client, is_llm_configured
 from .workflow_llm_parser import (
     parse_workflow_with_llm,
     parse_followup_with_llm,
     generate_llm_follow_up_question,
     extract_updates_with_llm,
-    extract_box_source_choice_with_llm,
     classify_session_intent,
     extract_updates_from_command_with_llm,
     split_command_sequence,
@@ -56,11 +55,12 @@ __all__ = [
     'OpenAICompatibleAdapter',
     'MetaCentrumAdapter',
     'create_llm_client',
+    'is_llm_configured',
+    'NO_LLM_PROVIDER',
     'parse_workflow_with_llm',
     'parse_followup_with_llm',
     'generate_llm_follow_up_question',
     'extract_updates_with_llm',
-    'extract_box_source_choice_with_llm',
     'classify_session_intent',
     'extract_updates_from_command_with_llm',
     'split_command_sequence',

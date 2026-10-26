@@ -426,3 +426,30 @@ moved from Streamlit to NiceGUI.
   describes the work still only fills the form, and its "Got it!" reply now
   ends with "Say **run** or click **Run Docking** to start" once nothing is
   missing.
+
+## Unreleased — Lean default install (Phase 18)
+
+- **Stage 18.1 (2026-10-26): PyMOL removed.** The `pymol-visualizer` and
+  `pymol-interactive` services, their Dockerfiles, docs and tests are gone.
+  Nothing in the GUI used them: the `visualize` step converts poses on
+  `ligand-preparer`, and the viewer and box picker run in the browser. The
+  CLI no longer offers a PyMOL box ("use pymol box", the manual-vs-PyMOL
+  question); it asks for `center`/`box_size` directly. A default build is
+  about 4 GB smaller, and `ui` no longer waits for a service it never calls.
+  - **Existing installs:** the two PyMOL containers keep running until
+    removed. Run `docker compose up -d --remove-orphans` (the installer and
+    its launcher already do), then `docker rmi mcp-pymol-visualizer
+    mcp-pymol-interactive` to free the disk space.
+- **Stage 18.2 (2026-10-26): no LLM by default; Ollama is opt-in.** The
+  default provider is `none`. The GUI's forms, Run Docking and chat commands
+  (`run`, `use vina`, `history`, `save results as`) work without an LLM; free
+  text in the chat gets a reply pointing to Settings, which now offers
+  **None (forms only)**. The CLI prints how to configure an LLM for a
+  natural-language command, and `--check-health` reports "not configured"
+  instead of failing. Ollama moved to the `local-llm` compose profile
+  (`docker compose --profile local-llm up -d ollama`), so a default install
+  no longer downloads its ~4.8 GB image; `ui` no longer waits for it, and can
+  reach an Ollama app on the host at `http://host.docker.internal:11434`.
+  - **Existing installs:** a `.env` or saved GUI setting that picks a
+    provider keeps working. With Ollama, start its profile once; models
+    already downloaded stay in the `ollama-data` volume.

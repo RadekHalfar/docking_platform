@@ -13,7 +13,6 @@ SERVICE_DEFAULT_PORTS: dict[str, int] = {
     "ligand_preparer": 8002,
     "protein_preparer": 8003,
     "moldina_runner": 8004,
-    "pymol_visualizer": 8005,
 }
 
 # Environment-variable names that override port defaults
@@ -22,7 +21,6 @@ SERVICE_PORT_ENV_VARS: dict[str, str] = {
     "ligand_preparer": "LIGAND_PREPARER_PORT",
     "protein_preparer": "PROTEIN_PREPARER_PORT",
     "moldina_runner": "MOLDINA_RUNNER_PORT",
-    "pymol_visualizer": "PYMOL_VISUALIZER_PORT",
 }
 
 # Shared cache-directory env var / default

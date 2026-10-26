@@ -33,9 +33,11 @@ def load_settings() -> Dict[str, Any]:
     Starts from environment variables (set by docker-compose.yml / .env),
     then overrides with any previously saved user preferences on disk.
     """
+    from services.llm_orchestrator.llm_factory import NO_LLM_PROVIDER
+
     settings = {
-        "provider": os.getenv("LLM_PROVIDER", "ollama"),
-        "model": os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M"),
+        "provider": os.getenv("LLM_PROVIDER") or NO_LLM_PROVIDER,
+        "model": os.getenv("LLM_MODEL", ""),
         "endpoint": os.getenv("LLM_ENDPOINT", DEFAULT_ENDPOINT),
         "api_key": os.getenv("LLM_API_KEY", ""),
         "base_url": os.getenv("LLM_BASE_URL", ""),
@@ -59,10 +61,12 @@ def save_settings(settings: Dict[str, Any]) -> None:
 
 
 def build_llm_client(settings: Dict[str, Any]):
-    """The LLM client for *settings* (as :func:`load_settings` returns them).
-    Building it makes no network call."""
-    from services.llm_orchestrator import create_llm_client
+    """The LLM client for *settings* (as :func:`load_settings` returns them),
+    or None for the ``none`` provider. Building it makes no network call."""
+    from services.llm_orchestrator import create_llm_client, is_llm_configured
 
+    if not is_llm_configured(settings["provider"]):
+        return None
     return create_llm_client(
         provider=settings["provider"],
         endpoint=settings["endpoint"],

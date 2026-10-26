@@ -143,77 +143,15 @@ services:
       retries: 3
       start_period: 40s
 
-  # PyMOL Visualizer Service (Port 8005)
-  # Creates molecular visualizations with PyMOL
-  pymol-visualizer:
-    <<: *service-common
-    image: mcp-pymol-visualizer:latest
-    build:
-      context: .
-      dockerfile: docker/pymol_visualizer.Dockerfile
-    container_name: mcp-pymol-visualizer
-    # See rcsb-downloader above: host port configurable via .env, container
-    # port fixed at 8005 to match the healthcheck.
-    ports:
-      - "127.0.0.1:${PYMOL_VISUALIZER_PORT:-8005}:8005"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=INFO
-      - DISPLAY=:99  # Virtual display for headless PyMOL
-    # Ray-traced rendering can be memory-hungry for large structures.
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # Interactive PyMOL Service (noVNC + helper API)
-  # Browser UI for interactive visualization and docking-box definition.
-  pymol-interactive:
-    <<: *service-common
-    image: mcp-pymol-interactive:latest
-    build:
-      context: .
-      dockerfile: docker/pymol_interactive.Dockerfile
-    container_name: mcp-pymol-interactive
-    ports:
-      - "127.0.0.1:6080:6080"  # noVNC web UI
-      - "127.0.0.1:8090:8090"  # helper API
-    environment:
-      - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=INFO
-      - DISPLAY=:99
-      - ORCHESTRATOR_OUTPUT_DIR=/app/orchestrator_output
-      - PYMOL_INTERACTIVE_PORT=8090
-    # Xvfb + full PyMOL GUI + noVNC stack -- give it more headroom than the
-    # headless visualizer since it's a whole desktop session, not one render.
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 3G
-        reservations:
-          cpus: '0.5'
-          memory: 768M
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/health | grep -Eq '\"pymol_rpc\":[[:space:]]*true'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Ollama LLM Service (Port 11434)
-  # Local LLM for natural language workflow orchestration
+  # Ollama LLM Service (Port 11434) -- opt-in (Phase 18)
+  # Local LLM for the chat / natural-language commands. Not part of the
+  # default `up -d`: the image (~4.8 GB) and a model (3-5 GB) download only
+  # for users who want a local LLM. Start it with
+  #   docker compose --profile local-llm up -d ollama
+  # then pick "Ollama (local)" in the GUI's Settings, which can download a
+  # model. Models persist in the ollama-data volume.
   ollama:
+    profiles: ["local-llm"]
     image: ollama/ollama:latest
     container_name: mcp-llm
     ports:
@@ -271,11 +209,9 @@ services:
       - MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
       - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
       - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
-      - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
-      - MCP_PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_PROVIDER=${LLM_PROVIDER:-none}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-http://ollama:11434}
-      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}
+      - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - OLLAMA_URL=http://ollama:11434
@@ -287,10 +223,6 @@ services:
       protein-preparer:
         condition: service_healthy
       moldina-runner:
-        condition: service_healthy
-      pymol-visualizer:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
 
   # Web GUI (NiceGUI, port 3000). Runs as the non-root appuser
@@ -306,6 +238,11 @@ services:
       - "127.0.0.1:3000:3000"
     networks:
       - mcp-network
+    # Lets the GUI reach an Ollama app running on the host itself
+    # (http://host.docker.internal:11434); Docker Desktop provides the name,
+    # Linux needs this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Read-only: Dockerfile.ui doesn't COPY app source, it runs straight off
       # this mount, but the UI only ever needs to *read* code -- all of its
@@ -319,9 +256,9 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/workspace
       - OUTPUT_BASE=/workspace/orchestrator_output
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_PROVIDER=${LLM_PROVIDER:-none}
       - LLM_ENDPOINT=${LLM_ENDPOINT:-http://ollama:11434}
-      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}
+      - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - DOCKING_PLATFORM_SETTINGS_FILE=/workspace/cache/.docking_platform_settings.json
@@ -329,7 +266,6 @@ services:
       - MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
       - MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
       - MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
-      - MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
     depends_on:
       rcsb-downloader:
         condition: service_healthy
@@ -338,10 +274,6 @@ services:
       protein-preparer:
         condition: service_healthy
       moldina-runner:
-        condition: service_healthy
-      pymol-visualizer:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]

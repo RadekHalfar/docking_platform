@@ -11,7 +11,7 @@ This system lets you control the full molecular docking pipeline with plain-lang
 ### Key Features
 
 - **Natural Language Input** - Describe workflows in plain English.
-- **Modular LLM Architecture** - Provider interface + adapters (default: Ollama).
+- **Modular LLM Architecture** - Provider interface + adapters (none configured by default; pick a cloud provider or a local Ollama).
 - **Runtime Model Switching** - Change model with flags/env vars, no rebuild required.
 - **MCP Integration** - Coordinates all services through a single workflow.
 - **Smart Defaults** - Applies defaults when optional parameters are omitted.
@@ -31,9 +31,9 @@ This system lets you control the full molecular docking pipeline with plain-lang
                     │
                     ▼
 ┌─────────────────────────────────────────────────────┐
-│      LLM Provider Adapter (default: Ollama)         │
+│      LLM Provider Adapter (chosen provider)         │
 │  - Provider interface (BaseLLMClient)               │
-│  - Adapter implementation (OllamaAdapter)           │
+│  - Adapter implementations (Ollama, OpenAI, ...)    │
 │  - Factory-based selection (create_llm_client)      │
 └───────────────────┬─────────────────────────────────┘
                     │
@@ -78,28 +78,34 @@ This system lets you control the full molecular docking pipeline with plain-lang
 ### 1. Start All Services
 
 ```bash
-# Start Docker services including Ollama
 docker compose up -d
-
-# Wait for Ollama to start (~30 seconds)
-docker ps
 ```
 
-### 2. Download LLM Model
+### 2. Choose an LLM
+
+No LLM provider is configured by default (`LLM_PROVIDER=none`), and every
+natural-language command needs one. Without it the CLI prints how to set one
+up and exits; `--check-health` reports the LLM as "not configured".
+
+**A cloud provider** (no download; see [Supported LLM Providers](#supported-llm-providers)):
 
 ```bash
-# Download Qwen 2.5 Coder 7B Q4 (default, ~4.7GB)
-docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
-
-# OR download DeepSeek Coder 6.7B Q4 (alternative, ~4.1GB)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
-
-# OR download Mistral (alternative, ~4GB)
-docker exec -it mcp-llm ollama pull mistral
-
-# OR download Phi-3 (smaller, faster, ~2GB)
-docker exec -it mcp-llm ollama pull phi3
+python nlp_orchestrator.py --llm-provider openai --llm-model gpt-4o-mini --llm-api-key sk-... "Download 6lu7 and ATP"
 ```
+
+**A local Ollama** (opt-in container, ~4.8 GB image plus a model):
+
+```bash
+docker compose --profile local-llm up -d ollama
+
+# Download a model (one-time; persists in the ollama-data volume)
+docker exec -it mcp-llm ollama pull gemma3:4b            # ~3.3 GB, lighter
+# docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M   # ~4.7 GB
+# docker exec -it mcp-llm ollama pull phi3               # ~2 GB, fastest
+```
+
+To avoid repeating flags, set `LLM_PROVIDER`, `LLM_MODEL` (and
+`LLM_API_KEY`) in `.env`; see `.env.example`.
 
 ### 3. Check Service Health
 
@@ -110,13 +116,10 @@ python nlp_orchestrator.py --check-health
 ### 4. Optional: Select Provider/Model at Runtime
 
 ```bash
-# Defaults: --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model qwen2.5-coder:7b-instruct-q4_K_M
-python nlp_orchestrator.py --llm-model mistral "Download 6lu7 and ATP"
+# Ollama with a given model
+python nlp_orchestrator.py --llm-provider ollama --llm-model mistral "Download 6lu7 and ATP"
 
-# Use Qwen 2.5 Coder 7B Q4
-python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP"
-
-# Explicit provider and endpoint
+# Explicit endpoint (e.g. an Ollama app on the host, or a GPU workstation)
 python nlp_orchestrator.py --llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model phi3 "Download 6lu7"
 ```
 
@@ -317,7 +320,6 @@ When a job is active, every command is classified into one of these intents befo
 | `save_results` | `save results as hem_box_a` | Save named result bundle from current docking/visualization outputs |
 | `undo_revision` | `undo 14` | Restore parameters/state to a prior revision |
 | `rerun_steps` | `rerun`, `dock`, `rerun docking` | Re-execute invalidated steps with pre-flight validation |
-| `use_pymol_box` | `use pymol box` | *(Phase 6 — stub active)* |
 | `help` | `help`, `?` | Print command reference |
 
 Common keywords (`state`, `history`, `end session`, `save results as <name>`, `undo N`, `new <request>`) are resolved deterministically without an LLM call.
@@ -481,9 +483,9 @@ python nlp_orchestrator.py --help
 
 Options:
   --interactive, -i         Run in interactive mode
-  --llm-provider NAME       LLM provider name (default: ollama)
+  --llm-provider NAME       LLM provider name (default: LLM_PROVIDER, else none)
   --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
-  --llm-model MODEL         LLM model name (default: qwen2.5-coder:7b-instruct-q4_K_M)
+  --llm-model MODEL         LLM model name (default: LLM_MODEL)
   --llm-api-key KEY         Optional API key for providers that require auth
   --llm-base-url URL        Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio)
   --output-dir DIR          Output directory (default: ./orchestrator_output)
@@ -583,9 +585,7 @@ Hybrid clarification keeps validation deterministic, but uses the LLM to improve
 
 - Uses LLM to generate concise clarification questions.
 - Uses LLM to extract structured updates (JSON only).
-- Uses LLM to classify docking-box source intent (`manual` vs `pymol`) from natural text.
-- Falls back to deterministic menu selection if box-source intent is ambiguous.
-- In manual box mode, parses `center` and `box_size` from natural-language answers with LLM.
+- Parses `center` and `box_size` from natural-language answers with the LLM.
 - Never bypasses validation; updates must satisfy required parameter rules.
 
 ### Failure Safety
@@ -611,7 +611,6 @@ python nlp_orchestrator.py --clarification-mode hybrid "Download 6lu7 and ATP, p
 Example (missing docking box):
 
 ```text
-How should we define docking box coordinates? (manually define coordinates or interactive PyMOL): I'll type them.
 Please provide docking box center as x,y,z: center 10,20,30 and box size 25,30,35
 ```
 
@@ -763,7 +762,8 @@ failure). See `common/job_log.py::append_job_log()`.
 
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
-| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Project default |
+| **gemma3:4b** | ~3.3GB | Fast | Good | Lighter; 8–16 GB RAM |
+| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Strong instruction following |
 | **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Strong alternative |
 | **llama2** | ~4GB | Medium | High | Stable alternative |
 | **mistral** | ~4GB | Fast | High | Fast alternative |
@@ -773,7 +773,7 @@ failure). See `common/job_log.py::append_job_log()`.
 ### Download Models
 
 ```bash
-# Qwen 2.5 Coder 7B Q4 (project default)
+# Qwen 2.5 Coder 7B Q4
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # DeepSeek Coder 6.7B Q4 (strong alternative)
@@ -820,6 +820,13 @@ python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Downloa
 
 ### Ollama Not Starting
 
+Ollama is opt-in (Phase 18); a plain `docker compose up -d` doesn't start it.
+
+**Start it:**
+```bash
+docker compose --profile local-llm up -d ollama
+```
+
 **Check if running:**
 ```bash
 docker ps | grep ollama
@@ -832,7 +839,7 @@ docker logs mcp-llm
 
 **Restart:**
 ```bash
-docker compose restart ollama
+docker compose --profile local-llm restart ollama
 ```
 
 ### Model Not Found
@@ -1138,15 +1145,24 @@ separate `OPENAI_API_KEY` and `METACENTRUM_API_KEY`) — only one provider is ac
 time, selected via `LLM_PROVIDER`, so its variables are simply reused for whichever
 provider you pick.
 
-### Ollama (default — local, private, free)
+### None (default)
 
-Runs entirely on your machine. Supports DeepSeek, LLaMA, Mistral, Qwen, Phi, and hundreds
+`LLM_PROVIDER=none`: no LLM. The GUI's forms, **Run Docking** and chat
+commands (`run`, `use vina`, `history`, `save results as <name>`) work;
+free text in the GUI chat gets a reply saying how to set an LLM up, and the
+CLI's natural-language commands print the same advice and exit.
+
+### Ollama (local, private, free; opt-in)
+
+Runs entirely on your machine. Start the container with
+`docker compose --profile local-llm up -d ollama`, or install the Ollama app
+on the host (the GUI reaches it at `http://host.docker.internal:11434`). Supports DeepSeek, LLaMA, Mistral, Qwen, Phi, and hundreds
 of other models — just change the model name.
 
 ```bash
 LLM_PROVIDER=ollama
 LLM_ENDPOINT=http://localhost:11434
-LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
+LLM_MODEL=gemma3:4b
 ```
 
 CLI: `--llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model <model>`

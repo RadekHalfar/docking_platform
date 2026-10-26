@@ -169,3 +169,31 @@ async def test_reopening_drops_a_model_picked_but_not_applied(user: User, page, 
     await _models_listed(page)
 
     assert element(user, "settings-model-select").value == current
+
+
+# ---------------------------------------------------------------------------
+# No LLM (provider "none", the Phase 18 default)
+# ---------------------------------------------------------------------------
+
+async def test_no_llm_default_shows_only_the_provider(user: User, page, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "")
+    await user.open("/")
+    click(user, "settings-button")  # nothing to list: no Ollama fetch starts
+
+    assert element(user, "settings-provider").value == "none"
+    assert page.state.llm_client is None
+    for marker in ("settings-model", "settings-model-select", "settings-api-key",
+                   "settings-advanced", "settings-endpoint", "settings-base-url"):
+        assert not element(user, marker).visible, marker
+
+
+async def test_applying_none_drops_the_client(user: User, page, tmp_path):
+    await _open_dialog(user, page)
+    assert page.state.llm_client is not None
+
+    set_value(user, "settings-provider", "none")
+    await _apply(user, page)
+
+    assert element(user, "settings-message").text == settings_dialog.APPLIED
+    assert page.state.llm_client is None
+    assert json.loads((tmp_path / "settings.json").read_text())["provider"] == "none"

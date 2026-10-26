@@ -34,8 +34,9 @@ Session**/**Reset** or before you've started a first session.
 
 - Docker Desktop
 - The platform stack running: `docker compose up -d`
-- An LLM backend reachable from the `ui` container (Ollama by default, or a
-  cloud/OpenAI-compatible provider — see below)
+- Optional: an LLM, for free-text chat. None is configured by default; the
+  forms, **Run Docking** and chat commands such as `run` work without one.
+  Pick a cloud provider or a local Ollama in Settings (see below).
 
 ## Persistent Settings
 
@@ -43,19 +44,25 @@ The **Settings** dialog (the gear in the header) lets you change the LLM
 provider, model, endpoint, and API key without editing `.env` or
 restarting the container.
 
-- **LLM Provider**: `Ollama (local)`, `OpenAI`, `Anthropic`,
-  `MetaCentrum (e-INFRA CZ)`, or `Other local server` (any OpenAI-compatible
-  endpoint — LM Studio, vLLM, Jan, llama.cpp, Groq, Together AI).
+- **LLM Provider**: `None (forms only)` (the default), `Ollama (local)`,
+  `OpenAI`, `Anthropic`, `MetaCentrum (e-INFRA CZ)`, or `Other local server`
+  (any OpenAI-compatible endpoint — LM Studio, vLLM, Jan, llama.cpp, Groq,
+  Together AI). With `None`, free text in the chat gets a reply saying how
+  to set one up; commands still work.
+- **Ollama (local)** needs Ollama running. It's opt-in: start the bundled
+  container with `docker compose --profile local-llm up -d ollama`, or point
+  the endpoint at an Ollama app on the host
+  (`http://host.docker.internal:11434`).
 - **Model**: for `Ollama (local)`, this is a dropdown populated live from the
   Ollama server's `/api/tags` (i.e. whatever you've `ollama pull`-ed), so you
   don't need to remember exact tag names. It falls back to a free-text field
   if Ollama can't be reached. For every other provider it's a plain text
   field (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
 - **Endpoint URL** (Ollama only): tucked under an **Advanced** expander,
-  collapsed by default, since the bundled `http://ollama:11434` is correct
-  for almost everyone. Change it only if you want to point at a different
-  Ollama instance — e.g. one running on a separate GPU workstation on your
-  network — instead of the container that ships with the platform.
+  collapsed by default, since `http://ollama:11434` (the `local-llm`
+  container) is the usual one. Change it to use an Ollama app on the host
+  (`http://host.docker.internal:11434`) or one on a separate GPU
+  workstation on your network.
 - **Endpoint URL** / **Base URL** (Other local server): always visible, since
   there's no sensible default — these fields *are* how you tell the platform
   where your custom server lives (LM Studio, vLLM, etc.).
@@ -472,7 +479,7 @@ Once a session's results are showing, you get:
 
 - An affinity bar chart (best binder first), in a fixed-height scrollable
   window so a long chart doesn't push the 3D viewer down the page.
-- An in-browser **3Dmol.js** viewer (no PyMOL, no noVNC — renders entirely
+- An in-browser **3Dmol.js** viewer (no desktop viewer needed — renders entirely
   client-side): the prepared receptor as cartoon, and each docked ligand as
   colored sticks (green = best affinity, red = worst). It keeps its camera,
   as in the box picker.
@@ -491,8 +498,8 @@ Once a session's results are showing, you get:
   (`pdbqt` / `pdb` / `sdf` / `mol2`, defaulting to `pdbqt` — Moldina's native
   output) applies to every ligand's download link, so you can grab the
   whole multi-pose file per ligand in whichever format your downstream tool
-  expects. PDB/SDF/MOL2 are generated once per session (during the same step
-  that used to run PyMOL) via a Meeko PDBQT→RDKit round trip that restores
+  expects. PDB/SDF/MOL2 are generated once per session (during the
+  `visualize` step) via a Meeko PDBQT→RDKit round trip that restores
   proper bond orders, with an OpenBabel fallback if that fails for a
   particular ligand.
 - An **Other Files** section below it for anything else in the session's
@@ -540,11 +547,6 @@ positive number), the viewer draws a 20 Å placeholder and says so under
 the viewer; a click or a − / + step fills that 20 Å size into all three
 fields (a step then changes its own axis, e.g. **X +** gives 21 / 20 / 20),
 so the box you saw is the box that gets docked.
-
-This is a lighter, purely in-browser alternative to the CLI's
-`pymol-interactive`-based box selection (see
-[docs/PYMOL_INTERACTIVE.md](PYMOL_INTERACTIVE.md)) — it doesn't require that
-service to be running.
 
 Once a receptor is loaded here (or a job has already run
 `prepare_protein`), the chat commands described in

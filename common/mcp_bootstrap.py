@@ -4,9 +4,7 @@ Every service resolves host/port/cache-dir the same way: an explicit CLI
 flag wins if given, otherwise fall back to the env-var-backed default from
 common.config. This used to be duplicated and inconsistently implemented --
 two services (rcsb_downloader, ligand_preparer) had no argparse at all, so
-the --host/--port flags their own Dockerfiles pass were silent no-ops, and
-pymol_visualizer didn't consult common.config at all, hardcoding port=8005
-and silently ignoring its own documented PYMOL_VISUALIZER_PORT env var.
+the --host/--port flags their own Dockerfiles pass were silent no-ops.
 """
 import argparse
 from typing import Optional
@@ -18,17 +16,14 @@ def build_service_arg_parser(
     service_name: str,
     description: str,
     cache_dir_help: str = "Cache directory (default from CACHE_DIR env or ./cache)",
-    include_cache_dir: bool = True,
 ) -> argparse.ArgumentParser:
-    """Return a parser pre-populated with the --host/--port(/--cache-dir)
+    """Return a parser pre-populated with the --host/--port/--cache-dir
     flags every service supports identically. Callers needing extra flags
     (e.g. moldina_runner's --moldina-path) can add them before parsing.
 
     cache_dir_help is overridable because moldina_runner's actual --cache-dir
     default (~/.docking_cache/moldina, applied by MoldinaRunnerServer itself)
     differs from every other service's (CACHE_DIR env / ./cache).
-    include_cache_dir=False omits the flag entirely for services with no
-    cache-dir concept (pymol_visualizer doesn't take one at all).
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
@@ -37,8 +32,7 @@ def build_service_arg_parser(
         help=f"Server port (default: {get_service_port(service_name)}, "
              f"overridable via {service_name.upper()}_PORT or this flag)",
     )
-    if include_cache_dir:
-        parser.add_argument("--cache-dir", default=None, help=cache_dir_help)
+    parser.add_argument("--cache-dir", default=None, help=cache_dir_help)
     return parser
 
 

@@ -276,13 +276,6 @@ _EXTRACT_UPDATES_SYSTEM = (
     'Do not invent values. If the answer is ambiguous, unrelated, or insufficient, return {"parameter_updates": {}}.'
 )
 
-_EXTRACT_BOX_SOURCE_SYSTEM = (
-    "You classify one user answer for docking box input mode. "
-    'Return JSON only with this exact shape: {"box_source": "manual"|"pymol"|"unknown"}. '
-    "Never include markdown, explanations, comments, or code fences."
-)
-
-
 def generate_llm_follow_up_question(
     llm_client: BaseLLMClient,
     parser_obj: WorkflowParser,
@@ -351,7 +344,7 @@ def extract_updates_with_llm(
         "4. Never infer missing scientific values from defaults, prior examples, or typical practice.\n"
         '5. If the user answer is ambiguous, partial, contradictory, or not machine-usable, return {"parameter_updates": {}}.\n'
         "6. Keep existing workflow capabilities intact: do not invent new services or new parameter names.\n"
-        "7. Deterministic UI choices like manual/default/PyMOL selection are handled elsewhere; only extract concrete parameter values from the answer.\n\n"
+        "7. Deterministic UI choices like manual/default selection are handled elsewhere; only extract concrete parameter values from the answer.\n\n"
         "Field constraints:\n"
         '- protein_id: exactly one 4-character alphanumeric string, for example "6lu7".\n'
         "- ligand_ids: JSON array of strings. Preserve multiplicity exactly when the user specifies counts.\n"
@@ -388,54 +381,10 @@ def extract_updates_with_llm(
     return updates
 
 
-def extract_box_source_choice_with_llm(
-    llm_client: BaseLLMClient,
-    user_answer: str,
-) -> Optional[str]:
-    """Classify whether user prefers manual coordinates or PyMOL box definition.
-
-    Returns "manual", "pymol", or None when classification is unknown/unusable.
-    """
-    prompt = (
-        "Classify this user answer for docking box source preference.\n\n"
-        f"User answer: {user_answer}\n\n"
-        "Rules:\n"
-        "1. Return manual when user prefers typing coordinates or explicitly avoids PyMOL.\n"
-        "2. Return pymol when user prefers defining/selecting the box in interactive PyMOL.\n"
-        "3. Return unknown when answer is ambiguous, mixed, or not about this choice.\n"
-        "4. Do not extract coordinates or other workflow parameters here.\n"
-        "5. Do not guess.\n\n"
-        "Examples:\n"
-        "Answer: use pymol interactive -> {\"box_source\": \"pymol\"}\n"
-        "Answer: I will type center and size manually -> {\"box_source\": \"manual\"}\n"
-        "Answer: not sure -> {\"box_source\": \"unknown\"}"
-    )
-
-    try:
-        raw = llm_client.generate(prompt, system=_EXTRACT_BOX_SOURCE_SYSTEM, temperature=0.1)
-    except (requests.RequestException, RuntimeError) as exc:
-        logger.warning(f"Failed to classify docking box source with LLM: {exc}")
-        return None
-
-    payload = _extract_json_object(raw)
-    if not payload:
-        return None
-
-    choice = payload.get("box_source")
-    if not isinstance(choice, str):
-        return None
-
-    normalized = choice.strip().lower()
-    if normalized in {"manual", "pymol"}:
-        return normalized
-
-    return None
-
 _SESSION_INTENTS = frozenset({
     "new_workflow",
     "search_ligand",
     "update_parameters",
-    "use_pymol_box",
     "set_protein_geometry",
     "set_docking_algorithm",
     "rerun_steps",
@@ -454,7 +403,6 @@ _INTENT_CLASSIFIER_SYSTEM = (
     "- new_workflow: user wants to start a completely new workflow or switch to a different protein/job\n"
     "- search_ligand: user wants to search ligand candidates by common name before choosing one\n"
     "- update_parameters: user wants to change one or more docking parameters (ligand, center, box size, etc.)\n"
-    "- use_pymol_box: user wants to use interactive PyMOL to define the docking box\n"
     "- rerun_steps: user explicitly asks to rerun a docking or preparation step\n"
     "- show_state: user wants to inspect current active job parameters or status\n"
     "- show_history: user wants to see the list of saved revisions or parameter history\n"
@@ -683,9 +631,6 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     if re.match(r"^(rerun|run|dock|execute)\b", t):
         return {"intent": "rerun_steps", "name": None}
 
-    if re.match(r"^use\s+pymol\b", t):
-        return {"intent": "use_pymol_box", "name": None}
-
     # Must run before the generic update_parameters prefix match below --
     # "set up box center as protein center" and "use protein center" both
     # start with a word that prefix matches on.
@@ -698,8 +643,8 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     # exists. Deliberately deferred, not missed: see dev_plan.md Phase 12
     # Future Work ("LLM-based recognition of this command"). The numeric
     # computation would stay fully deterministic either way -- only intent
-    # *recognition* would gain an LLM tier, mirroring use_pymol_box's
-    # existing two-tier setup. Revisit if real usage shows a common
+    # *recognition* would gain an LLM tier, like the other intents'
+    # two-tier setup. Revisit if real usage shows a common
     # phrasing the regexes below miss.
     geometry_target = detect_protein_geometry_command(text)
     if geometry_target is not None:
@@ -762,7 +707,7 @@ _SEGMENT_SPLIT_SYSTEM = (
     "with 'and' or 'then'). Each command must be a complete, standalone "
     "instruction someone could type on its own, using words from the "
     "original input only:\n"
-    "- new_workflow, search_ligand, update_parameters, use_pymol_box, "
+    "- new_workflow, search_ligand, update_parameters, "
     "rerun_steps, show_state, show_history, undo_revision, save_results, "
     "end_session, help\n\n"
     'Return JSON only with this exact shape: {"segments": ["<command 1>", "<command 2>", ...]}. '

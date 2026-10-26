@@ -2,12 +2,11 @@
 
 Run this from inside a clone of this repo (or pass --compose-file to point
 at one explicitly). The platform's own images (rcsb-downloader, ligand-
-preparer, protein-preparer, moldina-runner, pymol-visualizer, pymol-
-interactive, ui) are built locally from the Dockerfiles here — they are not
+preparer, protein-preparer, moldina-runner, ui) are built locally from the Dockerfiles here — they are not
 published to any registry — so a git clone is required; there is no
-zero-dependency standalone download. Only the Ollama LLM image is pulled
-from a public registry, and that happens automatically as part of
-`docker compose up`.
+zero-dependency standalone download. No LLM is installed: the GUI works
+without one, and its Settings dialog explains how to add a cloud provider
+or start the optional local Ollama (`docker compose --profile local-llm`).
 
 Stdlib-only so it can be frozen into a single-file executable via PyInstaller
 (see build.sh) without bundling any third-party dependencies.
@@ -162,8 +161,8 @@ def build_images(compose_file: str) -> None:
 
 
 def start_services(compose_file: str) -> None:
-    # Pulls the Ollama image automatically (it has no build: section); the
-    # platform's own services use the images built by build_images() above.
+    # The platform's own services use the images built by build_images()
+    # above; the optional Ollama (profile local-llm) isn't started here.
     # --remove-orphans: a service dropped from docker-compose.yml is stopped
     # too, e.g. Phase 16's ui-nice, which would otherwise keep serving an
     # old GUI on port 3001 next to the new one (Review Stage R4).

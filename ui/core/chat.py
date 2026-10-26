@@ -44,6 +44,15 @@ RunSave = Callable[[dict], None]
 # Does what a Run Docking click does: () -> None; it posts its own reply.
 RunDocking = Callable[[], None]
 
+# The reply when no LLM is set up (provider "none", the Phase 18 default):
+# the commands above still work, only free text needs the LLM.
+NO_LLM_REPLY = (
+    "Chat needs an LLM to read that. Open **Settings** (the gear icon, top "
+    "right) to pick one: a cloud provider with an API key, or a local Ollama. "
+    "Commands such as **run**, **use vina**, **history** and "
+    "**save results as <name>** work without one."
+)
+
 STALE_PARSE_REPLY = (
     "The session changed while I was reading that message, so I didn't "
     "apply it — please send it again."
@@ -61,8 +70,9 @@ def submit(
     apply_geometry: box_picker.ApplyGeometry = box_picker.apply_protein_geometry,
 ) -> bool:
     """Post the user's *message* and answer it if it is a deterministic
-    command. Returns False if it is not one -- the caller then has the LLM
-    parse it (:func:`parse_message`).
+    command, or with :data:`NO_LLM_REPLY` when no LLM is set up. Returns
+    False otherwise -- the caller then has the LLM parse it
+    (:func:`parse_message`).
 
     *run_save* runs a ``save ... as`` and *run_docking* a run command (each
     posts its own reply); *apply_geometry* replaces the inline geometry
@@ -98,6 +108,9 @@ def submit(
         return True
     if intent is not None and intent["intent"] == "save_results":
         run_save(intent)
+        return True
+    if state.llm_client is None:
+        reply(state, NO_LLM_REPLY)
         return True
     return False
 

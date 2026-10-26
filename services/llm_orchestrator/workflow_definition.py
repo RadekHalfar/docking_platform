@@ -117,7 +117,6 @@ MCP_SERVICE_DEFAULT_URLS: Dict[str, str] = {
     "ligand_preparer": "http://localhost:8002",
     "protein_preparer": "http://localhost:8003",
     "moldina_runner": "http://localhost:8004",
-    "pymol_visualizer": "http://localhost:8005",
 }
 
 
@@ -126,7 +125,6 @@ MCP_SERVICE_URL_ENV_VARS: Dict[str, str] = {
     "ligand_preparer": "MCP_LIGAND_PREPARER_URL",
     "protein_preparer": "MCP_PROTEIN_PREPARER_URL",
     "moldina_runner": "MCP_MOLDINA_RUNNER_URL",
-    "pymol_visualizer": "MCP_PYMOL_VISUALIZER_URL",
 }
 
 

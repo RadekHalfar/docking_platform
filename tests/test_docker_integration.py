@@ -9,7 +9,7 @@ Run these tests after building Docker images:
 Requirements:
 - Docker images built
 - Docker Compose running
-- Services accessible on localhost:8001-8005
+- Services accessible on localhost:8001-8004
 
 When running inside a container, set the SERVICE_HOST env var to reach host
 services (e.g. SERVICE_HOST=host.docker.internal on Docker Desktop for Windows):
@@ -56,7 +56,6 @@ SERVICES = {
     "ligand_preparer": f"http://{_SERVICE_HOST}:8002",
     "protein_preparer": f"http://{_SERVICE_HOST}:8003",
     "moldina_runner": f"http://{_SERVICE_HOST}:8004",
-    "pymol_visualizer": f"http://{_SERVICE_HOST}:8005",
 }
 
 
@@ -101,7 +100,6 @@ class TestDockerHealthChecks:
             "ligand_preparer",
             "protein_preparer",
             "moldina_runner",
-            "pymol_visualizer",
         ],
     )
     def test_service_health(self, service_key, wait_for_services):

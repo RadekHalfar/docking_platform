@@ -22,6 +22,8 @@ Linux/Mac:
 docker compose up -d
 ```
 
+The GUI is at http://localhost:3000 and docks from its forms without an LLM.
+
 ## 3. Verify Health
 
 ```powershell
@@ -29,6 +31,16 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 ```
 
 ## 4. Run a Complete Workflow
+
+The CLI parses natural language, so it needs an LLM; none is configured by
+default. Either set `LLM_PROVIDER`, `LLM_MODEL` and `LLM_API_KEY` in `.env`
+(see `.env.example`), or start the opt-in local Ollama and pass it:
+
+```powershell
+docker compose --profile local-llm up -d ollama
+docker exec -it mcp-llm ollama pull gemma3:4b
+# then add: --llm-provider ollama --llm-model gemma3:4b
+```
 
 Example with explicit docking box:
 
@@ -46,21 +58,13 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 
 Default clarification mode is `hybrid`.
 
-When `center` / `box_size` are missing, CLI first asks in natural language how to provide docking box coordinates (manual vs interactive PyMOL), then:
+When `center` / `box_size` are missing, the CLI asks for them in natural
+language and the LLM parses `center` / `box_size` from your free-text answer
+(for example "center 10,20,30 and box size 25,30,35"). Type `state` at any
+prompt to see what has been collected so far.
 
-1. If intent is clear and manual is chosen, `center` / `box_size` are parsed from your free-text answer by LLM.
-2. If intent is clear and PyMOL is chosen, orchestrator tries interactive PyMOL box capture directly.
-3. If intent is ambiguous, CLI falls back to deterministic menu:
-	- Write center/box_size manually
-	- Define box in PyMOL Interactive now
-
-If PyMOL path is used, orchestrator:
-
-1. Prepares structures
-2. Loads them in interactive PyMOL
-3. Waits for your selection name (default: `sele`)
-4. Calls interactive API to compute box and save `docking_box.json`
-5. Continues docking in the same job folder
+To pick the box visually instead, use the GUI's box picker (click an atom in
+the 3D viewer); see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md).
 
 Use deterministic-only behavior with legacy mode:
 
@@ -68,33 +72,13 @@ Use deterministic-only behavior with legacy mode:
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --clarification-mode legacy "Download 6lu7 and two ATP, prepare and dock"
 ```
 
-## 6. Interactive PyMOL
+## 6. What `visualize` Does
 
-Already running -- it started along with everything else in step 2 (`docker compose up -d`). No profile flag or extra command is needed.
+If the workflow includes `visualize`, docked poses are converted to PDB/SDF/MOL2
+via `convert_docked_poses` (on `ligand_preparer`). The GUI's in-browser
+3Dmol.js viewer reads these files; see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md).
 
-Open noVNC desktop:
-
-```text
-http://localhost:6080/vnc.html
-```
-
-Interactive helper API:
-
-```text
-http://localhost:8090
-```
-
-## 7. What `visualize` Currently Does
-
-If workflow includes `visualize`:
-
-1. Docked poses are converted to PDB/SDF/MOL2 via `convert_docked_poses` (on
-   `ligand_preparer`) — this is what the GUI's in-browser 3Dmol.js viewer
-   reads; see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)
-2. After workflow completion, CLI tries to load the same job into `pymol-interactive`
-3. You can inspect it in noVNC when `pymol-interactive` is running
-
-## 8. Output Location
+## 7. Output Location
 
 All workflow outputs are saved under:
 
@@ -108,10 +92,10 @@ Typical contents:
 - `prepared/`
 - `docking_results/`
 - `visualization/` (if visualize is used)
-- `docking_box.json` (if box was defined through interactive PyMOL)
+- `docking_box.json` (the docking box that was used)
 - `workflow_results.json`
 
-## 9. Run Tests
+## 8. Run Tests
 
 ```powershell
 docker compose --profile dev run --rm script-runner python -m pytest tests/ --tb=short
@@ -120,12 +104,5 @@ docker compose --profile dev run --rm script-runner python -m pytest tests/ --tb
 Targeted tests for this flow:
 
 ```powershell
-docker compose --profile dev run --rm script-runner pytest tests/test_nlp_orchestrator.py tests/test_pymol_interactive.py -q
-```
-
-## 10. Rebuild Only Interactive Service (When Needed)
-
-```powershell
-.\docker_build.ps1 -Services pymol-interactive -NoCache
-docker compose up -d pymol-interactive
+docker compose --profile dev run --rm script-runner pytest tests/test_nlp_orchestrator.py tests/test_session_intents.py -q
 ```

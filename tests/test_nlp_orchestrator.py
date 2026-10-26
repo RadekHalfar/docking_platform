@@ -13,37 +13,6 @@ from services.llm_orchestrator.workflow_llm_parser import (
 import nlp_orchestrator as cli
 
 
-def test_collect_missing_parameters_uses_live_pymol_box(monkeypatch, tmp_path):
-    parser = WorkflowParser()
-    parser.validate_workflow(
-        {
-            "services": ["dock"],
-            "parameters": {
-                "protein_id": "6lu7",
-                "ligand_ids": ["ATP"],
-            },
-        }
-    )
-
-    parser._live_box_provider = lambda: {
-        "center": [9.0, 8.0, 7.0],
-        "box_size": [30.0, 31.0, 32.0],
-        "job_id": "job_123",
-        "path": str(tmp_path / "job_123" / "docking_box.json"),
-    }
-
-    answers = iter(["2"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
-
-    cli._collect_missing_parameters(parser, str(tmp_path))
-
-    params = parser.parsed_workflow["parameters"]
-    assert params["center"] == [9.0, 8.0, 7.0]
-    assert params["box_size"] == [30.0, 31.0, 32.0]
-    assert "center" not in parser.get_missing_parameters()
-    assert "box_size" not in parser.get_missing_parameters()
-
-
 def test_collect_missing_parameters_manual_defaults(monkeypatch, tmp_path):
     parser = WorkflowParser()
     parser.validate_workflow(
@@ -56,31 +25,7 @@ def test_collect_missing_parameters_manual_defaults(monkeypatch, tmp_path):
         }
     )
 
-    answers = iter(["1", "y", "y"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
-
-    cli._collect_missing_parameters(parser, str(tmp_path))
-
-    params = parser.parsed_workflow["parameters"]
-    assert params["center"] == [10.0, 20.0, 30.0]
-    assert params["box_size"] == [25.0, 30.0, 35.0]
-
-
-def test_collect_missing_parameters_falls_back_to_manual_when_live_pymol_fails(monkeypatch, tmp_path):
-    parser = WorkflowParser()
-    parser.validate_workflow(
-        {
-            "services": ["dock"],
-            "parameters": {
-                "protein_id": "6lu7",
-                "ligand_ids": ["ATP"],
-            },
-        }
-    )
-
-    parser._live_box_provider = lambda: None
-
-    answers = iter(["2", "y", "y", "y"])
+    answers = iter(["y", "y"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     cli._collect_missing_parameters(parser, str(tmp_path))
@@ -145,7 +90,7 @@ def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tm
     assert "protein_id" in parser.get_missing_parameters()
 
 
-def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatch, tmp_path, llm_client):
+def test_collect_missing_parameters_hybrid_asks_for_box_directly(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -157,14 +102,12 @@ def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatc
         }
     )
 
-    monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "manual")
-
     llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
         '{"parameter_updates": {"center": [11.0, 22.0, 33.0], "box_size": [24.0, 25.0, 26.0]}}',
     ]
 
-    answers = iter(["manual please", "center 11,22,33 and box size 24,25,26"])
+    answers = iter(["center 11,22,33 and box size 24,25,26"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
@@ -174,7 +117,7 @@ def test_collect_missing_parameters_hybrid_uses_llm_manual_box_choice(monkeypatc
     assert params["box_size"] == [24.0, 25.0, 26.0]
 
 
-def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch, tmp_path, llm_client):
+def test_collect_missing_parameters_hybrid_allows_state_during_box_prompt(monkeypatch, tmp_path, llm_client):
     parser = WorkflowParser()
     parser.validate_workflow(
         {
@@ -185,78 +128,14 @@ def test_collect_missing_parameters_hybrid_uses_llm_pymol_box_choice(monkeypatch
             },
         }
     )
-
-    parser._live_box_provider = lambda: {
-        "center": [9.0, 8.0, 7.0],
-        "box_size": [30.0, 31.0, 32.0],
-        "path": str(tmp_path / "job_123" / "docking_box.json"),
-    }
-
-    monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "pymol")
-
-    answers = iter(["please use pymol"])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
-
-    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
-
-    params = parser.parsed_workflow["parameters"]
-    assert params["center"] == [9.0, 8.0, 7.0]
-    assert params["box_size"] == [30.0, 31.0, 32.0]
-
-
-def test_collect_missing_parameters_hybrid_box_choice_falls_back_to_menu(monkeypatch, tmp_path, llm_client):
-    parser = WorkflowParser()
-    parser.validate_workflow(
-        {
-            "services": ["dock"],
-            "parameters": {
-                "protein_id": "6lu7",
-                "ligand_ids": ["ATP"],
-            },
-        }
-    )
-
-    monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: None)
 
     llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
-        '{"parameter_updates": {"center": [10.0, 20.0, 30.0], "box_size": [25.0, 30.0, 35.0]}}',
-    ]
-
-    answers = iter([
-        "whatever",
-        "1",
-        "center 10,20,30 and box size 25,30,35",
-    ])
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
-
-    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
-
-    params = parser.parsed_workflow["parameters"]
-    assert params["center"] == [10.0, 20.0, 30.0]
-    assert params["box_size"] == [25.0, 30.0, 35.0]
-
-
-def test_collect_missing_parameters_hybrid_allows_state_during_box_source_prompt(monkeypatch, tmp_path, llm_client):
-    parser = WorkflowParser()
-    parser.validate_workflow(
-        {
-            "services": ["dock"],
-            "parameters": {
-                "protein_id": "6lu7",
-                "ligand_ids": ["ATP"],
-            },
-        }
-    )
-
-    monkeypatch.setattr(cli, "extract_box_source_choice_with_llm", lambda *_args, **_kwargs: "manual")
-
-    llm_client.generate.side_effect = [
         "Please provide docking box center as x,y,z.",
         '{"parameter_updates": {"center": [11.0, 22.0, 33.0], "box_size": [24.0, 25.0, 26.0]}}',
     ]
 
-    answers = iter(["show state", "manual please", "center 11,22,33 and box size 24,25,26"])
+    answers = iter(["show state", "center 11,22,33 and box size 24,25,26"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
@@ -294,7 +173,7 @@ def test_extract_updates_with_llm_prompt_includes_strict_rules(llm_client):
 
     assert "Do not invent values" in system
     assert "Preserve multiplicity exactly" in prompt
-    assert "manual/default/PyMOL selection are handled elsewhere" in prompt
+    assert "manual/default selection are handled elsewhere" in prompt
     assert "use ATP and two HEM ligands" in prompt
 
 
@@ -443,7 +322,6 @@ def test_process_workflow_auto_resolves_named_ligands(monkeypatch, tmp_path, llm
 
     answers = iter(["1", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
-    monkeypatch.setattr(cli, "_integrate_with_pymol_interactive", lambda _results: None)
 
     parser_obj = WorkflowParser()
     result = cli.process_workflow(
@@ -495,71 +373,6 @@ def test_process_workflow_cancels_when_named_ligand_not_selected(monkeypatch, tm
 
     assert result == 1
     orchestrator.execute_workflow.assert_not_called()
-
-
-def test_create_box_via_live_pymol_requires_rpc_ready(monkeypatch, tmp_path, capsys):
-    orchestrator = Mock()
-    orchestrator.execute_workflow.return_value = {
-        "job_id": "job_1",
-        "errors": [],
-    }
-
-    class _HealthResponse:
-        status_code = 200
-
-        @staticmethod
-        def json():
-            return {"status": "ok", "service": "pymol_interactive", "pymol_rpc": False}
-
-    monkeypatch.setattr(cli.requests, "get", lambda *_args, **_kwargs: _HealthResponse())
-    monkeypatch.setattr(cli, "_is_running_in_container", lambda: True)
-
-    result = cli._create_box_via_live_pymol(
-        orchestrator=orchestrator,
-        workflow={"parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]}},
-        job_id="job_1",
-    )
-
-    assert result is None
-    assert orchestrator.execute_workflow.call_count == 0
-    output = capsys.readouterr().out
-    assert "pymol_interactive is not ready." in output
-    assert "PyMOL GUI/RPC backend is not available yet" in output
-
-
-def test_create_box_via_live_pymol_reports_load_job_error(monkeypatch, tmp_path, capsys):
-    orchestrator = Mock()
-    orchestrator.execute_workflow.return_value = {
-        "job_id": "job_1",
-        "errors": [],
-    }
-
-    class _HealthResponse:
-        status_code = 200
-
-        @staticmethod
-        def json():
-            return {"status": "ok", "service": "pymol_interactive", "pymol_rpc": True}
-
-    class _LoadResponse:
-        status_code = 500
-        text = '{"error":"Failed to load in PyMOL session: rpc refused"}'
-
-    monkeypatch.setattr(cli.requests, "get", lambda *_args, **_kwargs: _HealthResponse())
-    monkeypatch.setattr(cli.requests, "post", lambda *_args, **_kwargs: _LoadResponse())
-    monkeypatch.setattr(cli, "_is_running_in_container", lambda: True)
-    monkeypatch.setattr(cli.time, "sleep", lambda *_args, **_kwargs: None)
-
-    result = cli._create_box_via_live_pymol(
-        orchestrator=orchestrator,
-        workflow={"parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"]}},
-        job_id="job_1",
-    )
-
-    assert result is None
-    output = capsys.readouterr().out
-    assert "Could not auto-load prepared structures into interactive PyMOL." in output
-    assert "Failed to load in PyMOL session: rpc refused" in output
 
 
 def test_run_interactive_loop_keeps_active_job_and_requires_new_prefix(monkeypatch, tmp_path, llm_client):
@@ -1181,24 +994,6 @@ def test_interactive_loop_invalid_command_does_not_terminate(monkeypatch, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# _is_running_in_container — env-var detection (L8 fix)
-# ---------------------------------------------------------------------------
-
-def test_is_running_in_container_returns_true_when_env_set(monkeypatch):
-    """CONTAINER env var alone should be sufficient to detect container context."""
-    monkeypatch.setenv("CONTAINER", "1")
-    assert cli._is_running_in_container() is True
-
-
-def test_is_running_in_container_returns_false_without_env_or_dockerenv(monkeypatch):
-    """On a bare host without /.dockerenv the function should return False."""
-    import os
-    monkeypatch.delenv("CONTAINER", raising=False)
-    if not os.path.exists("/.dockerenv"):
-        assert cli._is_running_in_container() is False
-
-
-# ---------------------------------------------------------------------------
 # `compare` subcommand
 # ---------------------------------------------------------------------------
 
@@ -1802,3 +1597,54 @@ def test_search_ligand_rerun_after_cancelled_first_workflow_still_runs(monkeypat
         _dispatch({"intent": "search_ligand", "name": "aspirin"}, session)
 
     assert rerun.call_args.kwargs["changed_params"] == {"ligand_ids"}
+
+
+# ---------------------------------------------------------------------------
+# No LLM configured (provider "none", the Phase 18 default)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def no_llm(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setattr(cli, "create_llm_client", Mock(side_effect=AssertionError("no client for 'none'")))
+
+
+def _main(monkeypatch, tmp_path, *argv):
+    monkeypatch.setattr("sys.argv", ["nlp_orchestrator.py", "--output-dir", str(tmp_path), *argv])
+    return cli.main()
+
+
+@pytest.mark.parametrize("argv", [["dock ATP into 6lu7"], ["--interactive"], ["--list-models"]])
+def test_no_llm_natural_language_prints_the_setup_message(monkeypatch, tmp_path, capsys, no_llm, argv):
+    assert _main(monkeypatch, tmp_path, *argv) == 1
+    out = capsys.readouterr().out
+    assert out.strip() == cli.NO_LLM_MESSAGE
+    assert "--profile local-llm" in out
+
+
+def test_no_llm_check_health_is_healthy_when_services_are(monkeypatch, tmp_path, capsys, no_llm):
+    monkeypatch.setattr(cli.WorkflowOrchestrator, "check_services_health", lambda self: {"rcsb_downloader": True})
+
+    assert _main(monkeypatch, tmp_path, "--check-health") == 0
+    assert "not configured" in capsys.readouterr().out
+
+
+def test_no_llm_check_health_still_fails_on_a_down_service(monkeypatch, tmp_path, no_llm):
+    monkeypatch.setattr(cli.WorkflowOrchestrator, "check_services_health", lambda self: {"rcsb_downloader": False})
+
+    assert _main(monkeypatch, tmp_path, "--check-health") == 1
+
+
+def test_a_configured_llm_is_still_health_checked(monkeypatch, tmp_path, capsys):
+    client = Mock(check_health=Mock(return_value=False))
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=client))
+    monkeypatch.setattr(cli.WorkflowOrchestrator, "check_services_health", lambda self: {"rcsb_downloader": True})
+
+    assert _main(monkeypatch, tmp_path, "--check-health") == 1
+    assert "❌ openai" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("provider, configured", [("none", False), ("", False), (None, False), (" None ", False), ("openai", True)])
+def test_is_llm_configured(provider, configured):
+    assert cli.is_llm_configured(provider) is configured

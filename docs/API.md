@@ -270,9 +270,7 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
 Converts each ligand's docked-pose PDBQT (every Vina/Moldina mode, as one
 multi-model file) into one multi-pose file per requested format, for the
 GUI's in-browser 3Dmol.js viewer and its per-format download picker. This is
-the `visualize` workflow step's default tool as of the PyMOL → 3Dmol.js
-migration — see [GUI_GUIDE.md](GUI_GUIDE.md) and the note at the top of
-[PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
+the tool behind the `visualize` workflow step — see [GUI_GUIDE.md](GUI_GUIDE.md).
 
 **Conversion:**
 1. Parse the docked-pose PDBQT with Meeko (`PDBQTMolecule` + `RDKitMolCreate`), restoring proper bond orders/aromaticity from the `REMARK SMILES` Meeko embedded when the ligand was originally prepared — a single parse is reused for every requested format.
@@ -570,64 +568,6 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
 - See `docs/MOLDINA_DOCKING.md` for the engine guide, and
   [DOCKING_PARAMETERS.md § Stage 4](DOCKING_PARAMETERS.md#stage-4-molecular-docking)
   for tuning guidance and ranges for every parameter above
-
----
-
-## 5. PyMOL Visualizer Service
-
-> **No longer used by default.** The `visualize` workflow step now calls
-> `convert_docked_poses` on the Ligand Preparer service (§2) instead, feeding
-> the GUI's in-browser 3Dmol.js viewer rather than a server-rendered PNG. This
-> service and its container are still present and still work if called
-> directly — see the note at the top of
-> [PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
-
-**Port:** 8005  
-**Base URL:** `http://localhost:8005`
-
-### Tool: visualize_docking
-
-Generates PyMOL visualization scripts and optionally renders high-quality images of docking results.
-
-**Features:**
-- Generates `.pml` scripts with relative paths (works on host and in Docker)
-- Creates `.pse` PyMOL session files for interactive analysis
-- Headless rendering in Docker containers (xvfb + ray tracing)
-- Automatic coloring by binding affinity
-- Binding site highlighting
-
-**Parameters:**
-- `receptor_path` (string, required): Path to receptor PDBQT file
-- `ligand_paths` (array of strings, required): Paths to docked ligand PDBQT files
-- `output_dir` (string, required): Directory for output files
-- `affinities` (array of numbers, optional): Binding affinities for color coding
-- `show_surface` (boolean, default: true): Show protein surface
-- `show_binding_site` (boolean, default: true): Highlight binding site residues
-- `binding_site_radius` (number, default: 5.0): Radius for binding site detection (Ångströms)
-- `render_image` (boolean, default: false): Generate PNG image
-- `image_width` (number, default: 1920): Image width in pixels
-- `image_height` (number, default: 1080): Image height in pixels
-- `image_dpi` (number, default: 300): Image DPI for publication quality
-- `ray_trace` (boolean, default: true): Use ray tracing for rendering
-
-**Returns:**
-```json
-{
-  "script_path": "./demo_output/visualization/visualization.pml",
-  "session_path": "./demo_output/visualization/visualization.pse",
-  "image_path": "./demo_output/visualization/docking_visualization.png",
-  "receptor": "./demo_output/prepared_proteins/6LU7.pdbqt",
-  "num_ligands": 1,
-  "ligands": ["./demo_output/docking_results/moldina_out.pdbqt"],
-  "affinities": [-2.4]
-}
-```
-
-**Notes:**
-- Script paths are relative for cross-platform compatibility
-- PyMOL installation not required on host (rendering in Docker)
-- `.pse` files can be opened with local PyMOL for interactive analysis
-- Image rendering requires PyMOL in Docker (automatically available)
 
 ---
 

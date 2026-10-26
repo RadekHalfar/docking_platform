@@ -7,12 +7,9 @@ import sys
 import os
 import logging
 import argparse
-import subprocess
-import time
 import re
-import requests
 from pathlib import Path
-from typing import Optional, List, Callable, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set
 
 from services.llm_orchestrator import (
     BaseLLMClient,
@@ -24,10 +21,11 @@ from services.llm_orchestrator import (
     describe_rerun_plan,
     missing_required_params,
     create_llm_client,
+    is_llm_configured,
+    NO_LLM_PROVIDER,
     parse_workflow_with_llm,
     generate_llm_follow_up_question,
     extract_updates_with_llm,
-    extract_box_source_choice_with_llm,
     classify_session_intent,
     extract_updates_from_command_with_llm,
     split_command_sequence,
@@ -81,6 +79,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 CLARIFICATION_MODE_HYBRID = "hybrid"
+
+# Printed when a natural-language command arrives with no LLM set up
+# (provider "none", the Phase 18 default).
+NO_LLM_MESSAGE = (
+    "No LLM provider is configured, and natural-language commands need one.\n"
+    "Pick one of:\n"
+    "  - a cloud provider: --llm-provider openai|anthropic|metacentrum --llm-model <model> --llm-api-key <key>\n"
+    "    (or set LLM_PROVIDER, LLM_MODEL and LLM_API_KEY in .env)\n"
+    "  - a local Ollama: docker compose --profile local-llm up -d ollama\n"
+    "    then --llm-provider ollama --llm-model gemma3:4b (the model downloads on first use)\n"
+    "The GUI (http://localhost:3000) runs docking from its forms without an LLM."
+)
 CLARIFICATION_MODE_LEGACY = "legacy"
 
 # Add verbosity filter to root logger
@@ -90,21 +100,6 @@ for handler in logging.getLogger().handlers:
 
 # Parameters that, when changed, require docking_box.json to be refreshed on disk.
 _BOX_PARAMS: frozenset = frozenset({"center", "box_size"})
-
-
-def _pymol_rpc_healthy(base_url: str) -> bool:
-    """Return True when pymol_interactive is up and the PyMOL RPC backend is ready."""
-    try:
-        response = requests.get(f"{base_url}/health", timeout=5)
-        if response.status_code != 200:
-            return False
-        try:
-            payload = response.json()
-        except ValueError:
-            return False
-        return payload.get("pymol_rpc") is True
-    except requests.RequestException:
-        return False
 
 
 def _print_interactive_help() -> None:
@@ -128,8 +123,6 @@ def _print_interactive_help() -> None:
     print("  - save visualization as <name>  # Save visualization-only bundle")
     print("  - history                    # Show revision history")
     print("  - undo <revision>            # Restore parameters/state to a prior revision")
-    print("\nComing soon (stubs active):")
-    print("  - use pymol box              # Define box from PyMOL selection (Phase 6)")
 
 
 def _persist_parameter_updates(
@@ -163,7 +156,7 @@ def _persist_parameter_updates(
 
     # Keep docking_box.json on disk in sync whenever box coordinates change
     # so that every subsequent read of docking_box.json reflects the current
-    # state (e.g. save_results_bundle, PyMOL reload, debug inspection).
+    # state (e.g. save_results_bundle, the GUI viewer, debug inspection).
     if changed_keys & _BOX_PARAMS and current.get("center") and current.get("box_size"):
         _box_payload: Dict[str, Any] = {
             "job_id": session.state_manager.job_dir.name,
@@ -866,20 +859,6 @@ def _dispatch_intent(
         rev = (intent_result or {}).get("name")
         return _handle_undo_revision(rev, session)
 
-    if intent == "use_pymol_box":
-        print("PyMOL box selection is not available (Phase 6 was skipped).")
-        print("Set coordinates manually: 'set center to x,y,z' and 'set box size to x,y,z'.")
-        return True
-
-    if intent == "visualize_in_pymol":
-        if session.last_results and "visualize" in (session.last_results.get("services_executed") or []):
-            _integrate_with_pymol_interactive(session.last_results)
-        elif session.last_results:
-            print("Visualization was not part of this workflow. Include 'visualize' in your next request.")
-        else:
-            print("No workflow results available to load into PyMOL.")
-        return True
-
     # No recognised intent — if there's an active job, we don't know
     # what the user meant; otherwise treat as a new workflow request.
     if session.has_active_job():
@@ -1187,8 +1166,9 @@ Examples:
     )
     parser.add_argument(
         "--llm-provider",
-        default=os.getenv("LLM_PROVIDER", "ollama"),
-        help="LLM provider name: ollama, openai, anthropic, metacentrum, or openai_compatible (default: ollama)"
+        default=os.getenv("LLM_PROVIDER") or NO_LLM_PROVIDER,
+        help="LLM provider name: ollama, openai, anthropic, metacentrum, openai_compatible, "
+             "or none (default: LLM_PROVIDER, else none)"
     )
     parser.add_argument(
         "--llm-endpoint",
@@ -1197,8 +1177,8 @@ Examples:
     )
     parser.add_argument(
         "--llm-model",
-        default=os.getenv("LLM_MODEL", "qwen2.5-coder:7b-instruct-q4_K_M"),
-        help="LLM model name to use (default: qwen2.5-coder:7b-instruct-q4_K_M)"
+        default=os.getenv("LLM_MODEL", ""),
+        help="LLM model name to use (default: LLM_MODEL)"
     )
     parser.add_argument(
         "--llm-api-key",
@@ -1277,17 +1257,26 @@ Examples:
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Initialize components
-    llm_client = create_llm_client(
-        provider=args.llm_provider,
-        endpoint=args.llm_endpoint,
-        model=args.llm_model,
-        api_key=args.llm_api_key,
-        base_url=args.llm_base_url,
-    )
+    llm_client = None
+    if is_llm_configured(args.llm_provider):
+        llm_client = create_llm_client(
+            provider=args.llm_provider,
+            endpoint=args.llm_endpoint,
+            model=args.llm_model,
+            api_key=args.llm_api_key,
+            base_url=args.llm_base_url,
+        )
     orchestrator = WorkflowOrchestrator(output_base=args.output_dir, verbosity=current_verbosity)
     parser_obj = WorkflowParser()
-    
+
     # Handle special commands
+    if args.check_health:
+        return _check_health(llm_client, args, orchestrator)
+
+    if llm_client is None and (args.list_models or args.interactive or args.command):
+        print(NO_LLM_MESSAGE)
+        return 1
+
     if args.list_models:
         print(f"Available models for provider '{args.llm_provider}':")
         models = llm_client.list_models()
@@ -1297,25 +1286,6 @@ Examples:
         else:
             print("  No models found or provider endpoint not accessible")
         return 0
-    
-    if args.check_health:
-        print("Checking service health...")
-        print("\nLLM Provider:")
-        ollama_ok = llm_client.check_health()
-        print(f"  {'✅' if ollama_ok else '❌'} {args.llm_provider} ({args.llm_endpoint})")
-        
-        print("\nMCP Services:")
-        health = orchestrator.check_services_health()
-        for service, ok in health.items():
-            print(f"  {'✅' if ok else '❌'} {service}")
-        
-        all_ok = ollama_ok and all(health.values())
-        if all_ok:
-            print("\n✅ All services are healthy!")
-            return 0
-        else:
-            print("\n❌ Some services are not healthy. Please start them first.")
-            return 1
     
     # Interactive mode
     if args.interactive:
@@ -1344,6 +1314,31 @@ Examples:
     else:
         parser.print_help()
         return 1
+
+
+def _check_health(llm_client: Optional[BaseLLMClient], args: argparse.Namespace, orchestrator: WorkflowOrchestrator) -> int:
+    """`--check-health`: 0 when every MCP service is healthy and the LLM, if
+    one is configured, answers. No LLM is information, not a failure: the
+    GUI's forms dock without one."""
+    print("Checking service health...")
+    print("\nLLM Provider:")
+    if llm_client is None:
+        llm_ok = True
+        print("  ➖ not configured (only natural-language commands need one; see --llm-provider)")
+    else:
+        llm_ok = llm_client.check_health()
+        print(f"  {'✅' if llm_ok else '❌'} {args.llm_provider} ({args.llm_endpoint})")
+
+    print("\nMCP Services:")
+    health = orchestrator.check_services_health()
+    for service, ok in health.items():
+        print(f"  {'✅' if ok else '❌'} {service}")
+
+    if llm_ok and all(health.values()):
+        print("\n✅ All services are healthy!")
+        return 0
+    print("\n❌ Some services are not healthy. Please start them first.")
+    return 1
 
 
 def _ask_yes_no(question: str, default_yes: bool = True) -> bool:
@@ -1394,101 +1389,12 @@ def _collect_missing_parameters_hybrid(
 ) -> None:
     """Hybrid clarification: deterministic branching + LLM wording/intent extraction."""
     prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
-    center_default = [10.0, 20.0, 30.0]
-    box_size_default = [25.0, 30.0, 35.0]
-    box_source_decided = False
-    manual_box_mode = False
     turn = 0
 
     while parser_obj.has_missing_parameters() and turn < max_turns:
         turn += 1
         missing = parser_obj.get_missing_parameters()
         current_param = next((p for p in prompt_order if p in missing), missing[0])
-
-        if current_param in ["center", "box_size"] and not box_source_decided:
-            source_answer = input(
-                "How should we define docking box coordinates? "
-                "(manually define coordinates or interactive PyMOL): "
-            ).strip()
-
-            if source_answer.lower() in {"state", "show state"}:
-                _print_clarification_state(parser_obj)
-                turn -= 1
-                continue
-
-            box_source_choice = extract_box_source_choice_with_llm(llm_client, source_answer)
-
-            if box_source_choice == "pymol":
-                box_source_decided = True
-                used_pymol = _try_apply_live_pymol_box(
-                    parser_obj,
-                    live_box_provider=getattr(parser_obj, "_live_box_provider", None),
-                )
-                if used_pymol:
-                    parser_obj.validate_workflow(
-                        {
-                            "services": parser_obj.parsed_workflow["services"],
-                            "parameters": parser_obj.parsed_workflow["parameters"],
-                        }
-                    )
-                    continue
-                if not _ask_yes_no(
-                    "Could not define docking box in PyMOL now. Continue with manual coordinates/defaults? [Y/n]: ",
-                    default_yes=True,
-                ):
-                    box_source_decided = False
-                    continue
-                manual_box_mode = True
-
-            elif box_source_choice == "manual":
-                box_source_decided = True
-                manual_box_mode = True
-
-            else:
-                print("I could not determine box mode from that answer. Please choose directly.")
-                box_source_decided = True
-                used_pymol = _choose_docking_box_source(
-                    parser_obj,
-                    output_base,
-                    live_box_provider=getattr(parser_obj, "_live_box_provider", None),
-                )
-                if used_pymol:
-                    parser_obj.validate_workflow(
-                        {
-                            "services": parser_obj.parsed_workflow["services"],
-                            "parameters": parser_obj.parsed_workflow["parameters"],
-                        }
-                    )
-                    continue
-                manual_box_mode = True
-
-        if current_param == "center" and not manual_box_mode:
-            use_default = _ask_yes_no(
-                "I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]: "
-            )
-            if use_default:
-                parser_obj.update_parameters({"center": center_default})
-                parser_obj.validate_workflow(
-                    {
-                        "services": parser_obj.parsed_workflow["services"],
-                        "parameters": parser_obj.parsed_workflow["parameters"],
-                    }
-                )
-                continue
-
-        if current_param == "box_size" and not manual_box_mode:
-            use_default = _ask_yes_no(
-                "I am missing docking box size [x, y, z]. Do you want to use default [25, 30, 35]? [Y/n]: "
-            )
-            if use_default:
-                parser_obj.update_parameters({"box_size": box_size_default})
-                parser_obj.validate_workflow(
-                    {
-                        "services": parser_obj.parsed_workflow["services"],
-                        "parameters": parser_obj.parsed_workflow["parameters"],
-                    }
-                )
-                continue
 
         question = generate_llm_follow_up_question(llm_client, parser_obj, current_param)
         user_answer = input(f"{question.rstrip(':')} ").strip()
@@ -1525,186 +1431,15 @@ def _default_clarification_mode(mode: str) -> str:
     return CLARIFICATION_MODE_HYBRID
 
 
-def _create_box_via_live_pymol(
-    orchestrator: WorkflowOrchestrator,
-    workflow: Dict[str, Any],
-    job_id: str,
-    state_manager: Optional[WorkflowStateManager] = None,
-) -> Optional[dict]:
-    """Run pre-docking prep, open interactive PyMOL flow, and derive center/box_size from selection."""
-    base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
-    no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
-
-    # Ensure PyMOL Interactive is available.
-    healthy = _pymol_rpc_healthy(base_url)
-    if not healthy and not _is_running_in_container():
-        if _try_start_pymol_interactive_service():
-            for _ in range(30):
-                if _pymol_rpc_healthy(base_url):
-                    healthy = True
-                    break
-                time.sleep(1)
-
-    if not healthy:
-        print("pymol_interactive is not ready.")
-        print("The helper API responded, but the PyMOL GUI/RPC backend is not available yet.")
-        print("Start it with: docker compose up -d pymol-interactive")
-        print(f"Then open: {no_vnc_url}")
-        return None
-
-    # Run the preparation phase so interactive service can load prepared receptor/ligands.
-    print("\n🧪 Preparing structures for interactive box selection...")
-    prep_workflow = {
-        "services": ["get_input_files", "prepare_ligands", "prepare_protein"],
-        "parameters": workflow.get("parameters", {}),
-    }
-    prep_results = orchestrator.execute_workflow(prep_workflow, job_id=job_id, state_manager=state_manager)
-    if prep_results.get("errors"):
-        print("Could not prepare structures for PyMOL-guided box selection.")
-        for err in prep_results["errors"]:
-            print(f"  - {err}")
-        return None
-
-    prep_job_id = prep_results.get("job_id", job_id)
-
-    # Load prepared assets into live PyMOL session.
-    loaded = False
-    last_load_error = ""
-    for _ in range(30):
-        try:
-            response = requests.post(
-                f"{base_url}/api/load_job",
-                json={"job_id": prep_job_id},
-                timeout=15,
-            )
-            if response.status_code == 200:
-                loaded = True
-                break
-            last_load_error = response.text
-        except requests.RequestException:
-            pass  # service may still be starting; retry until timeout
-        time.sleep(1)
-
-    if not loaded:
-        print("Could not auto-load prepared structures into interactive PyMOL.")
-        if last_load_error:
-            print(f"API response: {last_load_error}")
-        print(f"Open noVNC manually: {no_vnc_url}")
-        return None
-
-    print("\n✅ Interactive PyMOL is ready for box selection.")
-    print(f"Open noVNC: {no_vnc_url}")
-    print("In PyMOL, create/select your target region, then type selection name (default: sele).")
-
-    selection = input("Selection name to use for docking box [sele]: ").strip() or "sele"
-
-    try:
-        response = requests.post(
-            f"{base_url}/api/box/from_selection",
-            json={"job_id": prep_job_id, "selection": selection},
-            timeout=30,
-        )
-        if response.status_code != 200:
-            print(f"Failed to derive docking box from selection '{selection}'.")
-            print(f"API response: {response.text}")
-            return None
-
-        payload = response.json()
-        return {
-            "center": payload.get("center"),
-            "box_size": payload.get("box_size"),
-            "job_id": prep_job_id,
-            "path": payload.get("saved_to", ""),
-        }
-    except requests.RequestException as exc:
-        print(f"Could not contact pymol_interactive API: {exc}")
-        return None
-
-
-def _choose_docking_box_source(
-    parser_obj: WorkflowParser,
-    output_base: str,
-    live_box_provider: Optional[Callable[[], Optional[dict]]] = None,
-) -> bool:
-    """Ask user whether to type box values manually or define a new box in PyMOL.
-
-    Returns True when coordinates were populated from PyMOL box, False for manual flow.
-    """
-    while True:
-        print("\nDocking box coordinates are missing.")
-        print("Choose how to provide them:")
-        print("  1) Write center/box_size manually")
-        print("  2) Define a new box in PyMOL Interactive now")
-        choice = input("Select [1/2] (default: 1): ").strip().lower()
-
-        if choice in ["", "1", "manual", "write", "w"]:
-            return False
-
-        if choice in ["2", "pymol", "visual", "v"]:
-            if _try_apply_live_pymol_box(parser_obj, live_box_provider):
-                return True
-            if _ask_yes_no("Do you want to enter coordinates manually now? [Y/n]: ", default_yes=True):
-                return False
-            continue
-
-        print("Please choose 1 or 2.")
-
-
-def _try_apply_live_pymol_box(
-    parser_obj: WorkflowParser,
-    live_box_provider: Optional[Callable[[], Optional[dict]]],
-) -> bool:
-    """Try to populate center/box_size from interactive PyMOL selection."""
-    if not live_box_provider:
-        print("PyMOL-guided box definition is not available in this run.")
-        return False
-
-    box_payload = live_box_provider()
-    if not box_payload:
-        print("Could not define docking box from interactive PyMOL.")
-        return False
-
-    center = box_payload.get("center")
-    box_size = box_payload.get("box_size")
-    if not parser_obj.validate_coordinates(center) or not parser_obj.validate_coordinates(box_size):
-        print("PyMOL returned invalid coordinates.")
-        return False
-
-    parser_obj.update_parameters({"center": center, "box_size": box_size})
-    print("✅ Loaded docking box from live PyMOL session:")
-    print(f"   center: {center}")
-    print(f"   box_size: {box_size}")
-    print(f"   source: {box_payload.get('path', 'pymol_interactive')}")
-    return True
-
-
 def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) -> None:
     """Collect missing or invalid required fields in short step-by-step prompts."""
     prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
     center_default = [10.0, 20.0, 30.0]
     box_size_default = [25.0, 30.0, 35.0]
-    box_source_decided = False
 
     while parser_obj.has_missing_parameters():
         missing = parser_obj.get_missing_parameters()
         current_param = next((p for p in prompt_order if p in missing), missing[0])
-
-        if current_param in ["center", "box_size"] and not box_source_decided:
-            box_source_decided = True
-            used_pymol = _choose_docking_box_source(
-                parser_obj,
-                output_base,
-                live_box_provider=getattr(parser_obj, "_live_box_provider", None),
-            )
-            if used_pymol:
-                # Re-run validation and continue with any other missing fields.
-                parser_obj.validate_workflow(
-                    {
-                        "services": parser_obj.parsed_workflow["services"],
-                        "parameters": parser_obj.parsed_workflow["parameters"],
-                    }
-                )
-                continue
 
         if current_param == "protein_id":
             issue = parser_obj.get_parameter_issue("protein_id")
@@ -1776,91 +1511,6 @@ def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) ->
                 "parameters": parser_obj.parsed_workflow["parameters"],
             }
         )
-
-
-def _is_running_in_container() -> bool:
-    """Best-effort check whether this process runs inside a container."""
-    return bool(os.getenv("CONTAINER")) or os.path.exists("/.dockerenv")
-
-
-def _try_start_pymol_interactive_service() -> bool:
-    """Try to start pymol-interactive via docker compose on host runtime."""
-    try:
-        result = subprocess.run(
-            ["docker", "compose", "up", "-d", "pymol-interactive"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def _integrate_with_pymol_interactive(results: dict) -> None:
-    """When visualization is requested, load job in interactive PyMOL if available."""
-    if "visualize" not in results.get("services_executed", []):
-        return
-
-    base_url = os.getenv("MCP_PYMOL_INTERACTIVE_URL", "http://localhost:8090").rstrip("/")
-    no_vnc_url = os.getenv("PYMOL_INTERACTIVE_NOVNC_URL", "http://localhost:6080/vnc.html")
-    job_id = results.get("job_id")
-
-    healthy = _pymol_rpc_healthy(base_url)
-    if not healthy:
-        started = False
-        if not _is_running_in_container():
-            started = _try_start_pymol_interactive_service()
-            if started:
-                healthy = _pymol_rpc_healthy(base_url)
-
-        if not healthy:
-            print("\nℹ️  Visualization is ready, but pymol_interactive is not reachable.")
-            print("   Start it with: docker compose up -d pymol-interactive")
-            print(f"   Then open: {no_vnc_url}")
-            return
-
-    # /api/load_job kicks off the load in the background and returns
-    # immediately (a real batch can take longer than any fixed HTTP
-    # timeout) — poll /api/load_status until it actually finishes instead of
-    # assuming success as soon as the kickoff request returns.
-    try:
-        response = requests.post(
-            f"{base_url}/api/load_job",
-            json={"job_id": job_id},
-            timeout=15,
-        )
-        if response.status_code not in (200, 202):
-            print("\n⚠️  pymol_interactive is running, but failed to auto-load job.")
-            print(f"   API response: {response.text}")
-            print(f"   Open noVNC: {no_vnc_url}")
-            return
-
-        deadline = time.monotonic() + 120  # generous cap; large batches can take a while
-        final_status = None
-        while time.monotonic() < deadline:
-            status_response = requests.get(f"{base_url}/api/load_status", timeout=10)
-            status_response.raise_for_status()
-            final_status = status_response.json()
-            if final_status.get("status") in ("done", "error"):
-                break
-            time.sleep(2)
-
-        if final_status is None or final_status.get("status") != "done":
-            error = (final_status or {}).get("error", "timed out waiting for PyMOL to finish loading")
-            print("\n⚠️  pymol_interactive is running, but failed to auto-load job.")
-            print(f"   {error}")
-            print(f"   Open noVNC: {no_vnc_url}")
-            return
-
-        print("\n✅ Interactive PyMOL session is ready.")
-        print(f"   Open noVNC: {no_vnc_url}")
-        print(f"   Loaded job: {job_id}")
-        print("   To derive docking box from your selection (e.g., 'sele'):")
-        print(f"   POST {base_url}/api/box/from_selection with {{\"job_id\":\"{job_id}\",\"selection\":\"sele\"}}")
-    except requests.RequestException as exc:
-        print(f"\n⚠️  Could not contact pymol_interactive API: {exc}")
-        print(f"   Open noVNC: {no_vnc_url}")
 
 
 def process_workflow(
@@ -1936,23 +1586,14 @@ def process_workflow(
             print(parser_obj.format_missing_prompt())
 
             # Ask only for missing/invalid fields, one short question at a time.
-            parser_obj._live_box_provider = lambda: _create_box_via_live_pymol(
-                orchestrator,
-                parser_obj.parsed_workflow,
-                shared_job_id,
-                state_manager=state_manager,
-            )
-            try:
-                if clarification_mode == CLARIFICATION_MODE_HYBRID:
-                    _collect_missing_parameters_hybrid(
-                        parser_obj,
-                        str(orchestrator.output_base),
-                        llm_client=llm_client,
-                    )
-                else:
-                    _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
-            finally:
-                parser_obj._live_box_provider = None
+            if clarification_mode == CLARIFICATION_MODE_HYBRID:
+                _collect_missing_parameters_hybrid(
+                    parser_obj,
+                    str(orchestrator.output_base),
+                    llm_client=llm_client,
+                )
+            else:
+                _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
 
             if parser_obj.has_missing_parameters():
                 print("\n❌ Could not resolve all required parameters.")
@@ -2022,8 +1663,6 @@ def process_workflow(
         if session is not None:
             session.activate(results["job_id"], state_manager, last_results=results)
 
-        _integrate_with_pymol_interactive(results)
-        
         return 0
         
     except Exception as e:

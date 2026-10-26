@@ -249,7 +249,7 @@ def _write_bundle_contents(
     # Write docking_box.json from current parameters — always authoritative.
     # This guarantees the bundle reflects the box that was actually used for
     # docking, even when the user changed center/box_size via a text command
-    # after the last PyMOL-generated docking_box.json was written to disk.
+    # after docking_box.json was last written to disk.
     _center = parameters.get("center")
     _box_size = parameters.get("box_size")
     if _center and _box_size:

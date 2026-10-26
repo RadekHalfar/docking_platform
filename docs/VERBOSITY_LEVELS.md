@@ -213,7 +213,7 @@ The verbosity system uses a custom `VerbosityFilter` in `nlp_orchestrator.py` th
 - Adds formatted JSON output for MCP demo mode
 
 ### Service Logging
-Service `__init__` modules (`ligand_preparer`, `protein_preparer`, `moldina_runner`, `pymol_visualizer`,
+Service `__init__` modules (`ligand_preparer`, `protein_preparer`, `moldina_runner`,
 `rcsb_downloader`) do **not** call `logging.basicConfig()`. That call belongs only to application
 entry points (`nlp_orchestrator.py`, `*/server.py`). This prevents service libraries from silently
 overriding the logging configuration set by the caller.

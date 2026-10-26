@@ -87,9 +87,9 @@ class SettingsView:
     def _fill(self) -> None:
         """The fields, from the session's settings."""
         settings = self.state.settings
-        provider = settings.get("provider", "ollama")
+        provider = settings.get("provider", "none")
         if provider not in llm_settings.PROVIDER_LABELS:
-            provider = "ollama"
+            provider = "none"
         endpoint = settings.get("endpoint", "") or llm_settings.DEFAULT_ENDPOINT
         self._filling = True
         try:
@@ -124,7 +124,7 @@ class SettingsView:
         listed = bool(models)
         self.models_loading.set_visibility(ollama and self.fetching)
         self.model_select.set_visibility(ollama and listed)
-        self.model_input.set_visibility(not (ollama and listed))
+        self.model_input.set_visibility(provider != "none" and not (ollama and listed))
         self.models_missing.set_visibility(ollama and not self.fetching and models == [])
         if listed:
             current = self.model_input.value or ""

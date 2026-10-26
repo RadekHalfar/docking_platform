@@ -49,10 +49,9 @@ RUN pip install -r /app/requirements.txt
 COPY common/ /app/common/
 
 # Non-root user for services that don't need extra root-level setup after
-# this point. Not switched to by default here -- some derived images
-# (pymol_visualizer, pymol_interactive) need their own root-level apt-get/
-# conda installs and stay root for the whole build; services that don't
-# need that opt in with `USER appuser` near the end of their own Dockerfile.
+# this point. Not switched to by default here -- a derived image that needs
+# its own root-level apt-get/conda installs can do them first; services
+# opt in with `USER appuser` near the end of their own Dockerfile.
 # Root still bypasses these permission bits entirely, so tightening 777 to
 # 755 (owned by appuser) doesn't affect images that stay root -- it only
 # stops it being world-writable for images that switch to appuser.

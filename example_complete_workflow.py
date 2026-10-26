@@ -3,14 +3,14 @@
 Complete Docking Workflow Example
 
 This script demonstrates the complete workflow from downloading structures
-to running Moldina docking and creating PyMOL visualizations.
+to running Moldina docking and converting the docked poses for viewing.
 
 Workflow Steps:
 1. Download protein and ligands from RCSB PDB
 2. Prepare protein receptor (add H, clean, convert to PDBQT)
 3. Prepare ligands (add H, optimize, convert to PDBQT)
 4. Run Moldina docking (PSO-based molecular docking)
-5. Create PyMOL visualization (generate scripts and images)
+5. Convert docked poses to SDF/PDB/MOL2 (open them in the GUI viewer or any molecule viewer)
 6. Display results summary
 
 Prerequisites:
@@ -18,9 +18,7 @@ Prerequisites:
 - Ligand Preparer service running on port 8002
 - Protein Preparer service running on port 8003
 - Moldina Runner service running on port 8004
-- PyMOL Visualizer service running on port 8005
 - Moldina installed in WSL (Windows) or natively (Linux)
-- PyMOL (optional, for rendering images)
 """
 import os
 import requests
@@ -53,7 +51,6 @@ def main():
     LIGAND_PREP_URL = "http://localhost:8002"
     PROTEIN_PREP_URL = "http://localhost:8003"
     MOLDINA_URL = "http://localhost:8004"
-    PYMOL_URL = "http://localhost:8005"
     
     # Create output directory
     os.makedirs(OUTPUT_BASE, exist_ok=True)
@@ -179,65 +176,44 @@ def main():
     print(f"   Successful: {docking_data['successful']}")
     print(f"   Failed: {docking_data['failed']}")
     
-    # Step 5: Visualize results with PyMOL
+    # Step 5: Convert docked poses for viewing (what the workflow's
+    # "visualize" step does; the GUI shows these files with 3Dmol.js)
     print("\n" + "=" * 80)
-    print("STEP 5: Create PyMOL visualization")
+    print("STEP 5: Convert docked poses")
     print("=" * 80)
-    
-    # Prepare ligand paths and affinities for visualization
-    ligand_paths = []
-    affinities = []
-    for result in docking_data["results"]:
-        if result["output_path"] and os.path.exists(result["output_path"]):
-            ligand_paths.append(result["output_path"])
-            if result["best_affinity"] is not None:
-                affinities.append(result["best_affinity"])
-    
-    if ligand_paths:
-        print(f"\n📊 Generating visualization for {len(ligand_paths)} docked poses...")
-        
+
+    pose_results = [
+        {**result, "output_path": normalize_path_for_docker(result["output_path"])}
+        for result in docking_data["results"]
+        if result["output_path"] and os.path.exists(result["output_path"])
+    ]
+    viz_dir = os.path.join(OUTPUT_BASE, "visualization")
+
+    if pose_results:
+        print(f"\n📊 Converting {len(pose_results)} docked pose file(s)...")
+
         try:
-            visualization_result = call_mcp_tool(
-                PYMOL_URL,
-                "visualize_docking",
+            conversion = call_mcp_tool(
+                LIGAND_PREP_URL,
+                "convert_docked_poses",
                 {
-                    "receptor_path": normalize_path_for_docker(receptor_pdbqt),
-                    "ligand_paths": [normalize_path_for_docker(p) for p in ligand_paths],
-                    "output_dir": normalize_path_for_docker(os.path.join(OUTPUT_BASE, "visualization")),
-                    "affinities": affinities if len(affinities) == len(ligand_paths) else None,
-                    "show_surface": True,
-                    "show_binding_site": True,
-                    "binding_site_radius": 5.0,
-                    "render_image": True,
-                    "image_width": 1920,
-                    "image_height": 1080,
-                    "image_dpi": 300,
-                    "ray_trace": True
-                }
+                    "pose_results": pose_results,
+                    "output_dir": normalize_path_for_docker(viz_dir),
+                },
             )
-            
-            viz_data = visualization_result
-            
-            print(f"\n✅ Visualization created!")
-            print(f"   Script: {viz_data['script_path']}")
-            print(f"   Session: {viz_data['session_path']}")
-            if viz_data.get('rendered'):
-                print(f"   Image: {viz_data['image_path']}")
-            else:
-                print(f"   Image: Not rendered (PyMOL not available)")
-                if 'render_error' in viz_data:
-                    print(f"   Note: {viz_data['render_error']}")
-            
-            print(f"\n💡 To view in PyMOL:")
-            print(f"   pymol {viz_data['script_path']}")
-            print(f"   or: pymol {viz_data['session_path']}")
-        
+
+            print(f"\n✅ Converted {len(conversion['converted'])} ligand(s):")
+            for entry in conversion["converted"]:
+                print(f"   {entry['ligand_id']}: {entry.get('sdf_path', 'no SDF written')}")
+            for error in conversion["errors"]:
+                print(f"   ⚠️  {error['ligand_id']}: {error['error']}")
+
         except Exception as e:
-            print(f"\n⚠️  Visualization failed: {e}")
+            print(f"\n⚠️  Pose conversion failed: {e}")
             print(f"   Continuing with workflow...")
     else:
-        print(f"\n⚠️  No valid docked poses to visualize")
-    
+        print(f"\n⚠️  No valid docked poses to convert")
+
     # Step 6: Display results
     print("\n" + "=" * 80)
     print("DOCKING RESULTS (sorted by best affinity)")
@@ -291,22 +267,16 @@ def main():
     print("=" * 80)
     
     if results:
-        print("\n1. View PyMOL visualization:")
-        viz_dir = os.path.join(OUTPUT_BASE, 'visualization')
-        if os.path.exists(viz_dir):
-            print(f"   pymol {os.path.join(viz_dir, 'visualization.pml')}")
-            print(f"   or: pymol {os.path.join(viz_dir, 'visualization.pse')}")
-            if os.path.exists(os.path.join(viz_dir, 'docking_visualization.png')):
-                print(f"   View image: {os.path.join(viz_dir, 'docking_visualization.png')}")
-        else:
-            print(f"   pymol {receptor_pdbqt} {results[0]['output_path']}")
+        print("\n1. View the docked poses:")
+        print(f"   SDF/PDB/MOL2 files in {viz_dir}")
+        print("   (open them in any molecule viewer, or run the workflow from the GUI at http://localhost:3000)")
         
         print("\n2. Review log files for detailed statistics:")
         for result in results[:3]:  # Top 3
             if result.get('log_path'):
                 print(f"   {result['log_path']}")
         
-        print("\n3. Analyze binding modes and interactions in PyMOL")
+        print("\n3. Analyze binding modes and interactions in your molecule viewer")
     else:
         print("\n⚠️  No docking results to visualize.")
         print("   Check the Moldina output and log files in:")
@@ -325,7 +295,6 @@ if __name__ == "__main__":
         print(f"   - python -m services.ligand_preparer.server")
         print(f"   - python -m services.protein_preparer.server")
         print(f"   - python -m services.moldina_runner.server")
-        print(f"   - python -m services.pymol_visualizer.server")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback

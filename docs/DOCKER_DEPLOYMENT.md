@@ -87,15 +87,11 @@ mcp-rcsb-downloader     mcp-rcsb-downloader:latest   Up (healthy)
 mcp-ligand-preparer     mcp-ligand-preparer:latest   Up (healthy)
 mcp-protein-preparer    mcp-protein-preparer:latest  Up (healthy)
 mcp-moldina-runner      mcp-moldina-runner:latest    Up (healthy)
-mcp-pymol-visualizer    mcp-pymol-visualizer:latest  Up (healthy)
-mcp-llm                 ollama/ollama:latest         Up (healthy)
+mcp-ui                  mcp-docking-ui:latest        Up (healthy)
 ```
 
-`pymol-interactive` is not gated by a profile -- it already started with the rest in step 2. To restart just that one service (e.g. after a targeted rebuild):
-```bash
-docker compose up -d pymol-interactive
-docker compose ps pymol-interactive
-```
+`mcp-llm` (Ollama) is not in the default stack; see
+[Docker Compose Profiles](#docker-compose-profiles).
 
 ### 4. Test a Service
 
@@ -121,14 +117,11 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
 ```
 
-If docking coordinates are missing, the CLI prompts for box source:
-- Manual entry (`center`/`box_size`)
-- PyMOL Interactive definition
+If docking coordinates are missing, the CLI asks for `center`/`box_size` and
+parses them from your answer. To pick the box visually, use the GUI's box
+picker (http://localhost:3000).
 
-When PyMOL mode is selected, the orchestrator launches an interactive selection flow and creates `orchestrator_output/<job_id>/docking_box.json` from the current selection.
-
-If you prefer local execution, core APIs remain available at localhost ports 8001-8005 and Ollama at 11434.
-The optional interactive PyMOL service exposes noVNC on 6080 and helper API on 8090.
+If you prefer local execution, core APIs remain available at localhost ports 8001-8004 (and Ollama at 11434 when its profile is running).
 
 ---
 
@@ -147,9 +140,9 @@ The optional interactive PyMOL service exposes noVNC on 6080 and helper API on 8
 │  └───────────────┘  └───────────────┘  └───────────────┘  │
 │                                                               │
 │  ┌───────────────┐  ┌───────────────┐                      │
-│  │ Moldina       │  │ PyMOL         │                      │
-│  │ Runner        │  │ Visualizer    │                      │
-│  │ :8004         │  │ :8005         │                      │
+│  │ Moldina       │  │ Web GUI       │                      │
+│  │ Runner        │  │ (NiceGUI)     │                      │
+│  │ :8004         │  │ :3000         │                      │
 │  └───────────────┘  └───────────────┘                      │
 │                                                               │
 │  ┌─────────────────────────────────────────────────────┐   │
@@ -184,11 +177,8 @@ mcp-docking-base:latest
         ├── mcp-moldina-runner:latest
         │   └─ Moldina/Vina binary
         │
-        ├── mcp-pymol-visualizer:latest
-        │   └─ PyMOL, Xvfb (virtual display)
-        │
-        └── mcp-pymol-interactive:latest
-          └─ PyMOL GUI + noVNC + helper API
+        └── mcp-docking-ui:latest
+            └─ NiceGUI web GUI + 3Dmol.js viewer
 ```
 
 ---
@@ -230,8 +220,7 @@ docker build -f docker/rcsb_downloader.Dockerfile -t mcp-rcsb-downloader:latest 
 docker build -f docker/ligand_preparer.Dockerfile -t mcp-ligand-preparer:latest .
 docker build -f docker/protein_preparer.Dockerfile -t mcp-protein-preparer:latest .
 docker build -f docker/moldina_runner.Dockerfile -t mcp-moldina-runner:latest .
-docker build -f docker/pymol_visualizer.Dockerfile -t mcp-pymol-visualizer:latest .
-docker build -f docker/pymol_interactive.Dockerfile -t mcp-pymol-interactive:latest .
+docker build -f Dockerfile.ui -t mcp-docking-ui:latest .
 ```
 
 ---
@@ -304,21 +293,18 @@ LOG_LEVEL=INFO
 # Moldina Configuration
 MOLDINA_PATH=/usr/local/bin/moldina
 
-# PyMOL Configuration  
-DISPLAY=:99
-
 # Service URLs for container-based script execution
 MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
 MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
 MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
 MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
-MCP_PYMOL_VISUALIZER_URL=http://pymol-visualizer:8005
-MCP_PYMOL_INTERACTIVE_URL=http://pymol-interactive:8090
 
-# LLM configuration for nlp_orchestrator.py
-LLM_PROVIDER=ollama
-LLM_ENDPOINT=http://ollama:11434
-LLM_MODEL=qwen2.5-coder:7b-instruct-q4_K_M
+# LLM configuration (GUI and nlp_orchestrator.py). Default: none -- the GUI's
+# forms work without one. For the opt-in local Ollama:
+# LLM_PROVIDER=ollama
+# LLM_ENDPOINT=http://ollama:11434
+# LLM_MODEL=gemma3:4b
+LLM_PROVIDER=none
 
 # Optional backward-compatible alias (legacy)
 OLLAMA_URL=http://ollama:11434
@@ -459,7 +445,7 @@ in the default hermetic suite (and CI).
 
 ```powershell
 # PowerShell script to check all services
-$ports = 8001..8005
+$ports = 8001..8004
 foreach ($port in $ports) {
     $response = Invoke-WebRequest -Uri "http://localhost:$port/health" -UseBasicParsing
     Write-Host "Port $port : $($response.StatusCode)" -ForegroundColor Green
@@ -468,7 +454,7 @@ foreach ($port in $ports) {
 
 ```bash
 # Bash script to check all services
-for port in {8001..8005}; do
+for port in {8001..8004}; do
     curl -f http://localhost:$port/health && echo "Port $port: OK" || echo "Port $port: FAIL"
 done
 ```
@@ -504,16 +490,6 @@ docker inspect mcp-moldina-runner
 **Check health check logs:**
 ```bash
 docker inspect --format='{{json .State.Health}}' mcp-moldina-runner | python -m json.tool
-```
-
-### PyMOL Rendering Issues
-
-**Problem:** "Cannot connect to display"
-
-**Solution:** The pymol-visualizer uses Xvfb (virtual display):
-```bash
-# Check if Xvfb is running in container
-docker exec mcp-pymol-visualizer ps aux | grep Xvfb
 ```
 
 ### Moldina Not Found
@@ -678,34 +654,31 @@ COPY --from=builder /root/.local /root/.local
 
 ### Docker Compose Profiles
 
-Illustrative pattern for splitting services into opt-in groups -- **not** what
-`docker-compose.yml` currently defines (today the only profile is `dev`, on
-`script-runner`; every other service, including `pymol-interactive`, starts
-unconditionally with `docker compose up -d`). Adopt something like this if you
-need to split the stack for a leaner deployment:
+`docker-compose.yml` defines two opt-in profiles. Every other service starts
+with `docker compose up -d`.
 
-```yaml
-services:
-  moldina-runner:
-    profiles: ["full", "docking"]
-  
-  pymol-visualizer:
-    profiles: ["full", "visualization"]
-
-  pymol-interactive:
-    profiles: ["interactive", "full", "visualization"]
-```
+- **`local-llm`** — the Ollama container (`mcp-llm`, port 11434). Off by
+  default so a default install doesn't download the ~4.8 GB image and a
+  3–5 GB model; most users either use a cloud provider or no LLM at all
+  (Phase 18). Models persist in the `ollama-data` volume.
+- **`dev`** — `script-runner`, for scripts and the test suite.
 
 ```bash
-# Start only docking services
-docker compose --profile docking up -d
+# Start the local LLM and download a model
+docker compose --profile local-llm up -d ollama
+docker exec -it mcp-llm ollama pull gemma3:4b
 
-# Start everything
-docker compose --profile full up -d
+# Stop it again (the downloaded models stay in the volume)
+docker compose --profile local-llm stop ollama
 
-# Start browser-based interactive PyMOL only
-docker compose --profile interactive up -d pymol-interactive
+# Run a script or the test suite in the dev container
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
 ```
+
+Once Ollama runs, pick **Ollama (local)** in the GUI's Settings. Its
+endpoint is `http://ollama:11434` (the default). An Ollama app installed on
+the host itself is reachable at `http://host.docker.internal:11434`
+(`ui` maps that name on Linux too).
 
 ### CI/CD Integration
 
@@ -745,8 +718,8 @@ jobs:
 ### Security Model: Single-Machine Deployment Only
 
 **This platform ships with no authentication on any service.** Every MCP service
-(`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
-`pymol-visualizer`, `pymol-interactive`), the GUI (`ui`), and Ollama accept
+(`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`),
+the GUI (`ui`), and Ollama accept
 requests from anyone who can reach their port — there is no API key, login, or
 per-request auth check anywhere in `common/mcp_base.py` or the service servers.
 
@@ -762,14 +735,11 @@ This means the platform is only intended to be run **on a single trusted
 machine**, accessed by the person running Docker Compose on that machine. It is
 **not safe to deploy as-is** on a shared server, behind a reverse proxy exposed
 to a LAN/VPN, or anywhere another user or process could reach these ports —
-doing so would expose unauthenticated job execution, file read/write, and (for
-`pymol-interactive`) an unauthenticated remote desktop and known code-injection
-paths.
+doing so would expose unauthenticated job execution and file read/write.
 
 If you need multi-user or remote/server deployment, do **not** simply remove
 the `127.0.0.1` binding. That requires additional hardening that is not yet
-implemented — a shared API-key/auth layer in front of every service, a VNC
-password for `pymol-interactive` (it currently runs `x11vnc -nopw`), hardening
+implemented — a shared API-key/auth layer in front of every service, hardening
 of user-supplied paths, and TLS via a reverse proxy. This work is tracked as a
 future phase in `dev_plan.md`.
 
@@ -825,6 +795,8 @@ the same `/mcp` JSON-RPC endpoint documented in [API.md](API.md) — POST with
 `{"jsonrpc": "2.0", "id": ..., "method": "tool_call", "params": {"name": ..., "arguments": {...}}}`.
 
 ### GPU Check (Ollama)
+
+Only when the `local-llm` profile is running.
 
 ```bash
 # Verify GPU device request was applied to the ollama container
@@ -892,7 +864,7 @@ function drestart { docker compose restart @args }
 
 You now have a fully containerized MCP Docking System that:
 
-- Requires only Docker (no local Moldina, PyMOL, or RDKit installation).
+- Requires only Docker (no local Moldina or RDKit installation).
 - Works across Windows, Linux, and macOS.
 - Includes health checks and resource limits.
 - Supports scaling and deployment workflows.

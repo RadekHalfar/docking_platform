@@ -19,7 +19,7 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing import User  # noqa: E402
 
-from ui.core.chat import STALE_PARSE_REPLY  # noqa: E402
+from ui.core.chat import NO_LLM_REPLY, STALE_PARSE_REPLY  # noqa: E402
 from ui.core.form import BOX_FORM_KEYS  # noqa: E402
 from ui_nice.controller import REDOCK_STAGED  # noqa: E402
 from ui.worker_cap import MEASURED_BEST_WORKERS, WorkerCap  # noqa: E402
@@ -458,3 +458,20 @@ async def test_chat_run_while_a_run_goes_is_refused(user: User, page, output_bas
 
     assert page.state.bridge is bridge
     assert page.chat_texts()[-1] == "A session is running — Stop it before docking again."
+
+
+# ---------------------------------------------------------------------------
+# No LLM (provider "none", the Phase 18 default)
+# ---------------------------------------------------------------------------
+
+async def test_no_llm_chat_answers_with_the_setup_hint(user: User, page, monkeypatch):
+    def no_parse(*_args, **_kwargs):
+        raise AssertionError("no LLM parse without a provider")
+
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    monkeypatch.setattr(f"{PARSER}.parse_workflow_with_llm", no_parse)
+    await user.open("/")
+
+    await send_chat(user, page, "dock ATP into 6lu7")
+
+    assert page.chat_texts()[-1] == NO_LLM_REPLY

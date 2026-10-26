@@ -33,7 +33,9 @@ class FakeBridge:
 
 @pytest.fixture
 def state():
-    s = GuiSession(worker_cap=WorkerCap(10, "compose"))
+    # A client is set, as with any configured provider; the fake parse
+    # functions never call it. test_no_llm_* covers provider "none".
+    s = GuiSession(worker_cap=WorkerCap(10, "compose"), llm_client="client")
     s.messages = []
     return s
 
@@ -60,6 +62,26 @@ def _no_run():
 def test_plain_message_is_posted_and_left_for_the_llm(state, tmp_path):
     assert _submit(state, "dock ATP into 6lu7", tmp_path) is False
     assert state.messages == [{"role": "user", "content": "dock ATP into 6lu7"}]
+
+
+def test_no_llm_answers_free_text_with_the_setup_hint(state, tmp_path):
+    # Phase 18: provider "none" (the default) builds no client.
+    state.llm_client = None
+
+    assert _submit(state, "dock ATP into 6lu7", tmp_path) is True
+
+    assert _contents(state) == ["dock ATP into 6lu7", chat.NO_LLM_REPLY]
+    assert "Settings" in chat.NO_LLM_REPLY
+
+
+def test_no_llm_still_runs_commands(state, tmp_path):
+    state.llm_client = None
+    runs = []
+
+    assert _submit(state, "run", tmp_path, run_docking=lambda: runs.append(1)) is True
+
+    assert runs == [1]
+    assert chat.NO_LLM_REPLY not in _contents(state)
 
 
 def test_geometry_command_uses_a_loaded_receptor(state, tmp_path):

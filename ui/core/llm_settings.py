@@ -7,6 +7,7 @@ from __future__ import annotations
 from ui.settings import DEFAULT_ENDPOINT, build_llm_client, save_settings
 
 PROVIDER_LABELS = {
+    "none": "None (forms only)",
     "ollama": "Ollama (local)",
     "openai": "OpenAI",
     "anthropic": "Anthropic",

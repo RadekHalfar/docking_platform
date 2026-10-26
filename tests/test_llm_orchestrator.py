@@ -19,7 +19,6 @@ from services.llm_orchestrator import (
     create_llm_client,
     parse_workflow_with_llm,
     parse_followup_with_llm,
-    extract_box_source_choice_with_llm,
 )
 from services.llm_orchestrator.orchestrator import docking_timeout_seconds
 from services.llm_orchestrator.workflow_definition import (
@@ -197,19 +196,6 @@ class TestLLMArchitecture:
         assert merged["parameters"]["box_size"] == [25.0, 30.0, 35.0]
         assert merged["parameters"]["ligand_ids"] == ["ATP", "ATP"]
         assert merged["missing_required"] == []
-
-    def test_extract_box_source_choice_with_llm(self):
-        """LLM classifier should map responses to manual/pymol choices."""
-        llm_client = create_llm_client(provider="ollama", endpoint="http://test:11434", model="llama2")
-
-        with patch.object(llm_client, "generate", return_value='{"box_source": "pymol"}'):
-            assert extract_box_source_choice_with_llm(llm_client, "use interactive pymol") == "pymol"
-
-        with patch.object(llm_client, "generate", return_value='{"box_source": "manual"}'):
-            assert extract_box_source_choice_with_llm(llm_client, "I will type coordinates") == "manual"
-
-        with patch.object(llm_client, "generate", return_value='{"box_source": "unknown"}'):
-            assert extract_box_source_choice_with_llm(llm_client, "not sure") is None
 
 
 class TestWorkflowParser:

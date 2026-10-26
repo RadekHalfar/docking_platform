@@ -54,3 +54,18 @@ def test_settings_the_client_rejects_change_nothing(state, settings_file, monkey
 
     assert state.settings == {"provider": "ollama"} and state.llm_client == "old"
     assert not settings_file.exists()
+
+
+def test_applying_none_drops_the_client(state, settings_file):
+    # Phase 18: "None (forms only)" is a provider like any other in the form;
+    # it just has no client, so the chat answers with the setup hint.
+    new = llm_settings.settings_from_form("none", "", "", "", "")
+
+    llm_settings.use_settings(state, new, llm_settings.persist_settings(new))
+
+    assert state.llm_client is None
+    assert json.loads(settings_file.read_text())["provider"] == "none"
+
+
+def test_none_is_offered_first():
+    assert next(iter(llm_settings.PROVIDER_LABELS)) == "none"

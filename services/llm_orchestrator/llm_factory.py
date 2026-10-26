@@ -16,6 +16,18 @@ from .llm_base import BaseLLMClient
 
 KNOWN_PROVIDERS = ("ollama", "openai", "anthropic", "openai_compatible", "metacentrum")
 
+# The default provider (Phase 18): no LLM until the user picks one. The
+# forms, the run and the deterministic chat commands work without it; only
+# natural-language parsing needs an LLM, so a default install doesn't have
+# to download a local model or ask for an API key first.
+NO_LLM_PROVIDER = "none"
+
+
+def is_llm_configured(provider: Optional[str]) -> bool:
+    """False for the ``none`` provider (or an empty one); callers then skip
+    building a client instead of asking :func:`create_llm_client` for one."""
+    return (provider or "").strip().lower() not in ("", NO_LLM_PROVIDER)
+
 
 def create_llm_client(
     provider: str,

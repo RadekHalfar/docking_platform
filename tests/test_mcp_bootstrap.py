@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from common.mcp_bootstrap import build_service_arg_parser, resolve_cache_dir, resolve_port
 
 
@@ -22,14 +20,6 @@ class TestBuildServiceArgParser:
         assert args.host == "127.0.0.1"
         assert args.port == 9999
         assert args.cache_dir == "/tmp/x"
-
-    def test_include_cache_dir_false_omits_flag(self):
-        parser = build_service_arg_parser("pymol_visualizer", "Test service", include_cache_dir=False)
-        assert "cache_dir" not in parser.parse_args(["--host", "x"]).__dict__
-
-        # --cache-dir should be unrecognized when omitted
-        with patch("sys.stderr"), pytest.raises(SystemExit):
-            parser.parse_args(["--cache-dir", "/tmp/x"])
 
     def test_extra_arguments_can_be_added(self):
         """moldina_runner adds --moldina-path/--wsl-distro on top of the shared set."""

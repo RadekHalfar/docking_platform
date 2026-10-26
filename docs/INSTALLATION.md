@@ -2,12 +2,14 @@
 
 ## ⚡ Recommended: Docker Deployment
 
-**No local installation needed!** Docker containers include all dependencies (Moldina, PyMOL, RDKit).
+**No local installation needed!** Docker containers include all dependencies (Moldina, RDKit, OpenBabel, Meeko).
 
 **Prerequisites:**
 - Docker Desktop (Windows/Mac) or Docker Engine (Linux)
-- 8 GB RAM minimum, 16 GB recommended
-- 20 GB free disk space
+- 8 GB RAM (16 GB recommended if you add the optional local LLM)
+- 10 GB free disk space: the images take about 2.2 GB, and building them
+  needs room for intermediate layers. The optional local LLM adds about
+  8–9.5 GB (the Ollama image plus a model).
 
 **Quick Start:**
 ```bash
@@ -32,11 +34,12 @@ so you can double-click that next time instead of re-running the installer.
 
 **It is not a zero-dependency, no-clone download.** The platform's own images
 (`rcsb-downloader`, `ligand-preparer`, `protein-preparer`, `moldina-runner`,
-`pymol-visualizer`, `pymol-interactive`, `ui`) are only ever built locally
+`ui`) are only ever built locally
 from the Dockerfiles in this repo — they are not published to any container
 registry — so the installer needs the Dockerfiles alongside `docker-compose.yml`,
-which means a git clone. (Only the Ollama LLM image is pulled from a public
-registry; that happens automatically as part of `docker compose up`.)
+which means a git clone. No LLM is installed: the GUI's forms work without
+one, and an LLM can be added later (a cloud provider's API key, or the
+opt-in local Ollama; see the README's "Choose an LLM").
 
 Run it from the repo root — it's a single, dependency-free Python script, no
 `pip install` needed to run it from source:
@@ -80,9 +83,12 @@ message rather than doing anything unexpected.
 - *Port 3000 already in use*: stop whatever else is bound to it, or edit
   `docker-compose.yml`'s `ui.ports` mapping and re-run
   `docker compose up -d`.
-- *Ollama not running / chat parsing fails*: the bundled `ollama` service
-  should start automatically with the stack; check `docker compose logs
-  ollama` if it doesn't.
+- *The chat says it needs an LLM*: none is configured by default. Pick a
+  provider in the GUI's Settings. For a local one, start Ollama first:
+  `docker compose --profile local-llm up -d ollama`.
+- *Chat parsing fails with Ollama selected*: the Ollama container isn't
+  running (it's opt-in) or has no model yet; start it as above and
+  `docker exec -it mcp-llm ollama pull gemma3:4b`.
 - *Installer times out at step [5/5]*: run `docker compose logs` to see
   which service failed to become healthy.
 
@@ -308,7 +314,6 @@ RCSB_DOWNLOADER_PORT=8011
 LIGAND_PREPARER_PORT=8012
 PROTEIN_PREPARER_PORT=8013
 MOLDINA_RUNNER_PORT=8014
-PYMOL_VISUALIZER_PORT=8015
 ```
 Then restart with `docker compose up -d` (or `docker compose down && docker compose up -d` if services are already running) for the new mapping to take effect.
 

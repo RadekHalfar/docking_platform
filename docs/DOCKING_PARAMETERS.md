@@ -403,14 +403,11 @@ Complete overview of all parameters used in the molecular docking workflow acros
 **Service:** Ligand Preparer (port 8002)
 **Tool:** `convert_docked_poses`
 
-As of the PyMOL → 3Dmol.js migration, this stage no longer renders a server-side
-image. It converts each ligand's docked-pose PDBQT (all modes, in one
-multi-model file) into one multi-pose file per output format, which the GUI's
-in-browser 3Dmol.js viewer reads directly and offers as PDBQT/PDB/SDF/MOL2
-downloads (see [GUI_GUIDE.md](GUI_GUIDE.md)). The legacy PyMOL Visualizer
-(`visualize_docking`, port 8005) still exists and still works if you call it
-directly — see [API.md](API.md#5-pymol-visualizer-service) — it's just no
-longer part of the default workflow.
+This stage renders no server-side image. It converts each ligand's
+docked-pose PDBQT (all modes, in one multi-model file) into one multi-pose
+file per output format, which the GUI's in-browser 3Dmol.js viewer reads
+directly and offers as PDBQT/PDB/SDF/MOL2 downloads (see
+[GUI_GUIDE.md](GUI_GUIDE.md)).
 
 ### Parameters
 
@@ -547,7 +544,7 @@ ligands concurrently); workers × `cpu` never exceeds the docking service's CPU 
 ### Method 0: GUI's Visual Box Picker (Easiest)
 
 The GUI's **Pick Docking Box Visually** control does this for you
-in-browser, no PyMOL required: load the receptor, click an atom to set the
+in-browser, no desktop viewer required: load the receptor, click an atom to set the
 center (a box outline shows the resulting region), and grow/shrink it with
 the X/Y/Z − / + buttons (1 Å per click) or by typing in the Docking Box
 fields until the box covers the binding site. See
@@ -575,7 +572,7 @@ genuinely unknown and a broad first-pass search is wanted, not a
 replacement for a focused box when the site is already known. See
 [GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
 
-### Method 1: Using PyMOL
+### Method 1: Using a desktop viewer (PyMOL shown)
 
 ```python
 # 1. Load your protein

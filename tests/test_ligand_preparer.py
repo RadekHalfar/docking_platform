@@ -506,7 +506,7 @@ def test_convert_to_pdbqt_meeko_falls_back_to_obabel_on_import_error(preparer, t
 
 
 # ---------------------------------------------------------------------------
-# Docked-pose -> SDF conversion tests (PyMOL -> 3Dmol.js migration)
+# Docked-pose -> SDF conversion tests (for the 3Dmol.js viewer)
 # ---------------------------------------------------------------------------
 
 def _make_docked_pose_pdbqt(tmp_path: Path, n_poses: int = 2) -> Path:

@@ -232,11 +232,7 @@ User: "Show results of docking"
 files for the GUI's in-browser 3Dmol.js viewer and download picker (see
 [GUI_GUIDE.md](GUI_GUIDE.md)). No server-side rendering — PDBQT is native
 (no conversion needed), PDB/SDF/MOL2 come from a single Meeko PDBQT→RDKit
-parse per ligand, restoring proper bond orders. This replaced the old
-`PYMOL_VISUALIZER` service as the default `visualize` step; that service
-(port 8005, `visualize_docking`) is still present and callable directly, but
-is no longer part of the default workflow — see the note at the top of
-[PYMOL_VISUALIZATION.md](PYMOL_VISUALIZATION.md).
+parse per ligand, restoring proper bond orders.
 
 **Input Parameters:**
 ```json

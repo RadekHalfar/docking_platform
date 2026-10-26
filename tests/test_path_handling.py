@@ -7,7 +7,6 @@ to Unix-style paths for Docker containers.
 import pytest
 from pathlib import Path
 import sys
-import os
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -55,30 +54,6 @@ class TestPathNormalization:
         result = normalize_path_for_docker(path_with_spaces)
         assert "/" in result
         assert "demo output" in result
-
-
-class TestRelativePathGeneration:
-    """Test relative path generation for PyMOL scripts"""
-    
-    def test_relative_path_calculation(self):
-        """Test os.path.relpath for script generation"""
-        script_dir = "demo_output/visualization"
-        file_path = "demo_output/prepared_proteins/6LU7.pdbqt"
-        
-        rel_path = os.path.relpath(file_path, script_dir)
-        # Should be ../prepared_proteins/6LU7.pdbqt
-        assert ".." in rel_path
-        assert "prepared_proteins" in rel_path
-        assert "6LU7.pdbqt" in rel_path
-    
-    def test_relative_path_same_level(self):
-        """Test relative path for files in same directory"""
-        script_dir = "demo_output/visualization"
-        file_path = "demo_output/visualization/test.pml"
-        
-        rel_path = os.path.relpath(file_path, script_dir)
-        # Should be just test.pml
-        assert rel_path == "test.pml" or rel_path == "./test.pml"
 
 
 class TestPathIntegration:

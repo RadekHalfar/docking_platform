@@ -5,7 +5,7 @@ Contains provider-specific implementations of the shared LLM interface.
 """
 import logging
 import json
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -83,22 +83,68 @@ class OllamaAdapter(BaseLLMClient):
 
     def _pull_model(self) -> None:
         """Pull the configured model into the Ollama instance."""
-        payload = {"name": self.model, "stream": True}
+        pull_ollama_model(self.endpoint, self.model, session=self._session)
+
+
+def pull_ollama_model(
+    endpoint: str,
+    name: str,
+    *,
+    on_progress: Optional[Callable[[str, int, int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    session: Optional[requests.Session] = None,
+    timeout: float = 600,
+) -> bool:
+    """Download model *name* into the Ollama at *endpoint* (``/api/pull``).
+
+    Each streamed line is passed to ``on_progress(status, completed, total)``
+    (the byte counts are 0 for lines without them). ``should_cancel`` is
+    checked after each line; when it returns True the stream is closed and
+    False is returned -- Ollama keeps the layers it has, so a later pull
+    resumes. Returns True once the pull finishes.
+
+    Raises RuntimeError when Ollama reports an error (an ``error`` line in
+    the stream, or an HTTP error) or can't be reached. *timeout* is per
+    read, not for the whole download.
+    """
+    url = f"{endpoint.rstrip('/')}/api/pull"
+    post = (session or requests).post
+    try:
+        response = post(url, json={"name": name, "stream": True}, stream=True, timeout=timeout)
         try:
-            response = self._session.post(self.pull_url, json=payload, stream=True, timeout=600)
-            response.raise_for_status()
+            if not response.ok:
+                raise RuntimeError(
+                    f"Failed to pull Ollama model {name}: {_ollama_error(response) or response.status_code}"
+                )
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
-                    if data.get("status") == "error":
-                        logger.warning("Ollama pull warning: %s", data.get("error", line))
                 except json.JSONDecodeError:
-                    pass
-        except requests.RequestException as e:
-            logger.error(f"Failed to pull Ollama model {self.model}: {e}")
-            raise RuntimeError(f"Failed to pull Ollama model {self.model}: {e}")
+                    continue
+                # Ollama reports a failed pull as an {"error": ...} line.
+                if data.get("error"):
+                    raise RuntimeError(f"Failed to pull Ollama model {name}: {data['error']}")
+                if on_progress is not None:
+                    on_progress(data.get("status", ""), data.get("completed") or 0, data.get("total") or 0)
+                if should_cancel is not None and should_cancel():
+                    return False
+        finally:
+            response.close()
+    except requests.RequestException as e:
+        logger.error(f"Failed to pull Ollama model {name}: {e}")
+        raise RuntimeError(f"Failed to pull Ollama model {name}: {e}")
+    return True
+
+
+def _ollama_error(response) -> str:
+    """The ``error`` text of an Ollama error response, or "" if it has none."""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    return data.get("error", "") if isinstance(data, dict) else ""
 
 
 class OpenAIAdapter(BaseLLMClient):

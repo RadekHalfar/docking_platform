@@ -453,3 +453,21 @@ moved from Streamlit to NiceGUI.
   - **Existing installs:** a `.env` or saved GUI setting that picks a
     provider keeps working. With Ollama, start its profile once; models
     already downloaded stay in the `ollama-data` volume.
+- **Stage 18.3 (2026-10-27): the GUI sets up a local LLM, and can remember
+  the API key.** With **Ollama (local)** picked, Settings looks for a running
+  Ollama (the `local-llm` container, then the Ollama app on the host) and
+  says where it found it. If none answers, it shows the command that starts
+  the container, a link to the Ollama app, and a **Re-check** button. A found
+  Ollama can download models from the dialog: the recommended
+  `gemma3:4b` (3.3 GB) and `qwen2.5-coder:7b-instruct-q4_K_M` (4.7 GB), or
+  any name typed in, with a progress bar and **Cancel**. Known issue: a
+  typed name must be confirmed with Enter before **Download**, which
+  otherwise does nothing (`dev_plan.md` Future Work). A new **Remember
+  API key on this computer** box saves the key in the settings file
+  (plain text, mode 0600); unticked, the key stays in the browser session as
+  before, and unticking removes a saved one. With no LLM set up, the chat
+  shows a **Set up an LLM to chat** button that opens Settings.
+  - **Fixed:** an Ollama model the CLI pulls on first use no longer fails
+    silently. Ollama's `{"error": ...}` stream lines (a misspelled model, a
+    full disk) were never recognised, so the retried request failed with a
+    bare 404; the real error is now reported.

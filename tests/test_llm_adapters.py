@@ -13,6 +13,7 @@ from services.llm_orchestrator.llm_adapters import (
     OllamaAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
+    pull_ollama_model,
 )
 
 
@@ -105,21 +106,20 @@ class TestOllamaAdapter:
             adapter.generate("prompt")
 
     @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
-    def test_pull_model_logs_error_status_in_stream(self, mock_post):
-        """An error status line in the pull stream should be logged as a warning (L3 fix)."""
+    def test_pull_model_raises_on_an_error_line_in_stream(self, mock_post):
+        """Ollama reports a failed pull as an {"error": ...} line; it was only
+        logged before Stage 18.3, so the retried generate failed with a 404."""
         pull_response = Mock()
-        pull_response.raise_for_status.return_value = None
         pull_response.iter_lines.return_value = [
             b'{"status": "pulling manifest"}',
-            b'{"status": "error", "error": "disk full"}',
+            b'{"error": "disk full"}',
         ]
         mock_post.return_value = pull_response
 
         adapter = OllamaAdapter(model="llama2")
-        with patch("services.llm_orchestrator.llm_adapters.logger") as mock_logger:
+        with pytest.raises(RuntimeError, match="disk full"):
             adapter._pull_model()
-            warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
-            assert any("disk full" in call for call in warning_calls)
+        pull_response.close.assert_called_once()
 
     @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_list_models(self, mock_get):
@@ -442,3 +442,57 @@ def test_llm_env_wiring_health_smoke():
         pytest.skip("LLM endpoint not reachable in this test context")
 
     assert client.check_health() is True
+
+
+class TestPullOllamaModel:
+    """The shared /api/pull helper (Stage 18.3)."""
+
+    @staticmethod
+    def _response(lines, ok=True, status_code=200, body=None):
+        response = Mock(ok=ok, status_code=status_code)
+        response.iter_lines.return_value = [line.encode() if isinstance(line, str) else line for line in lines]
+        response.json.return_value = body if body is not None else {}
+        return response
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_reports_progress_and_finishes(self, mock_post):
+        mock_post.return_value = self._response([
+            '{"status": "pulling manifest"}',
+            '',
+            'not json',
+            '{"status": "pulling abc", "digest": "abc", "total": 100, "completed": 40}',
+            '{"status": "success"}',
+        ])
+        progress = []
+
+        assert pull_ollama_model("http://ollama:11434/", "gemma3:4b", on_progress=lambda *p: progress.append(p))
+
+        assert progress == [("pulling manifest", 0, 0), ("pulling abc", 40, 100), ("success", 0, 0)]
+        assert mock_post.call_args[0][0] == "http://ollama:11434/api/pull"
+        assert mock_post.call_args[1]["json"] == {"name": "gemma3:4b", "stream": True}
+        mock_post.return_value.close.assert_called_once()
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_cancel_stops_reading_and_closes(self, mock_post):
+        mock_post.return_value = self._response(['{"status": "a"}', '{"status": "b"}', '{"status": "success"}'])
+        progress = []
+
+        done = pull_ollama_model(
+            "http://ollama:11434", "m", on_progress=lambda *p: progress.append(p[0]),
+            should_cancel=lambda: len(progress) >= 2,
+        )
+
+        assert done is False and progress == ["a", "b"]
+        mock_post.return_value.close.assert_called_once()
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_an_http_error_carries_ollamas_message(self, mock_post):
+        mock_post.return_value = self._response([], ok=False, status_code=500, body={"error": "pull model manifest: file does not exist"})
+        with pytest.raises(RuntimeError, match="file does not exist"):
+            pull_ollama_model("http://ollama:11434", "no-such-model")
+
+    @patch('services.llm_orchestrator.llm_adapters.requests.post')
+    def test_unreachable_is_a_runtime_error(self, mock_post):
+        mock_post.side_effect = requests.ConnectionError("refused")
+        with pytest.raises(RuntimeError, match="refused"):
+            pull_ollama_model("http://ollama:11434", "m")

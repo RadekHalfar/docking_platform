@@ -475,3 +475,25 @@ async def test_no_llm_chat_answers_with_the_setup_hint(user: User, page, monkeyp
     await send_chat(user, page, "dock ATP into 6lu7")
 
     assert page.chat_texts()[-1] == NO_LLM_REPLY
+
+
+async def test_no_llm_shows_a_setup_button_that_opens_settings(user: User, page, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    await user.open("/")
+    assert element(user, "chat-llm-hint").visible
+
+    click(user, "chat-llm-hint")
+    assert element(user, "settings-dialog").value is True
+
+    # Applying a provider hides the button.
+    set_value(user, "settings-provider", "openai")
+    set_value(user, "settings-model", "gpt-x")
+    set_value(user, "settings-api-key", "sk-test")
+    click(user, "settings-apply")
+    await eventually(lambda: page.state.llm_client is not None)
+    await eventually(lambda: not element(user, "chat-llm-hint").visible)
+
+
+async def test_a_configured_llm_shows_no_setup_button(user: User, page):
+    await user.open("/")
+    assert not element(user, "chat-llm-hint").visible

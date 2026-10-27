@@ -26,7 +26,7 @@ def test_settings_from_form_strips_and_keeps_base_url_only_where_it_has_a_field(
     settings = llm_settings.settings_from_form(provider, " m ", " http://e ", " k ", " http://x/v1 ")
 
     assert settings == {"provider": provider, "model": "m", "endpoint": "http://e", "api_key": "k",
-                        "base_url": base_url}
+                        "base_url": base_url, "remember_api_key": False}
 
 
 def test_apply_saves_all_but_the_key_and_rebuilds_the_client(state, settings_file):
@@ -69,3 +69,21 @@ def test_applying_none_drops_the_client(state, settings_file):
 
 def test_none_is_offered_first():
     assert next(iter(llm_settings.PROVIDER_LABELS)) == "none"
+
+
+def test_a_remembered_key_is_saved_and_unticking_removes_it(state, settings_file):
+    new = llm_settings.settings_from_form("openai", "gpt-x", "", " sk-test ", "", remember_api_key=True)
+    llm_settings.persist_settings(new)
+    assert json.loads(settings_file.read_text())["api_key"] == "sk-test"
+
+    llm_settings.persist_settings(llm_settings.settings_from_form("openai", "gpt-x", "", "sk-test", ""))
+    assert "api_key" not in json.loads(settings_file.read_text())
+
+
+def test_download_options_are_the_recommended_models_not_yet_downloaded():
+    names = [name for name, _, _ in llm_settings.RECOMMENDED_OLLAMA_MODELS]
+    options = llm_settings.download_options([names[0], "other:latest"])
+
+    assert list(options) == names[1:]
+    _, size, note = llm_settings.RECOMMENDED_OLLAMA_MODELS[1]
+    assert options[names[1]] == f"{names[1]} — {size}, {note}"

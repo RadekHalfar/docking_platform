@@ -9,17 +9,28 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-def atomic_write_json(path: str | Path, payload: Dict[str, Any], indent: int = 2) -> None:
+def atomic_write_json(
+    path: str | Path, payload: Dict[str, Any], indent: int = 2, mode: Optional[int] = None
+) -> None:
     """Atomically write a JSON dictionary to disk.
 
     The write is performed via a temporary file in the same directory and a
-    final ``os.replace`` to avoid partial writes.
+    final ``os.replace`` to avoid partial writes. With *mode* (e.g. ``0o600``
+    for a file holding a secret), the temporary file gets it before it
+    replaces *path*, so the file is never readable by others.
     """
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
+    if mode is None:
+        handle = open(tmp_path, "w", encoding="utf-8")
+    else:
+        # Created with the mode, and chmod'ed in case a leftover temp file
+        # from a crashed write already existed with another one.
+        handle = os.fdopen(os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), "w", encoding="utf-8")
+        os.chmod(tmp_path, mode)
+    with handle as f:
         json.dump(payload, f, indent=indent)
     os.replace(tmp_path, output_path)
 

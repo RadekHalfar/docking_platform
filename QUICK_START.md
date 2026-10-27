@@ -38,7 +38,7 @@ default. Either set `LLM_PROVIDER`, `LLM_MODEL` and `LLM_API_KEY` in `.env`
 
 ```powershell
 docker compose --profile local-llm up -d ollama
-docker exec -it mcp-llm ollama pull gemma3:4b
+docker exec -it mcp-llm ollama pull gemma3:4b   # or download it in the GUI's Settings
 # then add: --llm-provider ollama --llm-model gemma3:4b
 ```
 

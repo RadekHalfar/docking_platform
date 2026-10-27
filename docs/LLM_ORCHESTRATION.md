@@ -104,6 +104,10 @@ docker exec -it mcp-llm ollama pull gemma3:4b            # ~3.3 GB, lighter
 # docker exec -it mcp-llm ollama pull phi3               # ~2 GB, fastest
 ```
 
+The GUI's Settings can download these too, with a progress bar (see
+[GUI_GUIDE.md](GUI_GUIDE.md)); the models land in the same volume, so the
+CLI sees them.
+
 To avoid repeating flags, set `LLM_PROVIDER`, `LLM_MODEL` (and
 `LLM_API_KEY`) in `.env`; see `.env.example`.
 

@@ -20,6 +20,30 @@ def test_atomic_write_json_and_load_json_dict_roundtrip(tmp_path):
     assert loaded == payload
 
 
+@pytest.mark.skipif(platform.system() == "Windows", reason="POSIX file modes")
+def test_atomic_write_json_applies_a_mode_and_otherwise_keeps_the_umask_default(tmp_path):
+    secret, plain = tmp_path / "secret.json", tmp_path / "plain.json"
+    # A leftover temp file from a crashed write, readable by everyone.
+    leftover = tmp_path / "secret.json.tmp"
+    leftover.write_text("{}")
+    leftover.chmod(0o644)
+
+    atomic_write_json(secret, {"key": "s"}, mode=0o600)
+    atomic_write_json(plain, {"key": "p"})
+
+    assert secret.stat().st_mode & 0o777 == 0o600
+    assert load_json_dict(secret) == {"key": "s"}
+    assert plain.stat().st_mode & 0o777 == 0o666 & ~_umask()
+
+
+def _umask() -> int:
+    import os
+
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
 def test_load_json_dict_returns_none_for_non_object_json(tmp_path):
     """Loader should guard callers from non-dict JSON payloads."""
     output_path = tmp_path / "list_payload.json"

@@ -1,5 +1,6 @@
 """Tests for ui/settings.py (persisted LLM provider settings)."""
 import json
+import os
 
 import pytest
 
@@ -88,7 +89,7 @@ class TestSaveSettings:
         assert loaded["model"] == "local-model"
         assert loaded["base_url"] == "http://localhost:1234/v1"
 
-    def test_api_key_is_never_persisted_to_disk(self, _isolated_settings_file):
+    def test_api_key_is_not_persisted_unless_remembered(self, _isolated_settings_file):
         save_settings({
             "provider": "openai",
             "model": "gpt-4o-mini",
@@ -99,6 +100,29 @@ class TestSaveSettings:
 
         on_disk = json.loads(_isolated_settings_file.read_text())
         assert "api_key" not in on_disk
+        assert on_disk["remember_api_key"] is False
+
+    def test_a_remembered_key_is_saved_and_overrides_the_env_var(self, _isolated_settings_file, monkeypatch):
+        save_settings({
+            "provider": "openai", "model": "gpt-4o-mini", "endpoint": "", "base_url": "",
+            "api_key": "sk-remembered", "remember_api_key": True,
+        })
+        monkeypatch.setenv("LLM_API_KEY", "sk-from-env")
+
+        loaded = load_settings()
+        assert loaded["api_key"] == "sk-remembered" and loaded["remember_api_key"] is True
+
+    def test_a_key_left_in_the_file_without_the_flag_is_ignored(self, _isolated_settings_file, monkeypatch):
+        _isolated_settings_file.write_text(json.dumps({"provider": "openai", "api_key": "sk-stale"}))
+        monkeypatch.setenv("LLM_API_KEY", "sk-from-env")
+
+        loaded = load_settings()
+        assert loaded["api_key"] == "sk-from-env" and loaded["remember_api_key"] is False
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+    def test_the_file_is_readable_only_by_its_owner(self, _isolated_settings_file):
+        save_settings({"provider": "openai", "model": "m", "api_key": "sk", "remember_api_key": True})
+        assert _isolated_settings_file.stat().st_mode & 0o777 == 0o600
 
     def test_creates_parent_directory_if_missing(self, tmp_path, monkeypatch):
         nested = tmp_path / "nested" / "dir" / "settings.json"

@@ -664,7 +664,7 @@ with `docker compose up -d`.
 - **`dev`** — `script-runner`, for scripts and the test suite.
 
 ```bash
-# Start the local LLM and download a model
+# Start the local LLM and download a model (or download it in the GUI's Settings)
 docker compose --profile local-llm up -d ollama
 docker exec -it mcp-llm ollama pull gemma3:4b
 
@@ -736,6 +736,15 @@ machine**, accessed by the person running Docker Compose on that machine. It is
 **not safe to deploy as-is** on a shared server, behind a reverse proxy exposed
 to a LAN/VPN, or anywhere another user or process could reach these ports —
 doing so would expose unauthenticated job execution and file read/write.
+
+**A remembered API key is stored in plain text.** When "Remember API key on
+this computer" is ticked in the GUI's Settings, the key is written to
+`./cache/.docking_platform_settings.json` (mode 0600: readable only by the
+GUI's user, uid 1000 in the container). Anyone with that user's access, or
+root, on the machine can read it; leave the box unticked to keep the key in
+the browser session only, or set `LLM_API_KEY` in `.env` instead. On Docker
+Desktop for Windows/macOS the bind-mounted file's mode is emulated, so rely
+on your host account's own file protection there.
 
 If you need multi-user or remote/server deployment, do **not** simply remove
 the `127.0.0.1` binding. That requires additional hardening that is not yet

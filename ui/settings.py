@@ -1,9 +1,11 @@
 """Persisted LLM provider settings for the GUI (no GUI framework dependency).
 
 Settings survive a browser refresh (which resets the GUI's per-tab state) by
-being written to a small JSON file on disk. API keys are never written to that
-file — they always come from the LLM_API_KEY env var or are re-entered in the
-UI for the current session only.
+being written to a small JSON file on disk. The API key is written to that
+file only when the user ticks "Remember API key" (Stage 18.3); otherwise it
+comes from the LLM_API_KEY env var or is re-entered in the UI for the
+current session only. The file is always written with mode 0600
+(:data:`SETTINGS_FILE_MODE`), because it may hold that key in plain text.
 """
 from __future__ import annotations
 
@@ -19,11 +21,13 @@ from common.file_io import atomic_write_json, load_json_dict
 SETTINGS_FILE = Path(
     os.getenv("DOCKING_PLATFORM_SETTINGS_FILE", str(Path.home() / ".docking_platform_settings.json"))
 )
+# Readable only by the GUI's own user: the file may hold the API key.
+SETTINGS_FILE_MODE = 0o600
 
 # The Ollama endpoint when neither LLM_ENDPOINT nor a saved setting gives one.
 DEFAULT_ENDPOINT = "http://localhost:11434"
 
-# Only these keys are persisted to disk.
+# Always persisted to disk; api_key only when remember_api_key is set.
 _PERSISTABLE_KEYS = ("provider", "model", "endpoint", "base_url")
 
 
@@ -31,7 +35,8 @@ def load_settings() -> Dict[str, Any]:
     """Return current LLM settings.
 
     Starts from environment variables (set by docker-compose.yml / .env),
-    then overrides with any previously saved user preferences on disk.
+    then overrides with any previously saved user preferences on disk,
+    including a remembered API key.
     """
     from services.llm_orchestrator.llm_factory import NO_LLM_PROVIDER
 
@@ -41,6 +46,7 @@ def load_settings() -> Dict[str, Any]:
         "endpoint": os.getenv("LLM_ENDPOINT", DEFAULT_ENDPOINT),
         "api_key": os.getenv("LLM_API_KEY", ""),
         "base_url": os.getenv("LLM_BASE_URL", ""),
+        "remember_api_key": False,
     }
 
     # A missing, unreadable or non-object file counts as nothing saved.
@@ -48,16 +54,25 @@ def load_settings() -> Dict[str, Any]:
     for key in _PERSISTABLE_KEYS:
         if saved.get(key):
             settings[key] = saved[key]
+    if saved.get("remember_api_key") is True:
+        settings["remember_api_key"] = True
+        if saved.get("api_key"):
+            settings["api_key"] = saved["api_key"]
 
     return settings
 
 
 def save_settings(settings: Dict[str, Any]) -> None:
-    """Persist provider/model/endpoint/base_url to disk. Never writes api_key."""
-    to_save = {key: settings[key] for key in _PERSISTABLE_KEYS if key in settings}
+    """Persist provider/model/endpoint/base_url to disk, and the API key only
+    when ``remember_api_key`` is set -- unticking it removes a saved key."""
+    to_save: Dict[str, Any] = {key: settings[key] for key in _PERSISTABLE_KEYS if key in settings}
+    remember = bool(settings.get("remember_api_key"))
+    to_save["remember_api_key"] = remember
+    if remember and settings.get("api_key"):
+        to_save["api_key"] = settings["api_key"]
     # Replaced, not rewritten in place: no half-written file, and the
     # non-root GUI can update a file the former root Streamlit GUI created.
-    atomic_write_json(SETTINGS_FILE, to_save)
+    atomic_write_json(SETTINGS_FILE, to_save, mode=SETTINGS_FILE_MODE)
 
 
 def build_llm_client(settings: Dict[str, Any]):

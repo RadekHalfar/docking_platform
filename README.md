@@ -85,7 +85,7 @@ for the CLI (see [.env.example](.env.example)):
 
 | Option | Download | Notes |
 |---|---|---|
-| **OpenAI / Anthropic / MetaCentrum** | none | Needs an API key (MetaCentrum: an e-INFRA CZ token). |
+| **OpenAI / Anthropic / MetaCentrum** | none | Needs an API key (MetaCentrum: an e-INFRA CZ token). Tick **Remember API key** to keep it across restarts. |
 | **Local Ollama** (opt-in container) | ~4.8 GB image + a model | Private and free; runs on the CPU in Docker. |
 | **Ollama app on the host** | Ollama installer + a model | Uses the GPU (Apple Metal on Mac). Endpoint `http://host.docker.internal:11434`. |
 | **Other OpenAI-compatible server** | depends | LM Studio, vLLM, Groq and similar. |
@@ -96,12 +96,15 @@ for the CLI (see [.env.example](.env.example)):
 # Start the opt-in Ollama container (downloads the ~4.8 GB image once)
 docker compose --profile local-llm up -d ollama
 
-# Download a model (one-time; models persist in the ollama-data volume)
-docker exec -it mcp-llm ollama pull gemma3:4b
 ```
 
-Then pick **Ollama (local)** and the model in the GUI's Settings. For the CLI,
-pass the provider and model:
+Then pick **Ollama (local)** in the GUI's Settings. The dialog finds the
+running Ollama (the container, or the Ollama app on the host), offers the
+recommended models below with their sizes, and downloads the one you pick
+with a progress bar; select it and press **Apply settings**. Models persist
+in the `ollama-data` volume. Without the GUI, download one with
+`docker exec -it mcp-llm ollama pull gemma3:4b`. For the CLI, pass the
+provider and model:
 
 ```powershell
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b "Download 6lu7 and ATP, prepare and dock"
@@ -114,8 +117,9 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py -
 | **Mistral 7B Q4** (`mistral`) | 4.0 GB | Balanced |
 | **Phi-3 Mini Q4** (`phi3`) | 2.0 GB | Fastest, lowest memory |
 
-Switching models needs no rebuild: pull another model and select it, or pass
-`--llm-model`. `docker exec -it mcp-llm ollama list` shows what's downloaded.
+Switching models needs no rebuild: download another model (any name from the
+Ollama library can be typed into the dialog's **Download a model** field —
+press Enter after typing it, then **Download**) and select it, or pass `--llm-model`. `docker exec -it mcp-llm ollama list` shows what's downloaded.
 
 **See [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) for the natural-language interface, providers and troubleshooting.**
 

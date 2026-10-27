@@ -7,9 +7,13 @@ controller. A run command ("run", "redock", "dock with vina") does what
 Run Docking does, through ``controller.run_docking`` (Stage 17.1). Any other message goes to the LLM: the blocking call runs in
 ``run.io_bound`` with the input disabled, and its result is applied only if
 the session hasn't changed meanwhile (``chat.parse_context``). A save
-disables the input the same way (``controller.busy``).
+disables the input the same way (``controller.busy``). With no LLM set up
+(provider "none"), a "Set up an LLM to chat" button above the input opens
+the settings dialog (Stage 18.3).
 """
 from __future__ import annotations
+
+from typing import Callable
 
 from nicegui import run, ui
 
@@ -21,10 +25,11 @@ from ui_nice.widgets import markdown
 # The Run log keeps this many of the run's last lines, like the Session Log.
 RUN_LOG_LINES = results_view.JOB_LOG_TAIL_LINES
 PARSING = "Parsing with LLM..."
+LLM_HINT = "Set up an LLM to chat"
 
 
 class ChatView:
-    def __init__(self, controller: PageController) -> None:
+    def __init__(self, controller: PageController, open_settings: Callable[[], None]) -> None:
         self.controller = controller
         self.state = controller.state
         self.parsing = False
@@ -41,6 +46,9 @@ class ChatView:
         self.messages = ui.column().classes("w-full")
         with ui.expansion("Run log").classes("w-full").mark("run-log") as self.log_expansion:
             self.log = ui.log(max_lines=RUN_LOG_LINES).classes("w-full h-64")
+        self.llm_hint = ui.button(LLM_HINT, icon="settings", on_click=open_settings).props(
+            "flat dense no-caps"
+        ).mark("chat-llm-hint")
         with ui.row().classes("w-full items-center no-wrap"):
             self.input = (
                 ui.input(placeholder="Describe your workflow...")
@@ -64,6 +72,7 @@ class ChatView:
         self.session_label.set_visibility(bool(state.job_id))
         self._sync_messages()
         self._sync_log()
+        self.llm_hint.set_visibility(state.llm_client is None)
         busy = PARSING if self.parsing else self.controller.busy
         self.input.set_enabled(busy is None)
         self.send.set_enabled(busy is None)

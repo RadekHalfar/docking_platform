@@ -87,8 +87,9 @@ message rather than doing anything unexpected.
   provider in the GUI's Settings. For a local one, start Ollama first:
   `docker compose --profile local-llm up -d ollama`.
 - *Chat parsing fails with Ollama selected*: the Ollama container isn't
-  running (it's opt-in) or has no model yet; start it as above and
-  `docker exec -it mcp-llm ollama pull gemma3:4b`.
+  running (it's opt-in) or has no model yet. Settings says which: "Ollama
+  isn't running" (start it as above, then **Re-check**), or "No models
+  downloaded yet" (download one there, e.g. `gemma3:4b`).
 - *Installer times out at step [5/5]*: run `docker compose logs` to see
   which service failed to become healthy.
 

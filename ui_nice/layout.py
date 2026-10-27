@@ -62,7 +62,7 @@ def build_page(state: GuiSession, output_base: Path) -> PageParts:
     # first draw.
     controller.process()
     settings = SettingsView(controller)
-    chat_drawer, chat = _chat_drawer(controller)
+    chat_drawer, chat = _chat_drawer(controller, settings.open)
     _header(chat_drawer, settings)
     tabs, tab_panels, setup_splitter, setup, box_picker, results, sessions = _main_tabs(controller)
     controller.show_results = lambda: tabs.set_value(TAB_RESULTS)
@@ -85,9 +85,9 @@ def _header(chat_drawer: ui.right_drawer, settings: SettingsView) -> None:
         ).tooltip("Show or hide the chat").mark("chat-toggle")
 
 
-def _chat_drawer(controller: PageController) -> tuple[ui.right_drawer, ChatView]:
+def _chat_drawer(controller: PageController, open_settings) -> tuple[ui.right_drawer, ChatView]:
     with ui.right_drawer(value=True).props("bordered width=420") as drawer:
-        chat = ChatView(controller)
+        chat = ChatView(controller, open_settings)
     return drawer, chat
 
 

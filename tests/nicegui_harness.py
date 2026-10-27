@@ -55,6 +55,10 @@ def output_base(tmp_path):
     return base
 
 
+def _no_download(*args, **kwargs):
+    raise RuntimeError("no Ollama in the GUI tests")
+
+
 @pytest.fixture(autouse=True)
 def nice_env(tmp_path, output_base, monkeypatch):
     monkeypatch.setenv("OUTPUT_BASE", str(output_base))
@@ -64,7 +68,9 @@ def nice_env(tmp_path, output_base, monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("LLM_BASE_URL", "")
     monkeypatch.setattr("ui.settings.SETTINGS_FILE", tmp_path / "settings.json")
-    monkeypatch.setattr("ui.ollama_models.list_ollama_models", lambda *a, **k: [])
+    # No Ollama answers, and nothing is downloaded, unless a test says so.
+    monkeypatch.setattr("ui.ollama_models.list_ollama_models", lambda *a, **k: None)
+    monkeypatch.setattr("ui.ollama_models.pull_ollama_model", _no_download)
     monkeypatch.setattr("ui.orchestrator_bridge.OrchestratorBridge", FakeBridge)
     monkeypatch.setattr("ui_nice.controller.POLL_INTERVAL_S", 0.05)
     return output_base

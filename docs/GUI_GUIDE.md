@@ -53,11 +53,32 @@ restarting the container.
   container with `docker compose --profile local-llm up -d ollama`, or point
   the endpoint at an Ollama app on the host
   (`http://host.docker.internal:11434`).
+- **Ollama status** (Ollama only): the dialog looks for a running Ollama and
+  says where it found it ("Ollama found at …"). While the endpoint is still a
+  default one it tries, in order, the `local-llm` container
+  (`http://ollama:11434`), the Ollama app on the host
+  (`http://host.docker.internal:11434`) and `http://localhost:11434`, and
+  takes the first that answers (saved by **Apply settings**). An endpoint you
+  typed yourself is only ever asked itself. If nothing answers, the dialog
+  shows how to start one — the `docker compose --profile local-llm up -d
+  ollama` command (about 4.8 GB image, CPU only), or a link to install the
+  Ollama app (uses the GPU / Apple Metal) — and a **Re-check** button.
 - **Model**: for `Ollama (local)`, this is a dropdown populated live from the
-  Ollama server's `/api/tags` (i.e. whatever you've `ollama pull`-ed), so you
-  don't need to remember exact tag names. It falls back to a free-text field
-  if Ollama can't be reached. For every other provider it's a plain text
-  field (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
+  Ollama server's `/api/tags` (i.e. whatever has been downloaded), so you
+  don't need to remember exact tag names. It is a free-text field if Ollama
+  can't be reached or has no models yet. For every other provider it's a
+  plain text field (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
+- **Download a model** (Ollama only, once one is found): offers the
+  recommended models not yet downloaded, with their sizes (`gemma3:4b`,
+  3.3 GB; `qwen2.5-coder:7b-instruct-q4_K_M`, 4.7 GB); any other Ollama
+  library name can be typed in. **Press Enter after typing a name, then
+  Download** — without Enter the typed name isn't taken and **Download**
+  does nothing (known issue, listed in `dev_plan.md` Future Work); a model
+  picked from the list needs no Enter. **Download** shows a progress bar and a
+  **Cancel** button (Ollama keeps what it has, so downloading again
+  resumes). **Apply settings** is disabled until the download ends; closing
+  the dialog doesn't stop it. One download runs at a time per GUI. When it
+  finishes the new model is selected — press **Apply settings** to use it.
 - **Endpoint URL** (Ollama only): tucked under an **Advanced** expander,
   collapsed by default, since `http://ollama:11434` (the `local-llm`
   container) is the usual one. Change it to use an Ollama app on the host
@@ -67,17 +88,26 @@ restarting the container.
   there's no sensible default — these fields *are* how you tell the platform
   where your custom server lives (LM Studio, vLLM, etc.).
 - **API Key**: shown only for providers that need one (OpenAI, Anthropic,
-  MetaCentrum, Other local server). Entered per-session — **never written to
-  disk**.
+  MetaCentrum, Other local server). By default it is kept for the current
+  session only. Tick **Remember API key on this computer** to save it in the
+  settings file, so it survives a refresh and a restart (and wins over
+  `LLM_API_KEY` from `.env`). It is stored **in plain text**, in a file
+  readable only by the GUI's own user (mode 0600) — see
+  [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#security-model). Unticking it
+  and applying removes the key from the file.
 
-Each time the dialog opens it shows the current session's settings and asks
-Ollama for its models afresh, and again when you change the Ollama endpoint
-(press Enter or leave the field).
+Each time the dialog opens it shows the current session's settings and looks
+for Ollama afresh, and again when you change the Ollama endpoint (press
+Enter or leave the field) or press **Re-check**.
+
+With no LLM set up (`None (forms only)`, the default), the chat drawer shows
+a **Set up an LLM to chat** button that opens this dialog.
 
 Click **Apply settings** to rebuild the LLM client and persist
-provider/model/endpoint to `~/.docking_platform_settings.json` inside the
-container (mounted to `./cache/.docking_platform_settings.json` on the host
-via `docker-compose.yml`, so it survives both a browser refresh — which
+provider/model/endpoint (and the API key, if remembered) to the settings
+file. In Docker that is `/workspace/cache/.docking_platform_settings.json`
+(`DOCKING_PLATFORM_SETTINGS_FILE` in `docker-compose.yml`), which is
+`./cache/.docking_platform_settings.json` on the host, so it survives both a browser refresh — which
 resets the page's in-memory session — and a container restart). The client
 is built before anything is saved, so settings the client rejects are
 neither saved nor used, and the error is shown in the dialog. Settings are

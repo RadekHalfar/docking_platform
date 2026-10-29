@@ -471,3 +471,25 @@ moved from Streamlit to NiceGUI.
     silently. Ollama's `{"error": ...}` stream lines (a misspelled model, a
     full disk) were never recognised, so the retried request failed with a
     bare 404; the real error is now reported.
+- **Review Stage R5 (2026-10-29): Phase 18 reviewed.** Fixes
+  (`docs/reviews/stage_18_r5.md`):
+  - **Apply in Settings refuses a provider without a model** ("Pick or
+    type a model for …"), and the CLI's commands and `--interactive` say so
+    and exit. Since 18.2 an unset `LLM_MODEL` sent requests with model `""`.
+  - **The no-LLM chat reply shows `save results as <name>` again;** the
+    placeholder had been dropped as an HTML tag.
+  - **Applying Ollama or None no longer saves a remembered key again,** and
+    a download that finishes after you switch provider no longer overwrites
+    that provider's model. Closing the browser tab cancels its download.
+  - **A mistyped Ollama endpoint** (such as `http://[::1:11434`) shows the
+    "isn't running" panel instead of nothing.
+  - **`LLM_PROVIDER=OpenAI`** (any case) shows as OpenAI in Settings, not
+    None.
+  - **`.env.example` and `docs/LLM_ORCHESTRATION.md`** suggest
+    `LLM_ENDPOINT=http://ollama:11434` for the container. `localhost` there
+    pointed inside the container itself.
+  - **`script-runner` reaches an Ollama app on a Linux host** at
+    `http://host.docker.internal:11434`, like `ui`.
+  - **CI runs the GUI tests:** a new `gui-tier` job builds the `ui` image
+    and runs the NiceGUI tests and the two results-rendering test files,
+    which had always been skipped on GitHub.

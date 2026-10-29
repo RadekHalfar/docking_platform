@@ -7,18 +7,20 @@ import threading
 from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
+from services.llm_orchestrator import llm_adapters
 from services.llm_orchestrator.llm_adapters import pull_ollama_model
+from ui.settings import DEFAULT_ENDPOINT
 
 # Where an Ollama is looked for when the endpoint is still a default one
 # (Stage 18.3), in this order:
 # - the bundled container of the `local-llm` compose profile;
 # - the Ollama app on the host itself (GPU / Apple Metal accelerated), which
 #   the ui container reaches through docker-compose.yml's `extra_hosts`;
-# - the same app for a GUI run outside Docker.
+# - the same app for a GUI run outside Docker (the settings' default).
 OLLAMA_CANDIDATES = (
     "http://ollama:11434",
     "http://host.docker.internal:11434",
-    "http://localhost:11434",
+    DEFAULT_ENDPOINT,
 )
 # Short: the dialog waits for every candidate that doesn't answer.
 PROBE_TIMEOUT_S = 1.5
@@ -32,30 +34,18 @@ _pull_lock = threading.Lock()
 def list_ollama_models(endpoint: str, timeout: float = 3.0) -> Optional[List[str]]:
     """Return sorted model names available at an Ollama endpoint's /api/tags.
 
-    Returns None if the endpoint is empty, unreachable or doesn't answer like
-    Ollama, and an empty list if it is reachable with no models. *timeout*
-    also bounds the host name lookup (see :func:`_resolves`).
+    Returns None if the endpoint is empty, malformed, unreachable or doesn't
+    answer like Ollama, and an empty list if it is reachable with no models
+    (:func:`~services.llm_orchestrator.llm_adapters.list_ollama_models`).
+    *timeout* also bounds the host name lookup (see :func:`_resolves`).
     """
-    if not endpoint or not _resolves(urlsplit(endpoint).hostname or "", timeout):
-        return None
-
-    import requests
-
     try:
-        resp = requests.get(f"{endpoint.rstrip('/')}/api/tags", timeout=timeout)
-        resp.raise_for_status()
-    except requests.RequestException:
+        host = urlsplit(endpoint).hostname or ""
+    except ValueError:  # e.g. "http://[::1:11434": a typo, not a server
         return None
-
-    try:
-        data = resp.json()
-    except ValueError:
+    if not _resolves(host, timeout):
         return None
-    if not isinstance(data, dict):
-        return None
-
-    names = {m.get("name") for m in data.get("models", []) if m.get("name")}
-    return sorted(names)
+    return llm_adapters.list_ollama_models(endpoint, timeout=timeout)
 
 
 def _resolves(host: str, timeout: float) -> bool:
@@ -89,18 +79,16 @@ def _normalized(endpoint: str) -> str:
     return endpoint.strip().rstrip("/")
 
 
-def find_ollama(endpoint: str, default_endpoint: str = "") -> Optional[Tuple[str, List[str]]]:
+def find_ollama(endpoint: str) -> Optional[Tuple[str, List[str]]]:
     """The first Ollama that answers, as ``(endpoint, models)``, or None.
 
-    *endpoint* is asked first. Only when it is a default one (a candidate,
-    or *default_endpoint*) are the other :data:`OLLAMA_CANDIDATES` asked
-    too: a server the user typed in is reported as unreachable, never
-    silently swapped for another one.
+    *endpoint* is asked first. Only when it is a default one (one of the
+    :data:`OLLAMA_CANDIDATES`) are the others asked too: a server the user
+    typed in is reported as unreachable, never silently swapped for another
+    one.
     """
     first = _normalized(endpoint)
     defaults = {_normalized(c) for c in OLLAMA_CANDIDATES}
-    if default_endpoint:
-        defaults.add(_normalized(default_endpoint))
     candidates = [first] if first else []
     if not first or first in defaults:
         candidates += [c for c in OLLAMA_CANDIDATES if _normalized(c) != first]

@@ -7,6 +7,7 @@ import pytest
 
 from ui import ollama_models
 from ui.ollama_models import OLLAMA_CANDIDATES, find_ollama, list_ollama_models
+from ui.settings import DEFAULT_ENDPOINT
 
 
 class TestListOllamaModels:
@@ -69,6 +70,19 @@ class TestListOllamaModels:
             raise_for_status=lambda: None,
         )
         assert list_ollama_models("http://ollama:11434") == ["llama3:8b"]
+
+    def test_a_malformed_endpoint_returns_none(self):
+        # urlsplit raised ValueError, so the dialog's search ended with
+        # neither the found status nor the Re-check panel (Review Stage R5).
+        assert list_ollama_models("http://[::1:11434") is None
+
+    @patch("requests.get")
+    def test_a_reply_that_is_not_ollamas_returns_none_or_skips_entries(self, mock_get):
+        reply = {"models": "nope"}
+        mock_get.return_value = Mock(status_code=200, json=lambda: reply, raise_for_status=lambda: None)
+        assert list_ollama_models("http://ollama:11434") is None
+        reply["models"] = ["text", {"name": "gemma3:4b"}]
+        assert list_ollama_models("http://ollama:11434") == ["gemma3:4b"]
 
     @patch("requests.get")
     def test_reachable_without_models_returns_empty_list(self, mock_get):
@@ -133,9 +147,7 @@ class TestFindOllama:
     def test_the_settings_default_endpoint_also_falls_back(self, answering):
         servers, asked = answering
         servers["http://ollama:11434"] = ["m"]
-        assert find_ollama("http://127.0.0.1:11434", default_endpoint="http://127.0.0.1:11434") == (
-            "http://ollama:11434", ["m"],
-        )
+        assert find_ollama(DEFAULT_ENDPOINT) == ("http://ollama:11434", ["m"])
 
     def test_a_user_endpoint_is_never_swapped(self, answering):
         servers, asked = answering

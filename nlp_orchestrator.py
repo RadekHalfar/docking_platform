@@ -91,6 +91,12 @@ NO_LLM_MESSAGE = (
     "    then --llm-provider ollama --llm-model gemma3:4b (the model downloads on first use)\n"
     "The GUI (http://localhost:3000) runs docking from its forms without an LLM."
 )
+# Printed when a provider is set but no model (LLM_MODEL defaults to empty
+# since Phase 18); the GUI's Apply refuses the same (Review Stage R5).
+NO_MODEL_MESSAGE = (
+    "LLM provider '{provider}' has no model set. Pass --llm-model <model> or set "
+    "LLM_MODEL in .env (--list-models shows an Ollama's models)."
+)
 CLARIFICATION_MODE_LEGACY = "legacy"
 
 # Add verbosity filter to root logger
@@ -1276,6 +1282,9 @@ Examples:
     if llm_client is None and (args.list_models or args.interactive or args.command):
         print(NO_LLM_MESSAGE)
         return 1
+    if not args.llm_model and (args.interactive or args.command):
+        print(NO_MODEL_MESSAGE.format(provider=args.llm_provider))
+        return 1
 
     if args.list_models:
         print(f"Available models for provider '{args.llm_provider}':")
@@ -1383,7 +1392,6 @@ def _print_clarification_state(parser_obj: WorkflowParser) -> None:
 
 def _collect_missing_parameters_hybrid(
     parser_obj: WorkflowParser,
-    output_base: str,
     llm_client: BaseLLMClient,
     max_turns: int = 8,
 ) -> None:
@@ -1431,7 +1439,7 @@ def _default_clarification_mode(mode: str) -> str:
     return CLARIFICATION_MODE_HYBRID
 
 
-def _collect_missing_parameters(parser_obj: WorkflowParser, output_base: str) -> None:
+def _collect_missing_parameters(parser_obj: WorkflowParser) -> None:
     """Collect missing or invalid required fields in short step-by-step prompts."""
     prompt_order = ["protein_id", "ligand_ids", "center", "box_size"]
     center_default = [10.0, 20.0, 30.0]
@@ -1587,13 +1595,9 @@ def process_workflow(
 
             # Ask only for missing/invalid fields, one short question at a time.
             if clarification_mode == CLARIFICATION_MODE_HYBRID:
-                _collect_missing_parameters_hybrid(
-                    parser_obj,
-                    str(orchestrator.output_base),
-                    llm_client=llm_client,
-                )
+                _collect_missing_parameters_hybrid(parser_obj, llm_client=llm_client)
             else:
-                _collect_missing_parameters(parser_obj, str(orchestrator.output_base))
+                _collect_missing_parameters(parser_obj)
 
             if parser_obj.has_missing_parameters():
                 print("\n❌ Could not resolve all required parameters.")

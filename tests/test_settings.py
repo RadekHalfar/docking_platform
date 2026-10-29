@@ -66,6 +66,12 @@ class TestLoadSettings:
 
 
 class TestBuildLlmClient:
+    def test_the_provider_env_var_is_read_as_the_factory_reads_it(self, monkeypatch):
+        # The dialog showed "None" for LLM_PROVIDER=OpenAI while the factory
+        # built an OpenAI client from it (Review Stage R5).
+        monkeypatch.setenv("LLM_PROVIDER", " OpenAI ")
+        assert load_settings()["provider"] == "openai"
+
     def test_none_provider_builds_no_client(self):
         assert build_llm_client(load_settings()) is None
 

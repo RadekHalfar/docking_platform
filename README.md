@@ -68,7 +68,7 @@ docker compose ps
 # 6. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 # GUI (NiceGUI) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-tests):
-docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
+docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini \n  tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
 ```
 
 **See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) for the detailed guide.**

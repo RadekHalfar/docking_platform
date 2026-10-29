@@ -50,7 +50,7 @@ NO_LLM_REPLY = (
     "Chat needs an LLM to read that. Open **Settings** (the gear icon, top "
     "right) to pick one: a cloud provider with an API key, or a local Ollama. "
     "Commands such as **run**, **use vina**, **history** and "
-    "**save results as <name>** work without one."
+    "`save results as <name>` work without one."
 )
 
 STALE_PARSE_REPLY = (

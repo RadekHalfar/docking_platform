@@ -193,6 +193,9 @@ services:
     command: ["python", "--version"]
     networks:
       - mcp-network
+    # Lets the CLI reach an Ollama app on the host, as ui does (see there).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Kept read-write (unlike ui's otherwise-identical mount below):
       # running `pytest` through this service needs to write .pytest_cache/

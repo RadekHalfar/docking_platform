@@ -41,7 +41,9 @@ def load_settings() -> Dict[str, Any]:
     from services.llm_orchestrator.llm_factory import NO_LLM_PROVIDER
 
     settings = {
-        "provider": os.getenv("LLM_PROVIDER") or NO_LLM_PROVIDER,
+        # Spelled as the factory reads it, so the dialog shows the provider
+        # the client uses ("OpenAI" in .env is openai, Review Stage R5).
+        "provider": (os.getenv("LLM_PROVIDER") or "").strip().lower() or NO_LLM_PROVIDER,
         "model": os.getenv("LLM_MODEL", ""),
         "endpoint": os.getenv("LLM_ENDPOINT", DEFAULT_ENDPOINT),
         "api_key": os.getenv("LLM_API_KEY", ""),

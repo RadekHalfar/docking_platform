@@ -21,7 +21,6 @@ class OllamaAdapter(BaseLLMClient):
         super().__init__(endpoint=endpoint, model=model, api_key=api_key)
         self.generate_url = f"{self.endpoint}/api/generate"
         self.tags_url = f"{self.endpoint}/api/tags"
-        self.pull_url = f"{self.endpoint}/api/pull"
 
     def check_health(self) -> bool:
         """Check if Ollama endpoint is reachable."""
@@ -68,15 +67,11 @@ class OllamaAdapter(BaseLLMClient):
             raise RuntimeError(f"Failed to generate response: {e}")
 
     def list_models(self) -> list[str]:
-        """List models available in Ollama."""
-        try:
-            response = self._session.get(self.tags_url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            return [model["name"] for model in data.get("models", [])]
-        except requests.RequestException as e:
-            logger.error(f"Failed to list models: {e}")
-            return []
+        """List models available in Ollama ([] if it can't be reached)."""
+        models = list_ollama_models(self.endpoint, timeout=10, session=self._session)
+        if models is None:
+            logger.error(f"Failed to list models at {self.endpoint}")
+        return models or []
 
     def _model_available(self) -> bool:
         return self.model in self.list_models()
@@ -84,6 +79,29 @@ class OllamaAdapter(BaseLLMClient):
     def _pull_model(self) -> None:
         """Pull the configured model into the Ollama instance."""
         pull_ollama_model(self.endpoint, self.model, session=self._session)
+
+
+def list_ollama_models(
+    endpoint: str, *, timeout: float = 3.0, session: Optional[requests.Session] = None,
+) -> Optional[list[str]]:
+    """Sorted model names at an Ollama's ``/api/tags``.
+
+    None if *endpoint* is unreachable or doesn't answer like Ollama, and an
+    empty list if it answers with no models -- so a caller can tell "isn't
+    running" from "nothing downloaded" (Stage 18.3).
+    """
+    get = (session or requests).get
+    try:
+        response = get(f"{endpoint.rstrip('/')}/api/tags", timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.debug(f"No Ollama answered at {endpoint}: {e}")
+        return None
+    entries = (data.get("models") or []) if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return None
+    return sorted({m["name"] for m in entries if isinstance(m, dict) and m.get("name")})
 
 
 def pull_ollama_model(
@@ -99,7 +117,8 @@ def pull_ollama_model(
 
     Each streamed line is passed to ``on_progress(status, completed, total)``
     (the byte counts are 0 for lines without them). ``should_cancel`` is
-    checked after each line; when it returns True the stream is closed and
+    checked after each line (see the note in the loop); when it returns
+    True the stream is closed and
     False is returned -- Ollama keeps the layers it has, so a later pull
     resumes. Returns True once the pull finishes.
 
@@ -128,6 +147,13 @@ def pull_ollama_model(
                     raise RuntimeError(f"Failed to pull Ollama model {name}: {data['error']}")
                 if on_progress is not None:
                     on_progress(data.get("status", ""), data.get("completed") or 0, data.get("total") or 0)
+                # DEFERRED (Review Stage R5, docs/reviews/stage_18_r5.md,
+                # Deferred #1): checked per line only, so while Ollama sends
+                # none (verifying a multi-GB layer, a stalled connection) a
+                # Cancel waits for the next line, up to *timeout*, and the
+                # GUI's pull lock stays held. Fix: let the canceller close
+                # the response from its own thread. Trigger: a Cancel seen
+                # to hang in real use.
                 if should_cancel is not None and should_cancel():
                     return False
         finally:

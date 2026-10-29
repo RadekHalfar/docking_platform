@@ -477,6 +477,16 @@ async def test_no_llm_chat_answers_with_the_setup_hint(user: User, page, monkeyp
     assert page.chat_texts()[-1] == NO_LLM_REPLY
 
 
+def test_the_setup_hint_shows_its_save_placeholder():
+    # Bold, "<name>" reached the browser as an unknown HTML tag and vanished
+    # (Review Stage R5). Rendered as ui_nice.widgets.markdown renders it.
+    import markdown2
+
+    from ui_nice.widgets import MARKDOWN_EXTRAS
+
+    assert "save results as &lt;name&gt;" in markdown2.markdown(NO_LLM_REPLY, extras=MARKDOWN_EXTRAS)
+
+
 async def test_no_llm_shows_a_setup_button_that_opens_settings(user: User, page, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "none")
     await user.open("/")

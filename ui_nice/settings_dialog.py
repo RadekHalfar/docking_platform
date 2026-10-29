@@ -15,7 +15,7 @@ the model is a free-text field.
 A found Ollama can download models (Stage 18.3): the pull runs in
 ``run.io_bound``, its progress is stored by the worker thread and drawn by a
 timer, Cancel stops it, and Apply waits until it ends. Closing the dialog
-doesn't stop it.
+doesn't stop it; closing the page does (Review Stage R5).
 
 Apply builds the client and saves the settings file off the event loop
 (``ui.core.llm_settings.persist_settings``); the API key is saved only when
@@ -29,6 +29,7 @@ from typing import Optional
 
 from nicegui import background_tasks, run, ui
 
+from services.llm_orchestrator import NO_LLM_PROVIDER
 from ui import ollama_models
 from ui.core import llm_settings
 from ui_nice.controller import PageController
@@ -57,10 +58,9 @@ class SettingsView:
         self.state = controller.state
         # The Ollama models listed for the endpoint they were fetched from;
         # None while a fetch runs, before the first one, or when no Ollama
-        # answered (_ollama_found False).
+        # answered.
         self._models: Optional[list[str]] = None
         self._models_endpoint: Optional[str] = None
-        self._ollama_found = False
         # True once the search for _models_endpoint has ended.
         self.searched = False
         self.fetching = False
@@ -129,6 +129,9 @@ class SettingsView:
                 ui.button("Close", on_click=self.dialog.close).props("flat").mark("settings-close")
                 self.apply_button = ui.button("Apply settings", on_click=self._on_apply).mark("settings-apply")
         self.progress_timer = ui.timer(PROGRESS_INTERVAL_S, self._draw_progress, active=False)
+        # A download nobody can follow or cancel any more is stopped, so it
+        # doesn't hold the one-download lock for every other page.
+        ui.context.client.on_delete(self._cancel.set)
         self._fill()
 
     def _endpoint_input(self, marker: str) -> ui.input:
@@ -151,9 +154,9 @@ class SettingsView:
         """The fields, from the session's settings. A running download keeps
         its own state."""
         settings = self.state.settings
-        provider = settings.get("provider", "none")
+        provider = settings.get("provider", NO_LLM_PROVIDER)
         if provider not in llm_settings.PROVIDER_LABELS:
-            provider = "none"
+            provider = NO_LLM_PROVIDER
         endpoint = settings.get("endpoint", "") or llm_settings.DEFAULT_ENDPOINT
         self._filling = True
         try:
@@ -190,18 +193,18 @@ class SettingsView:
         current_result = (
             ollama and self.searched and not self.fetching and self._models_endpoint == self._endpoint_value()
         )
-        found = current_result and self._ollama_found
+        found = current_result and self._models is not None
         models = self._models if found else None
         listed = bool(models)
         self.models_loading.set_visibility(ollama and self.fetching)
         self.ollama_status.set_visibility(found)
         if found:
             self.ollama_status.set_text(FOUND.format(endpoint=self._models_endpoint) + ("" if listed else f" {NO_MODELS}"))
-        self.ollama_missing.set_visibility(current_result and not self._ollama_found)
-        if current_result and not self._ollama_found:
+        self.ollama_missing.set_visibility(current_result and not found)
+        if current_result and not found:
             self.missing_text.set_text(MISSING.format(endpoint=self._models_endpoint))
         self.model_select.set_visibility(ollama and listed)
-        self.model_input.set_visibility(provider != "none" and not (ollama and listed))
+        self.model_input.set_visibility(provider != NO_LLM_PROVIDER and not (ollama and listed))
         if listed:
             current = self.model_input.value or ""
             options = models if current in models else ([current] if current else []) + models
@@ -235,13 +238,13 @@ class SettingsView:
         if self.provider.value != "ollama" or (already and not force):
             self._sync()
             return
-        self._models, self._models_endpoint, self._ollama_found = None, endpoint, False
+        self._models, self._models_endpoint = None, endpoint
         self.searched = False
         self.fetching = True
         self._sync()
         try:
             # Looked up at call time, so a test's patch of the module reaches it.
-            found = await run.io_bound(ollama_models.find_ollama, endpoint, llm_settings.DEFAULT_ENDPOINT)
+            found = await run.io_bound(ollama_models.find_ollama, endpoint)
         finally:
             if self._models_endpoint == endpoint:
                 self.fetching = False
@@ -252,7 +255,6 @@ class SettingsView:
             self._models = None
         else:
             found_endpoint, self._models = found
-            self._ollama_found = True
             if found_endpoint != endpoint:
                 # The search found Ollama elsewhere: the field takes it,
                 # applied (and saved) by Apply like a typed one.
@@ -285,7 +287,7 @@ class SettingsView:
         self.progress_timer.activate()
         self._sync()
         self._draw_progress()
-        downloaded = False
+        finished = False
         try:
             # Looked up at call time, so a test's patch of the module reaches it.
             finished = await run.io_bound(
@@ -297,11 +299,13 @@ class SettingsView:
             self._show(f"Download failed: {exc}", "text-negative")
         else:
             if finished:
-                downloaded = True
                 # The new model becomes the pick once it is listed (_sync
-                # keeps a still-listed pick otherwise).
-                self.model_input.value = name
-                self.model_select.value = None
+                # keeps a still-listed pick otherwise) -- unless the user
+                # has moved to another provider meanwhile, whose model field
+                # it would overwrite (Review Stage R5).
+                if self.provider.value == "ollama":
+                    self.model_input.value = name
+                    self.model_select.value = None
                 self.download_model.value = None
                 self._show(DOWNLOADED.format(name=name), "text-positive")
             else:
@@ -310,7 +314,7 @@ class SettingsView:
             self.downloading = None
             self.progress_timer.deactivate()
             self._draw_progress()
-        if downloaded:
+        if finished:
             # Listed again, so the new model is offered and selected.
             await self._fetch_models(force=True)
         else:

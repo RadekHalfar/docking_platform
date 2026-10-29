@@ -1160,16 +1160,22 @@ CLI's natural-language commands print the same advice and exit.
 
 Runs entirely on your machine. Start the container with
 `docker compose --profile local-llm up -d ollama`, or install the Ollama app
-on the host (the GUI reaches it at `http://host.docker.internal:11434`). Supports DeepSeek, LLaMA, Mistral, Qwen, Phi, and hundreds
+on the host (the GUI and the `script-runner` CLI reach it at
+`http://host.docker.internal:11434`). Supports DeepSeek, LLaMA, Mistral, Qwen, Phi, and hundreds
 of other models — just change the model name.
 
 ```bash
 LLM_PROVIDER=ollama
-LLM_ENDPOINT=http://localhost:11434
+# The bundled container; the compose default, so this line can be left out.
+LLM_ENDPOINT=http://ollama:11434
 LLM_MODEL=gemma3:4b
 ```
 
 CLI: `--llm-provider ollama --llm-endpoint http://localhost:11434 --llm-model <model>`
+(`localhost` for a CLI run on the host; inside `script-runner` the default
+`http://ollama:11434` applies). With a provider but no model, the CLI's
+commands and `--interactive` say so and exit, and the GUI's **Apply**
+refuses it.
 
 ### OpenAI
 

@@ -68,6 +68,8 @@ restarting the container.
   don't need to remember exact tag names. It is a free-text field if Ollama
   can't be reached or has no models yet. For every other provider it's a
   plain text field (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
+  Every provider except None needs one: **Apply settings** says "Pick or
+  type a model for …" and changes nothing until it is set.
 - **Download a model** (Ollama only, once one is found): offers the
   recommended models not yet downloaded, with their sizes (`gemma3:4b`,
   3.3 GB; `qwen2.5-coder:7b-instruct-q4_K_M`, 4.7 GB); any other Ollama
@@ -77,7 +79,7 @@ restarting the container.
   picked from the list needs no Enter. **Download** shows a progress bar and a
   **Cancel** button (Ollama keeps what it has, so downloading again
   resumes). **Apply settings** is disabled until the download ends; closing
-  the dialog doesn't stop it. One download runs at a time per GUI. When it
+  the dialog doesn't stop it, closing the browser tab does. One download runs at a time per GUI. When it
   finishes the new model is selected — press **Apply settings** to use it.
 - **Endpoint URL** (Ollama only): tucked under an **Advanced** expander,
   collapsed by default, since `http://ollama:11434` (the `local-llm`
@@ -94,7 +96,8 @@ restarting the container.
   `LLM_API_KEY` from `.env`). It is stored **in plain text**, in a file
   readable only by the GUI's own user (mode 0600) — see
   [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#security-model). Unticking it
-  and applying removes the key from the file.
+  and applying removes the key from the file, and so does applying a
+  provider that takes no key (Ollama, None).
 
 Each time the dialog opens it shows the current session's settings and looks
 for Ollama afresh, and again when you change the Ollama endpoint (press

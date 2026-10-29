@@ -185,6 +185,24 @@ async def test_apply_saves_the_settings_and_rebuilds_the_client(user: User, page
     assert "api_key" not in saved
 
 
+async def test_apply_refuses_a_provider_without_a_model(user: User, page, tmp_path):
+    # LLM_MODEL is empty by default since Stage 18.2, so a client with model
+    # "" was applied and every chat message then failed (Review Stage R5).
+    await _open_dialog(user, page)
+    before, client = dict(page.state.settings), page.state.llm_client
+
+    set_value(user, "settings-provider", "openai")
+    set_value(user, "settings-model", "  ")
+    set_value(user, "settings-api-key", "sk-test")
+    await _apply(user, page)
+
+    assert element(user, "settings-message").text == (
+        "Could not apply settings: " + llm_settings.MODEL_REQUIRED.format(provider="OpenAI")
+    )
+    assert page.state.settings == before and page.state.llm_client is client
+    assert not (tmp_path / "settings.json").exists()
+
+
 async def test_rejected_settings_change_nothing(user: User, page, tmp_path, monkeypatch):
     def reject(settings):
         raise ValueError("no such provider")
@@ -384,6 +402,35 @@ async def test_a_download_survives_closing_the_dialog(user: User, page, slow_pul
     await _download_ended(page)
 
 
+async def test_a_download_ending_after_a_provider_switch_keeps_the_new_model(user: User, page, slow_pull):
+    # The finished download wrote its name into the model field of whatever
+    # provider was picked by then (Review Stage R5).
+    _, _, release = slow_pull
+    await _start_download(user, page)
+    set_value(user, "settings-provider", "openai")
+    set_value(user, "settings-model", "gpt-x")
+
+    release.set()
+    await eventually(lambda: _view(page).downloading is None)
+
+    assert element(user, "settings-message").text == settings_dialog.DOWNLOADED.format(name=NEW_MODEL)
+    assert element(user, "settings-model").value == "gpt-x"
+
+
+async def test_closing_the_page_cancels_its_download(user: User, page, slow_pull):
+    # Otherwise it ran on with nothing able to cancel it, and every other
+    # page got PULL_BUSY until it ended (Review Stage R5).
+    models, _, _ = slow_pull
+    await _start_download(user, page)
+    view = _view(page)
+
+    view.dialog.client.delete()
+    await eventually(lambda: view.downloading is None)
+
+    assert view._cancel.is_set()
+    assert NEW_MODEL not in models
+
+
 # ---------------------------------------------------------------------------
 # Remembered API key (Stage 18.3)
 # ---------------------------------------------------------------------------
@@ -415,3 +462,21 @@ async def test_a_remembered_key_is_saved_with_mode_0600_and_reloaded(user: User,
     await _apply(user, page)
     saved = json.loads(path.read_text())
     assert "api_key" not in saved and saved["remember_api_key"] is False
+
+
+async def test_a_remembered_key_is_dropped_for_a_provider_without_one(user: User, page, tmp_path):
+    # The key and "Remember" fields are only hidden for Ollama and None, so
+    # Apply saved the old key again, with no way to untick it (Review Stage R5).
+    await _open_dialog(user, page)
+    set_value(user, "settings-provider", "openai")
+    set_value(user, "settings-model", "gpt-x")
+    set_value(user, "settings-api-key", "sk-remembered")
+    set_value(user, "settings-remember-key", True)
+    await _apply(user, page)
+
+    set_value(user, "settings-provider", "none")
+    await _apply(user, page)
+
+    saved = json.loads((tmp_path / "settings.json").read_text())
+    assert "api_key" not in saved and saved["remember_api_key"] is False
+    assert page.state.settings["api_key"] == ""

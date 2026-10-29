@@ -21,12 +21,33 @@ def state():
     return GuiSession(worker_cap=WorkerCap(10, "compose"), settings={"provider": "ollama"}, llm_client="old")
 
 
-@pytest.mark.parametrize("provider, base_url", [("openai_compatible", "http://x/v1"), ("ollama", ""), ("metacentrum", "")])
-def test_settings_from_form_strips_and_keeps_base_url_only_where_it_has_a_field(provider, base_url):
+@pytest.mark.parametrize("provider, base_url, api_key", [
+    ("openai_compatible", "http://x/v1", "k"), ("ollama", "", ""), ("metacentrum", "", "k"),
+])
+def test_settings_from_form_strips_and_keeps_only_the_fields_it_shows(provider, base_url, api_key):
     settings = llm_settings.settings_from_form(provider, " m ", " http://e ", " k ", " http://x/v1 ")
 
-    assert settings == {"provider": provider, "model": "m", "endpoint": "http://e", "api_key": "k",
+    assert settings == {"provider": provider, "model": "m", "endpoint": "http://e", "api_key": api_key,
                         "base_url": base_url, "remember_api_key": False}
+
+
+@pytest.mark.parametrize("provider", ["ollama", "none"])
+def test_a_provider_without_a_key_field_neither_keeps_nor_remembers_one(provider):
+    # Its key fields are only hidden, so a remembered key used to be saved
+    # again with no way to untick it (Review Stage R5).
+    settings = llm_settings.settings_from_form(provider, "m", "", "sk-old", "", remember_api_key=True)
+
+    assert settings["api_key"] == "" and settings["remember_api_key"] is False
+
+
+@pytest.mark.parametrize("provider", ["openai", "ollama", "openai_compatible"])
+def test_a_provider_without_a_model_is_refused_and_not_saved(state, settings_file, provider):
+    # LLM_MODEL is empty by default since Stage 18.2 (Review Stage R5).
+    new = llm_settings.settings_from_form(provider, " ", "http://e", "k", "http://x/v1")
+
+    with pytest.raises(ValueError, match="Pick or type a model"):
+        llm_settings.persist_settings(new)
+    assert not settings_file.exists()
 
 
 def test_apply_saves_all_but_the_key_and_rebuilds_the_client(state, settings_file):
@@ -49,7 +70,7 @@ def test_settings_the_client_rejects_change_nothing(state, settings_file, monkey
     monkeypatch.setattr(llm_settings, "build_llm_client", reject)
 
     with pytest.raises(ValueError):
-        new = {"provider": "nope", "model": "", "endpoint": "", "api_key": "", "base_url": ""}
+        new = {"provider": "nope", "model": "m", "endpoint": "", "api_key": "", "base_url": ""}
         llm_settings.use_settings(state, new, llm_settings.persist_settings(new))
 
     assert state.settings == {"provider": "ollama"} and state.llm_client == "old"

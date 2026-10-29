@@ -136,6 +136,17 @@ class TestOllamaAdapter:
 
         assert models == ["llama2", "mistral"]
 
+    @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
+    def test_list_models_shares_the_listing_and_stays_a_list_when_unreachable(self, mock_get):
+        # The GUI's listing and this one are one function since Review
+        # Stage R5; the adapter keeps its [] for "can't be reached".
+        mock_get.return_value.raise_for_status.return_value = None
+        mock_get.return_value.json.return_value = {"models": [{"name": "b"}, {"digest": "x"}, {"name": "a"}]}
+        assert OllamaAdapter().list_models() == ["a", "b"]
+
+        mock_get.side_effect = requests.ConnectionError("refused")
+        assert OllamaAdapter().list_models() == []
+
 
 class TestOpenAIAdapter:
     """Tests for OpenAI provider."""

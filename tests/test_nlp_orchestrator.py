@@ -28,7 +28,7 @@ def test_collect_missing_parameters_manual_defaults(monkeypatch, tmp_path):
     answers = iter(["y", "y"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    cli._collect_missing_parameters(parser, str(tmp_path))
+    cli._collect_missing_parameters(parser)
 
     params = parser.parsed_workflow["parameters"]
     assert params["center"] == [10.0, 20.0, 30.0]
@@ -54,7 +54,7 @@ def test_collect_missing_parameters_hybrid_updates_with_llm(monkeypatch, tmp_pat
     answers = iter(["Use 6lu7"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
+    cli._collect_missing_parameters_hybrid(parser, llm_client=llm_client)
 
     assert parser.parsed_workflow["parameters"]["protein_id"] == "6lu7"
     assert not parser.has_missing_parameters()
@@ -81,7 +81,6 @@ def test_collect_missing_parameters_hybrid_stops_after_max_turns(monkeypatch, tm
 
     cli._collect_missing_parameters_hybrid(
         parser,
-        str(tmp_path),
         llm_client=llm_client,
         max_turns=1,
     )
@@ -110,7 +109,7 @@ def test_collect_missing_parameters_hybrid_asks_for_box_directly(monkeypatch, tm
     answers = iter(["center 11,22,33 and box size 24,25,26"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
+    cli._collect_missing_parameters_hybrid(parser, llm_client=llm_client)
 
     params = parser.parsed_workflow["parameters"]
     assert params["center"] == [11.0, 22.0, 33.0]
@@ -138,7 +137,7 @@ def test_collect_missing_parameters_hybrid_allows_state_during_box_prompt(monkey
     answers = iter(["show state", "center 11,22,33 and box size 24,25,26"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    cli._collect_missing_parameters_hybrid(parser, str(tmp_path), llm_client=llm_client)
+    cli._collect_missing_parameters_hybrid(parser, llm_client=llm_client)
 
     params = parser.parsed_workflow["parameters"]
     assert params["center"] == [11.0, 22.0, 33.0]
@@ -191,7 +190,7 @@ def test_process_workflow_uses_hybrid_mode_by_default(monkeypatch, tmp_path, llm
 
     hybrid_called = {"value": False}
 
-    def fake_hybrid(parser_obj, _output_base, llm_client, max_turns=8):
+    def fake_hybrid(parser_obj, llm_client, max_turns=8):
         hybrid_called["value"] = True
         parser_obj.update_parameters({
             "center": [10.0, 20.0, 30.0],
@@ -249,7 +248,7 @@ def test_process_workflow_legacy_mode_uses_legacy_collector(monkeypatch, tmp_pat
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("hybrid path should not be called")),
     )
 
-    def fake_legacy(parser_obj, _output_base):
+    def fake_legacy(parser_obj):
         legacy_called["value"] = True
         parser_obj.update_parameters({
             "center": [10.0, 20.0, 30.0],
@@ -1643,6 +1642,28 @@ def test_a_configured_llm_is_still_health_checked(monkeypatch, tmp_path, capsys)
 
     assert _main(monkeypatch, tmp_path, "--check-health") == 1
     assert "❌ openai" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["dock ATP into 6lu7"], ["--interactive"]])
+def test_a_provider_without_a_model_says_so(monkeypatch, tmp_path, capsys, argv):
+    # LLM_MODEL is empty by default since Stage 18.2, so the request went out
+    # with model "" and failed at the provider (Review Stage R5).
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=Mock()))
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", Mock(side_effect=AssertionError("no LLM call")))
+
+    assert _main(monkeypatch, tmp_path, *argv) == 1
+    assert capsys.readouterr().out.strip() == cli.NO_MODEL_MESSAGE.format(provider="openai")
+
+
+def test_list_models_needs_no_model(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=Mock(list_models=Mock(return_value=["m"]))))
+
+    assert _main(monkeypatch, tmp_path, "--list-models") == 0
+    assert "  - m" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("provider, configured", [("none", False), ("", False), (None, False), (" None ", False), ("openai", True)])

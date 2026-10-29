@@ -389,19 +389,23 @@ docker compose --profile dev run --rm \
 
 ### GUI Tests
 
-`nicegui` and `pytest-asyncio` are only in the `ui` service's image
-(`Dockerfile.ui`), not in `script-runner`'s or CI's `requirements.txt`, so
-`tests/test_nicegui_*.py` files that need them `pytest.importorskip("nicegui")`
-and skip under the default suite. Run them for real via the `ui` image, with
-their own pytest config:
+`nicegui`, `pytest-asyncio`, `pandas` and `plotly` are only in the `ui`
+service's image (`Dockerfile.ui`), not in `script-runner`'s or
+`requirements.txt`. So the tests that need them (`tests/test_nicegui_*.py`,
+`tests/test_ui_comparison.py`, `tests/test_ui_results_rendering.py`)
+`pytest.importorskip` them and skip under the default suite. Run them for
+real via the `ui` image, with their own pytest config:
 
 ```bash
 docker compose run --rm --no-deps ui \
-  python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py -v
+  python -m pytest -c ui_nice/pytest.ini \
+  tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
 ```
 
-This is a third, explicitly-invoked test tier (alongside the hermetic
-default and the opt-in `integration` marker), not wired into CI. The
+This is a third test tier (alongside the hermetic default and the opt-in
+`integration` marker). CI runs it in its own `gui-tier` job
+(`.github/workflows/tests.yml`), which builds the base and `ui` images and
+runs the same files in them. The
 framework-free GUI logic in `ui/core/` is tested by `tests/test_ui_core_*.py`,
 and `OrchestratorBridge` by `tests/test_ui_orchestrator_bridge.py`; both run
 in the default hermetic suite (and CI).
@@ -743,8 +747,10 @@ this computer" is ticked in the GUI's Settings, the key is written to
 GUI's user, uid 1000 in the container). Anyone with that user's access, or
 root, on the machine can read it; leave the box unticked to keep the key in
 the browser session only, or set `LLM_API_KEY` in `.env` instead. On Docker
-Desktop for Windows/macOS the bind-mounted file's mode is emulated, so rely
-on your host account's own file protection there.
+Desktop for Windows the mode holds inside Docker (checked in Review Stage
+R5: a container running as another uid gets "Permission denied"), but on the
+host itself the file is as private as the repo folder's own permissions, like
+`.env` next to it.
 
 If you need multi-user or remote/server deployment, do **not** simply remove
 the `127.0.0.1` binding. That requires additional hardening that is not yet

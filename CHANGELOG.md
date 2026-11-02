@@ -512,3 +512,8 @@ moved from Streamlit to NiceGUI.
     tool's real defaults and response, volumes and health payloads in
     DOCKER_DEPLOYMENT, and Sessions-tab wording instead of the Streamlit
     sidebar.
+- **Stage 19.2 (2026-11-02): already-prepared `.pdbqt` ligands.**
+  - A ligand `.pdbqt` (GUI upload, `--ligand-files`, a batch folder) is docked as-is, instead of failing with "Unsupported file format". A receptor PDBQT or multi-pose docking output is refused with a clear message.
+  - Poses of a Meeko-made PDBQT keep their per-pose scores; others convert through OpenBabel.
+  - **Same-named inputs** (`x.sdf` and `x.pdbqt`) no longer overwrite each other's prepared file: the first is docked, the second is listed as an error.
+  - **Fixed:** searching a ligand name with no RCSB match (e.g. "aspirin") answers "No ligands found" instead of failing with "Expecting value…".

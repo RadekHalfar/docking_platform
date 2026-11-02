@@ -145,6 +145,8 @@ by the chat's "search ligand" flow).
 | `name` | string | Yes | Ligand search text (e.g., 'adenosine') |
 | `max_results` | number | No | Maximum number of candidates (default: 10) |
 
+No match gives an empty `candidates` list.
+
 **Response Example:**
 ```json
 {
@@ -185,7 +187,7 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `ligand_paths` | array | Yes | List of paths to ligand files (SDF, MOL, MOL2) |
+| `ligand_paths` | array | Yes | List of paths to ligand files (SDF, MOL, MOL2, or an already-prepared PDBQT, used as-is with `"conversion_method": "provided"`) |
 | `output_dir` | string | No | Directory to save prepared ligands (default: "./data/prepared") |
 | `ph` | number | No | pH for protonation state (default: 7.4) |
 | `add_hydrogens` | boolean | No | Add explicit hydrogens (default: true) |

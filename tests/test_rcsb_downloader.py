@@ -342,3 +342,59 @@ def test_download_structures_resolves_name_when_enabled(downloader, tmp_path, sa
             mock_resolve.assert_called_once_with("aspirin")
             assert len(result["ligand_paths"]) == 1
             assert result["ligand_paths"][0].endswith("AIN.sdf")
+
+
+# ---------------------------------------------------------------------------
+# search_ligands: RCSB answers "no hits" with 204 and an empty body (Stage 19.2)
+# ---------------------------------------------------------------------------
+
+def _search_response(status_code, payload=None):
+    response = Mock()
+    response.status_code = status_code
+    response.content = json.dumps(payload).encode() if payload is not None else b""
+    response.json = Mock(return_value=payload) if payload is not None else Mock(
+        side_effect=ValueError("Expecting value: line 1 column 1 (char 0)")
+    )
+    response.raise_for_status = Mock()
+    return response
+
+
+def test_search_ligands_with_no_match_returns_no_candidates(downloader):
+    with patch("services.rcsb_downloader.requests.post", return_value=_search_response(204)) as post:
+        assert downloader.search_ligands("aspirin") == []
+        # Cached like a hit: a repeat doesn't ask RCSB again.
+        assert downloader.search_ligands("aspirin") == []
+
+    post.assert_called_once()
+
+
+def test_search_ligands_parses_a_match(downloader):
+    payload = {"result_set": [{"identifier": "adn", "score": 0.96}]}
+    with patch("services.rcsb_downloader.requests.post", return_value=_search_response(200, payload)):
+        assert downloader.search_ligands("adenosine") == [
+            {"component_id": "ADN", "name": "ADN", "score": 0.96}
+        ]
+
+
+def test_search_ligands_still_fails_on_an_http_error(downloader):
+    response = _search_response(400)
+    response.raise_for_status.side_effect = requests.HTTPError("400", response=Mock(text="bad query"))
+    with patch("services.rcsb_downloader.requests.post", return_value=response):
+        with pytest.raises(RuntimeError, match="Failed to search ligands"):
+            downloader.search_ligands("adenosine")
+
+
+def test_resolve_ligand_name_with_no_match_is_none(downloader):
+    with patch("services.rcsb_downloader.requests.post", return_value=_search_response(204)):
+        assert downloader.resolve_ligand_name("aspirin") is None
+
+
+def test_search_ligands_tool_answers_an_empty_candidate_list(tmp_path):
+    from services.rcsb_downloader.server import RCSBDownloaderServer
+
+    server = RCSBDownloaderServer(port=0, cache_dir=str(tmp_path / "cache"))
+    server.setup_tools()
+    with patch("services.rcsb_downloader.requests.post", return_value=_search_response(204)):
+        result = server.tools["search_ligands"].handler(name="aspirin")
+
+    assert result == {"query": "aspirin", "candidates": []}

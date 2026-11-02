@@ -22,7 +22,9 @@ name, from another browser tab, never changes the file an earlier session
 docked. Each drop of ligand files adds to the list ("N ligand file(s)
 ready"); **Clear** empties it. A multi-molecule `.sdf` counts as one file
 there and is split into one ligand per molecule when the run prepares the
-ligands. A dropped file named like one already in the list replaces it
+ligands. A `.pdbqt` is taken as already prepared and docked as-is (see
+[LIGAND_PREPARATION.md](LIGAND_PREPARATION.md#already-prepared-pdbqt-ligands)).
+A dropped file named like one already in the list replaces it
 (the chat says so): two files with one name would fail the run.
 
 Whenever a session is active, the chat drawer shows a small **Session:

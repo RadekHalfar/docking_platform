@@ -54,7 +54,7 @@ class LigandPreparerServer(MCPServer):
             ),
             handler=prepare_ligands_handler,
             parameters=build_tool_parameters([
-                ("ligand_paths", "array", "List of paths to ligand files (SDF, MOL, MOL2). A single SDF path may contain multiple molecules, each of which is prepared separately.", True),
+                ("ligand_paths", "array", "List of paths to ligand files (SDF, MOL, MOL2, or an already-prepared PDBQT, used as-is). A single SDF path may contain multiple molecules, each of which is prepared separately.", True),
                 ("output_dir", "string", "Directory to save prepared ligands"),
                 ("ph", "number", "pH for protonation state (default: 7.4)"),
                 ("add_hydrogens", "boolean", "Add explicit hydrogens (default: true)"),

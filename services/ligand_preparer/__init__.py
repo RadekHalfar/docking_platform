@@ -11,6 +11,8 @@ Preparation steps (following AutoDock Vina best practices):
 5. Detect and mark rotatable bonds
 6. Convert to PDBQT format
 
+An already-prepared ligand .pdbqt skips all of this and is used as-is.
+
 Tool: prepare_ligands
 - Prepares ligands for docking with AutoDock Vina
 - Outputs PDBQT format with proper charges and rotatable bonds
@@ -18,6 +20,7 @@ Tool: prepare_ligands
 from __future__ import annotations
 import os
 import logging
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -94,7 +97,8 @@ class LigandPreparer:
         molecule in a multi-molecule SDF.
 
         Args:
-            file_path: Path to ligand file (SDF, MOL, MOL2)
+            file_path: Path to ligand file (SDF, MOL, MOL2). A .pdbqt is not
+                read into RDKit; prepare_ligands_from_file() uses it as-is.
 
         Returns:
             RDKit molecule object (Chem.Mol)
@@ -566,7 +570,8 @@ class LigandPreparer:
         add_hydrogens: bool,
         generate_3d: bool,
         optimize: bool,
-        extra: Optional[Dict[str, Any]] = None
+        extra: Optional[Dict[str, Any]] = None,
+        claimed: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare an already-read RDKit Mol into PDB + PDBQT + a result dict.
@@ -575,6 +580,8 @@ class LigandPreparer:
         prepare_ligands_from_file() (one or more molecules per file).
         """
         ligand_id_clean = sanitize_filename(ligand_id)
+        pdbqt_path = os.path.join(output_dir, f"{ligand_id_clean}.pdbqt")
+        self._check_output_free(claimed, pdbqt_path, input_path, ligand_id)
 
         logger.info(f"Preparing {ligand_id}")
         mol = self.prepare_molecule(mol, ph, add_hydrogens, generate_3d, optimize)
@@ -584,7 +591,6 @@ class LigandPreparer:
         self.save_as_pdb(mol, pdb_path)
 
         # Convert to PDBQT
-        pdbqt_path = os.path.join(output_dir, f"{ligand_id_clean}.pdbqt")
         conversion_info = self.convert_to_pdbqt_meeko(pdb_path, pdbqt_path)
 
         # Compute checksum
@@ -607,8 +613,73 @@ class LigandPreparer:
         }
         if extra:
             result.update(extra)
+        if claimed is not None:
+            claimed[pdbqt_path] = input_path
 
         return result
+
+    @staticmethod
+    def _check_output_free(
+        claimed: Optional[Dict[str, str]], pdbqt_path: str, input_path: str, ligand_id: str
+    ) -> None:
+        """Refuse to write *pdbqt_path* if another input of the same batch
+        already produced it. Prepared files are named after the input's
+        stem, so x.sdf and x.pdbqt (common in a folder that keeps both)
+        would otherwise overwrite each other's prepared/x.pdbqt."""
+        owner = (claimed or {}).get(pdbqt_path)
+        if owner is not None and owner != input_path:
+            raise ValueError(
+                f"{input_path} would overwrite the prepared ligand from {owner} "
+                f"(both named '{ligand_id}'); rename one"
+            )
+
+    def _use_prepared_pdbqt(
+        self, input_path: str, output_dir: str, claimed: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Take an already-prepared ligand PDBQT as-is: check that it holds one
+        ligand, copy it next to the other prepared ligands, and describe it
+        like _prepare_mol() does. pH/hydrogens/3D/optimize are not applied.
+
+        Raises:
+            ValueError: for multi-model files (docking output) and for files
+                without a ligand torsion tree (e.g. a receptor PDBQT).
+        """
+        with open(input_path, "r", errors="replace") as f:
+            records = [line.split(maxsplit=1)[0] for line in f if line.strip()]
+
+        models = records.count("MODEL")
+        if models:
+            raise ValueError(
+                f"{input_path} contains {models} poses (docking output?); "
+                "give one prepared ligand per file"
+            )
+        if "ROOT" not in records or "TORSDOF" not in records:
+            raise ValueError(
+                f"{input_path} is not a ligand PDBQT (no ROOT/TORSDOF; a receptor?)"
+            )
+        if "ATOM" not in records and "HETATM" not in records:
+            raise ValueError(f"{input_path} has no atoms")
+
+        ligand_id = Path(input_path).stem
+        pdbqt_path = os.path.join(output_dir, f"{sanitize_filename(ligand_id)}.pdbqt")
+        self._check_output_free(claimed, pdbqt_path, input_path, ligand_id)
+        if os.path.abspath(input_path) != os.path.abspath(pdbqt_path):
+            shutil.copyfile(input_path, pdbqt_path)
+        if claimed is not None:
+            claimed[pdbqt_path] = input_path
+
+        return {
+            "id": ligand_id,
+            "input_path": input_path,
+            "pdb_path": None,
+            "pdbqt_path": pdbqt_path,
+            "checksum": compute_file_checksum(pdbqt_path),
+            "rotatable_bonds": self._count_rotatable_bonds_from_pdbqt(pdbqt_path),
+            "conversion_method": "provided",
+            "preparation_params": {},
+            "note": "used as-is; pH/hydrogens/3D/optimize not applied",
+        }
 
     def prepare_ligand(
         self,
@@ -617,7 +688,8 @@ class LigandPreparer:
         ph: float = 7.4,
         add_hydrogens: bool = True,
         generate_3d: bool = True,
-        optimize: bool = True
+        optimize: bool = True,
+        claimed: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare a single ligand for docking.
@@ -632,6 +704,8 @@ class LigandPreparer:
             add_hydrogens: Add explicit hydrogens
             generate_3d: Generate 3D coordinates if missing
             optimize: Optimize geometry
+            claimed: prepared PDBQT path -> input path, shared across one
+                batch so same-named inputs don't overwrite each other
 
         Returns:
             Dictionary with prepared ligand info
@@ -644,7 +718,7 @@ class LigandPreparer:
 
         return self._prepare_mol(
             mol, ligand_name, input_path, output_dir,
-            ph, add_hydrogens, generate_3d, optimize
+            ph, add_hydrogens, generate_3d, optimize, claimed=claimed
         )
 
     def prepare_ligands_from_file(
@@ -654,7 +728,8 @@ class LigandPreparer:
         ph: float = 7.4,
         add_hydrogens: bool = True,
         generate_3d: bool = True,
-        optimize: bool = True
+        optimize: bool = True,
+        claimed: Optional[Dict[str, str]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Prepare every ligand molecule contained in a single input file.
@@ -665,7 +740,8 @@ class LigandPreparer:
         `$$$$`-delimited molecules, each valid molecule is prepared with a
         unique id ("{stem}_{index}") so output files never collide; a
         molecule that fails to prepare is recorded as an error without
-        aborting the rest of the file.
+        aborting the rest of the file. A .pdbqt is already prepared and is
+        used as-is (see _use_prepared_pdbqt()).
 
         Returns:
             (results, errors) — results is a list of prepared-ligand dicts
@@ -677,9 +753,12 @@ class LigandPreparer:
         file_ext = Path(input_path).suffix.lower()
         stem = Path(input_path).stem
 
+        if file_ext == '.pdbqt':
+            return [self._use_prepared_pdbqt(input_path, output_dir, claimed)], []
+
         if file_ext != '.sdf':
             result = self.prepare_ligand(
-                input_path, output_dir, ph, add_hydrogens, generate_3d, optimize
+                input_path, output_dir, ph, add_hydrogens, generate_3d, optimize, claimed
             )
             return [result], []
 
@@ -688,7 +767,7 @@ class LigandPreparer:
         if len(mols) == 1:
             result = self._prepare_mol(
                 mols[0], stem, input_path, output_dir,
-                ph, add_hydrogens, generate_3d, optimize
+                ph, add_hydrogens, generate_3d, optimize, claimed=claimed
             )
             return [result], []
 
@@ -707,7 +786,8 @@ class LigandPreparer:
                         "molecule_index": index,
                         "molecule_count": total,
                         "sdf_title": sdf_title or None,
-                    }
+                    },
+                    claimed=claimed,
                 )
                 results.append(result)
             except Exception as e:
@@ -752,11 +832,12 @@ class LigandPreparer:
 
         prepared_ligands = []
         errors = []
+        claimed: Dict[str, str] = {}  # prepared pdbqt_path -> input that wrote it
 
         for ligand_path in ligand_paths:
             try:
                 mol_results, mol_errors = self.prepare_ligands_from_file(
-                    ligand_path, output_dir, ph, add_hydrogens, generate_3d, optimize
+                    ligand_path, output_dir, ph, add_hydrogens, generate_3d, optimize, claimed
                 )
                 prepared_ligands.extend(mol_results)
                 errors.extend(mol_errors)

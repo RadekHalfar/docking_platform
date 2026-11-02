@@ -110,7 +110,11 @@ class RCSBDownloader:
             try:
                 response = requests.post(self.SEARCH_URL, json=payload, timeout=30)
                 response.raise_for_status()
-                data = response.json()
+                # RCSB answers "no hits" with 204 and an empty body, not JSON.
+                if response.status_code == 204 or not response.content.strip():
+                    data = {"result_set": []}
+                else:
+                    data = response.json()
                 break
             except requests.HTTPError as e:
                 body = (e.response.text or "")[:400]

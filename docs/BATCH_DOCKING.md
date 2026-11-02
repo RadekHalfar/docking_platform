@@ -109,7 +109,12 @@ container-side paths.
 Every matching file in the folder becomes one or more entries in `results.dock.results` of
 `workflow_results.json` — one docking result per ligand *molecule*, same as if each had been
 passed individually via `--ligand-files`. For `.mol`, `.mol2`, and `.pdbqt` files, and for
-single-molecule `.sdf` files, that's exactly one result per file. A `.sdf` file containing
+single-molecule `.sdf` files, that's exactly one result per file. A `.pdbqt` is taken as
+already prepared and docked as-is (see
+[Already-Prepared PDBQT Ligands](LIGAND_PREPARATION.md#already-prepared-pdbqt-ligands)).
+Files whose names differ only in extension (`x.sdf` and `x.pdbqt`) would share one prepared
+file, so only the first is docked and the other is listed as an error; rename one to dock
+both. A `.sdf` file containing
 multiple `$$$$`-delimited molecules expands into one result per molecule (e.g. a 5-compound
 `screen.sdf` produces 5 entries, named `screen_1` … `screen_5`) — see
 [Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files) for details.

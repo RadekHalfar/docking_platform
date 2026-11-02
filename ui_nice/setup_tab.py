@@ -33,7 +33,8 @@ from ui_nice.widgets import markdown
 INPUT_MODES = {"rcsb": "RCSB IDs", "local_files": "Local Files", "folder": "Batch Processing"}
 LIGAND_UPLOAD_LABEL = (
     "Ligand file(s) (.sdf, .mol, .mol2, .pdbqt). Each drop adds to the list; "
-    "Clear empties it. A multi-molecule .sdf is split into one ligand per molecule."
+    "Clear empties it. A multi-molecule .sdf is split into one ligand per molecule; "
+    "a .pdbqt is used as-is."
 )
 LIGAND_ACCEPT = ".sdf,.mol,.mol2,.pdbqt"
 VINA_CPU_CAPTION = (

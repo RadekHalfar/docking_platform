@@ -26,6 +26,8 @@ Docking (Moldina/Vina) requires ligands in PDBQT format, which includes:
   [Multi-Molecule SDF Files](#multi-molecule-sdf-files) below.
 - **MOL** (MDL Molfile) - always exactly one molecule
 - **MOL2** (Tripos Mol2) - always exactly one molecule
+- **PDBQT** (already prepared) - used as-is, skipping every step below; see
+  [Already-Prepared PDBQT Ligands](#already-prepared-pdbqt-ligands)
 
 ### 2. Processing Steps
 
@@ -143,6 +145,31 @@ The batch `prepare_ligands()` response distinguishes input files from output
 ligands: `total` is the number of input file paths given, while
 `total_ligands` is the number of ligands actually produced (which can exceed
 `total` when a multi-molecule SDF was expanded).
+
+## Already-Prepared PDBQT Ligands
+
+A ligand `.pdbqt` (prepared earlier by Meeko, OpenBabel or AutoDockTools) is
+not re-prepared: pH, hydrogens, 3D generation and optimization are not
+applied. The service only checks that the file holds **one ligand**, then
+copies it into the prepared directory under its own name:
+
+- it needs a torsion tree (`ROOT` … `TORSDOF`) and atoms; a receptor PDBQT
+  (no `ROOT`) is refused with "not a ligand PDBQT";
+- it must not contain `MODEL` records; docking output with several poses is
+  refused with "contains N poses".
+
+Its result has `"conversion_method": "provided"`, `"pdb_path": null`, and
+`rotatable_bonds` read from `TORSDOF`.
+
+The poses of a PDBQT that Meeko wrote (it carries `REMARK SMILES` lines)
+convert to SDF/PDB/MOL2 with bond orders and per-pose scores, like any other
+ligand. One without those lines falls back to OpenBabel: the files are still
+written, but without per-pose affinity/RMSD tags.
+
+**Same-named inputs:** prepared files are named after the input file, so
+`x.sdf` and `x.pdbqt` in one batch would both become `prepared/x.pdbqt`. The
+later one is refused ("would overwrite the prepared ligand from …"), and the
+first one is docked; rename one to dock both.
 
 ### Why Two Files? PDB vs PDBQT
 

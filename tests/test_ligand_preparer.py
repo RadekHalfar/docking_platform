@@ -683,3 +683,110 @@ def test_convert_docked_poses_skips_missing_or_absent_pose_files(preparer, tmp_p
     assert result["converted"] == []
     assert result["errors"] == []
     assert result["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Already-prepared .pdbqt ligands (Stage 19.2)
+# ---------------------------------------------------------------------------
+
+# Shaped like a Meeko-written ligand: REMARK SMILES, a torsion tree, TORSDOF.
+LIGAND_PDBQT = """REMARK SMILES CCO
+REMARK SMILES IDX 1 1 2 2 3 3
+ROOT
+ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00    +0.000 C
+ATOM      2  C   UNL     1       1.500   0.000   0.000  1.00  0.00    +0.000 C
+ENDROOT
+BRANCH   2   3
+ATOM      3  O   UNL     1       2.000   1.400   0.000  1.00  0.00    -0.300 OA
+ENDBRANCH   2   3
+TORSDOF 1
+"""
+
+RECEPTOR_PDBQT = (
+    "ATOM      1  N   ASP A   1      37.433  20.702  -4.362  1.00  0.00    +0.000 NA\n"
+    "ATOM      2  CA  ASP A   1      37.801  19.271  -4.257  1.00  0.00    +0.000 C\n"
+)
+
+
+def _write(path, text):
+    path.write_text(text)
+    return str(path)
+
+
+def test_pdbqt_ligand_is_used_as_is(preparer, tmp_path):
+    (tmp_path / "in").mkdir()
+    src = _write(tmp_path / "in" / "ethanol.pdbqt", LIGAND_PDBQT)
+    out_dir = tmp_path / "prepared"
+
+    with patch.object(preparer, "prepare_molecule") as rdkit_step:
+        result = preparer.prepare_ligands([src], output_dir=str(out_dir))
+
+    rdkit_step.assert_not_called()
+    assert result["status"] == "ok"
+    assert result["errors"] == []
+    lig = result["prepared_ligands"][0]
+    assert lig["id"] == "ethanol"
+    assert lig["conversion_method"] == "provided"
+    assert lig["pdb_path"] is None
+    assert lig["rotatable_bonds"] == 1
+    assert lig["pdbqt_path"] == str(out_dir / "ethanol.pdbqt")
+    assert (out_dir / "ethanol.pdbqt").read_text() == LIGAND_PDBQT
+
+
+def test_pdbqt_ligand_already_in_the_output_dir_is_not_copied_onto_itself(preparer, tmp_path):
+    src = _write(tmp_path / "ethanol.pdbqt", LIGAND_PDBQT)
+
+    result = preparer.prepare_ligands([src], output_dir=str(tmp_path))
+
+    assert result["errors"] == []
+    assert result["prepared_ligands"][0]["pdbqt_path"] == src
+    assert (tmp_path / "ethanol.pdbqt").read_text() == LIGAND_PDBQT
+
+
+def test_pdbqt_with_several_models_is_refused(preparer, tmp_path):
+    src = _write(
+        tmp_path / "poses.pdbqt",
+        f"MODEL 1\n{LIGAND_PDBQT}ENDMDL\nMODEL 2\n{LIGAND_PDBQT}ENDMDL\n",
+    )
+
+    result = preparer.prepare_ligands([src], output_dir=str(tmp_path / "prepared"))
+
+    assert result["status"] == "failed"
+    assert result["prepared_ligands"] == []
+    assert "contains 2 poses" in result["errors"][0]["error"]
+
+
+def test_receptor_pdbqt_is_refused_as_a_ligand(preparer, tmp_path):
+    src = _write(tmp_path / "receptor.pdbqt", RECEPTOR_PDBQT)
+
+    result = preparer.prepare_ligands([src], output_dir=str(tmp_path / "prepared"))
+
+    assert result["prepared_ligands"] == []
+    assert "not a ligand PDBQT" in result["errors"][0]["error"]
+
+
+def test_pdbqt_and_sdf_ligands_prepare_together(preparer, tmp_path, fixtures_dir):
+    sdf = tmp_path / "benzene.sdf"
+    sdf.write_bytes((fixtures_dir / "benzene.sdf").read_bytes())
+    pdbqt = _write(tmp_path / "ethanol.pdbqt", LIGAND_PDBQT)
+
+    result = preparer.prepare_ligands([str(sdf), pdbqt], output_dir=str(tmp_path / "prepared"))
+
+    assert result["errors"] == []
+    assert [lig["id"] for lig in result["prepared_ligands"]] == ["benzene", "ethanol"]
+    assert result["prepared_ligands"][1]["conversion_method"] == "provided"
+
+
+def test_same_named_sdf_and_pdbqt_do_not_overwrite_each_other(preparer, tmp_path, fixtures_dir):
+    sdf = tmp_path / "lig.sdf"
+    sdf.write_bytes((fixtures_dir / "benzene.sdf").read_bytes())
+    pdbqt = _write(tmp_path / "lig.pdbqt", LIGAND_PDBQT)
+    out_dir = tmp_path / "prepared"
+
+    result = preparer.prepare_ligands([str(sdf), pdbqt], output_dir=str(out_dir))
+
+    assert [lig["input_path"] for lig in result["prepared_ligands"]] == [str(sdf)]
+    assert result["failed"] == 1
+    assert "would overwrite the prepared ligand" in result["errors"][0]["error"]
+    # The first ligand's prepared file is the one on disk.
+    assert (out_dir / "lig.pdbqt").read_text() != LIGAND_PDBQT

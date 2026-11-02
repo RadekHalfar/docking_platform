@@ -16,7 +16,11 @@
 # See DOCKER_DEPLOYMENT.md for the complete guide
 .\docker_build.ps1        # Build images (Windows)
 docker compose up -d      # Start services
-docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+# Then dock from the GUI at http://localhost:3000 (no LLM needed).
+# The natural-language CLI needs an LLM first (see LLM_ORCHESTRATION.md), e.g.:
+docker compose --profile local-llm up -d ollama
+docker exec -it mcp-llm ollama pull gemma3:4b
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b "Download 6lu7 and ATP, prepare and dock"
 ```
 
 **→ For Docker deployment, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)**
@@ -105,7 +109,7 @@ Only use local installation for development or when Docker is unavailable.
 
 ### Prerequisites
 
-- **Python 3.9+ (NOT Python 2.7!)**
+- **Python 3.10+ (NOT Python 2.7!)**; the Docker images and CI use 3.12
 - **Conda** (Anaconda or Miniconda) - Required for chemistry packages
 - **Git** (optional, for cloning repository)
 
@@ -136,7 +140,7 @@ Use this when you only need basic services or already manage Python dependencies
 
 ```bash
 # 1. Verify Python version
-python3 --version  # Should show 3.9 or higher
+python3 --version  # Should show 3.10 or higher
 
 # 2. Navigate to project directory (the cloned repo root)
 cd docking_platform
@@ -157,7 +161,7 @@ Install only core dependencies without chemistry packages.
 cd docking_platform
 
 # 2. Install core dependencies
-pip install requests flask python-dotenv pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
+pip install requests flask waitress python-dotenv pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
 ```
 
 **Note:** Ligand Preparer service will not work without RDKit.
@@ -175,7 +179,7 @@ docker compose up -d
 ### Check Python Version
 ```bash
 python --version
-# Should be 3.9 or higher
+# Should be 3.10 or higher
 ```
 
 ### Check RDKit Installation
@@ -218,10 +222,11 @@ pytest tests/ --cov=. --cov-report=html
 # Open htmlcov/index.html in browser
 ```
 
-### Skip Tests Requiring Optional Dependencies
+### Tests Requiring Optional Dependencies
+Tests that need RDKit (or Meeko) skip themselves when it isn't installed, so
+no marker is needed. To skip the tests that need running services:
 ```bash
-# Skip tests requiring RDKit if not installed
-pytest tests/ -v -m "not rdkit"
+pytest tests/ -v -m "not integration"
 ```
 
 ## Starting Services
@@ -240,10 +245,22 @@ python -m services.ligand_preparer.server
 # Runs on http://localhost:8002
 ```
 
+### Protein Preparer
+```bash
+python -m services.protein_preparer.server
+# Runs on http://localhost:8003
+```
+
+### Moldina Runner (Requires the Moldina binary)
+```bash
+python -m services.moldina_runner.server
+# Runs on http://localhost:8004
+```
+
 ### Check Service Health
 ```bash
 curl http://localhost:8001/health
-curl http://localhost:8002/health
+# {"service": "rcsb_downloader", "status": "ok"}
 ```
 
 ## Testing Services

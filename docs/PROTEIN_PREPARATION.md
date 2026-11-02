@@ -15,9 +15,8 @@ The service performs several key steps to prepare proteins:
 1. **Read Protein Structure**: Loads protein from PDB file format
 2. **Clean Structure**: Removes water molecules and unwanted heteroatoms
 3. **Add Hydrogens**: Adds missing hydrogen atoms at specified pH
-4. **Assign Charges**: Calculates Gasteiger partial atomic charges
-5. **Convert to PDBQT**: Creates PDBQT format, compatible with both Moldina and AutoDock Vina
-6. **Batch Processing**: Handles multiple proteins in one operation
+4. **Convert to PDBQT**: Writes a rigid-receptor PDBQT with AutoDock atom types (charges as 0.000), compatible with both Moldina and AutoDock Vina
+5. **Batch Processing**: Handles multiple proteins in one operation
 
 ## Why Prepare Proteins?
 
@@ -30,8 +29,8 @@ Raw protein structures from PDB often contain:
 Docking (Moldina/Vina) requires:
 - Clean protein structure with only receptor atoms
 - All hydrogen atoms present
-- Partial charges assigned
-- PDBQT file format with atom types and charges
+- PDBQT file format with AutoDock atom types (Vina-style scoring ignores the
+  charge column)
 
 ## Input Requirements
 
@@ -74,12 +73,13 @@ Docking (Moldina/Vina) requires:
 
 Example PDBQT line:
 ```
-ATOM      1  N   ALA A   1      10.123  20.456  30.789  1.00  0.00    -0.416 N
+ATOM      1  N   ALA A   1      10.123  20.456  30.789  1.00  0.00    +0.000 N
 ```
 
 Components:
 - Standard PDB columns (atom name, residue, coordinates)
-- Charge column: `-0.416` (Gasteiger partial charge)
+- Charge column: `+0.000` (this service writes zero charges for the rigid receptor;
+  other tools may write Gasteiger charges here)
 - Atom type: `N` (AutoDock atom type for docking calculations)
 
 ### Why Two Files?
@@ -170,11 +170,11 @@ preparation *pipeline*, not a second copy of the parameter definitions.
 {
     "id": "1crn",
     "input_path": "/path/to/1crn.pdb",
-    "pdb_path": "/path/to/1crn.pdb",
-    "pdbqt_path": "/path/to/1crn.pdbqt",
+    "pdb_path": "/path/to/prepared/1crn_prepared.pdb",
+    "pdbqt_path": "/path/to/prepared/1crn.pdbqt",
     "initial_atoms": 327,
     "final_atoms": 642,
-    "atoms_removed": 45,
+    "atoms_removed": -315,
     "conversion_method": "manual_rigid",
     "checksum": "a1b2c3d4e5f6..."
 }
@@ -224,7 +224,7 @@ For protein receptors, the service uses a **manual rigid receptor** conversion m
 Start the MCP server:
 
 ```bash
-python services/protein_preparer/server.py --port 8003
+python -m services.protein_preparer.server --port 8003
 ```
 
 ### MCP Tool: prepare_proteins

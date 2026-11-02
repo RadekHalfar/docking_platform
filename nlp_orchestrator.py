@@ -1336,7 +1336,7 @@ def _check_health(llm_client: Optional[BaseLLMClient], args: argparse.Namespace,
         print("  ➖ not configured (only natural-language commands need one; see --llm-provider)")
     else:
         llm_ok = llm_client.check_health()
-        print(f"  {'✅' if llm_ok else '❌'} {args.llm_provider} ({args.llm_endpoint})")
+        print(f"  {'✅' if llm_ok else '❌'} {args.llm_provider} ({llm_client.endpoint})")
 
     print("\nMCP Services:")
     health = orchestrator.check_services_health()

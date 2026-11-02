@@ -16,7 +16,7 @@ This system lets you control the full molecular docking pipeline with plain-lang
 - **MCP Integration** - Coordinates all services through a single workflow.
 - **Smart Defaults** - Applies defaults when optional parameters are omitted.
 - **Validation** - Checks required parameters and prompts for missing values.
-- **Docker Deployment** - Runs with a single Docker command.
+- **Docker Deployment** - The MCP services and GUI start with `docker compose up -d`; a local LLM is one opt-in profile away.
 
 ---
 
@@ -533,7 +533,7 @@ CLARIFICATION_MODE=legacy python nlp_orchestrator.py "Download 6lu7 and ATP, pre
 **Complete workflows:**
 - "Download ATP, HEM and protein 6lu7, prepare and dock"
 - "Get 1ABC and NAD, prepare them, then dock with center 15,25,35 and box 30,30,30"
-- "Download ligands from file ligands.txt and protein 6lu7, prepare at pH 5.0, dock with high exhaustiveness"
+- "Dock all ligands in the folder into 6lu7 at pH 5.0" (with `--ligand-folder`; see [BATCH_DOCKING.md](BATCH_DOCKING.md))
 
 ### Supported Services
 
@@ -559,9 +559,13 @@ The LLM can identify these workflow stages:
 **Docking (critical):**
 - `center` - Docking box center [x, y, z]
 - `box_size` - Box dimensions [x, y, z] in Angstroms
-- `exhaustiveness` - Search thoroughness (default: 8)
-- `cpu` - Number of CPUs (default: 1)
-- `population` - PSO population size (default: 500)
+- `docking_algorithm` - `moldina` (PSO, default) or `vina`
+- `exhaustiveness` - Search thoroughness, Vina mode only (default: 8)
+- `cpu` - CPUs per ligand, Vina mode only (default: 1)
+- `population` - PSO population size, PSO mode only (default: 500)
+- `num_modes` - Poses per ligand (default: 15)
+- `energy_range` - Max energy difference from the best pose, kcal/mol (default: 100.0)
+- `parallel` / `max_workers` - Dock several ligands at once (default: off / 1)
 
 **Visualization:**
 - `formats` - Which pose formats to generate for the GUI's 3Dmol.js viewer/downloads: any of `sdf`, `pdb`, `mol2` (default: all three; PDBQT is always available natively)
@@ -646,7 +650,7 @@ Each workflow execution creates a job directory:
 
 ```
 orchestrator_output/
-└── job_1730304123/
+└── job_20261029_070450_7a1a17/
     ├── downloads/
     │   ├── 6lu7.pdb
     │   ├── ATP.sdf
@@ -658,7 +662,9 @@ orchestrator_output/
     ├── docking_results/
     │   ├── ATP_out.pdbqt
     │   ├── HEM_out.pdbqt
-    │   └── moldina_config.txt
+    │   ├── ATP_out.log, ATP_moldina_output.log, ...
+    │   ├── center.txt
+    │   └── parameters.txt
     ├── visualization/
     │   ├── ATP_poses.sdf
     │   ├── ATP_poses.pdb
@@ -679,7 +685,7 @@ orchestrator_output/
 **workflow_results.json** contains:
 ```json
 {
-  "job_id": "job_1730304123",
+  "job_id": "job_20261029_070450_7a1a17",
   "job_name": "",
   "status": "completed",
   "services_executed": ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
@@ -695,7 +701,7 @@ orchestrator_output/
 `job_name` is an optional, non-unique display label — `job_id` remains the
 sole unique identifier and is unaffected by it. It defaults to `""` when not
 supplied. The GUI sets it from the **Session name** field at submission time
-(or via the sidebar's **Rename** button afterward — see
+(or via the Sessions tab's **Rename** button afterward — see
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)); the CLI (`nlp_orchestrator.py`)
 does not currently set it, so CLI-run jobs always persist `"job_name": ""`
 unless `execute_workflow(..., job_name=...)` is called directly.
@@ -738,25 +744,14 @@ failure). See `common/job_log.py::append_job_log()`.
 
 ## Hardware Requirements
 
-### Minimum
+Only for a local LLM; a cloud provider needs none of this.
 
-- **RAM:** 8 GB (for small models like Phi-3)
-- **Storage:** 10 GB (for model + data)
-- **GPU:** Optional (CPU-only works but slower)
-
-### Recommended
-
-- **RAM:** 16+ GB
-- **Storage:** 20+ GB
-- **GPU:** NVIDIA GPU with 6+ GB VRAM (for Llama 2, Mistral)
-
-### Optimal
-
-- **RAM:** 32+ GB (your system!)
-- **GPU:** NVIDIA GPU with 12+ GB VRAM
-- **Storage:** 50+ GB
-
-**Your system (40GB RAM + NVIDIA GPU) is ideal for running large models like Llama 2 or Mistral with fast inference!**
+- **RAM:** 8–16 GB for `gemma3:4b`, 16 GB recommended for
+  `qwen2.5-coder:7b-instruct-q4_K_M`
+- **Storage:** about 8–9.5 GB (the Ollama image plus one model)
+- **GPU:** optional. The Ollama container runs on the CPU (its GPU block in
+  `docker-compose.yml` is commented out); the Ollama app on the host uses
+  the GPU, or Apple Metal on a Mac.
 
 ---
 
@@ -766,22 +761,19 @@ failure). See `common/job_log.py::append_job_log()`.
 
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
-| **gemma3:4b** | ~3.3GB | Fast | Good | Lighter; 8–16 GB RAM |
-| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Strong instruction following |
-| **deepseek-coder:6.7b-instruct-q4_K_M** | ~4.1GB | Medium | High | Strong alternative |
-| **llama2** | ~4GB | Medium | High | Stable alternative |
-| **mistral** | ~4GB | Fast | High | Fast alternative |
+| **gemma3:4b** | ~3.3GB | Fast | Good | Recommended, lighter; 8–16 GB RAM |
+| **qwen2.5-coder:7b-instruct-q4_K_M** | ~4.7GB | Medium | High | Recommended, strong instruction following |
+| **mistral** | ~4GB | Fast | High | Alternative |
 | **phi3** | ~2GB | Very Fast | Good | Resource-constrained systems |
-| **codellama** | ~4GB | Medium | High | Code-focused (alternative) |
+
+The GUI's Settings dialog offers the two recommended models; any other
+Ollama model name works too.
 
 ### Download Models
 
 ```bash
 # Qwen 2.5 Coder 7B Q4
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
-
-# DeepSeek Coder 6.7B Q4 (strong alternative)
-docker exec -it mcp-llm ollama pull deepseek-coder:6.7b-instruct-q4_K_M
 
 # Mistral (alternative)
 docker exec -it mcp-llm ollama pull mistral
@@ -793,7 +785,7 @@ docker exec -it mcp-llm ollama pull phi3
 ### List Available Models
 
 ```bash
-python nlp_orchestrator.py --list-models
+python nlp_orchestrator.py --llm-provider ollama --list-models
 
 # OR
 docker exec -it mcp-llm ollama list
@@ -802,10 +794,10 @@ docker exec -it mcp-llm ollama list
 ### Use Different Model
 
 ```bash
-python nlp_orchestrator.py --llm-model mistral "Download 6lu7"
+python nlp_orchestrator.py --llm-provider ollama --llm-model mistral "Download 6lu7"
 
 # Qwen 2.5 Coder 7B Q4
-python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7"
+python nlp_orchestrator.py --llm-provider ollama --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7"
 ```
 
 ### Switch Models Without Rebuild
@@ -815,7 +807,7 @@ python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Downloa
 docker exec -it mcp-llm ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 
 # Use it immediately (no docker image rebuild)
-python nlp_orchestrator.py --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
+python nlp_orchestrator.py --llm-provider ollama --llm-model qwen2.5-coder:7b-instruct-q4_K_M "Download 6lu7 and ATP, prepare and dock"
 ```
 
 ---
@@ -850,7 +842,7 @@ docker compose --profile local-llm restart ollama
 
 **Download the model:**
 ```bash
-docker exec -it mcp-llm ollama pull llama2
+docker exec -it mcp-llm ollama pull gemma3:4b
 ```
 
 **Check available models:**
@@ -859,6 +851,9 @@ docker exec -it mcp-llm ollama list
 ```
 
 ### GPU Not Detected
+
+The Ollama container's GPU block in `docker-compose.yml` is commented out;
+uncomment it first. Then:
 
 **Check NVIDIA Docker support:**
 ```bash
@@ -874,7 +869,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 **Use smaller model:**
 ```bash
 docker exec -it mcp-llm ollama pull phi3
-python nlp_orchestrator.py --llm-model phi3 "..."
+python nlp_orchestrator.py --llm-provider ollama --llm-model phi3 "..."
 ```
 
 **Check GPU usage:**
@@ -886,12 +881,12 @@ nvidia-smi
 
 **Try different model:**
 ```bash
-python nlp_orchestrator.py --llm-model mistral "..."
+python nlp_orchestrator.py --llm-provider ollama --llm-model mistral "..."
 ```
 
 **Enable debug mode:**
 ```bash
-python nlp_orchestrator.py --debug "..."
+python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b --debug "..."
 ```
 
 ### Empty Docking Coordinates From LLM
@@ -943,7 +938,7 @@ docker compose restart
 - **Use vague descriptions** ("dock some ligands")
 - **Omit critical parameters** without being prepared to enter them
 - **Run multiple heavy workflows** simultaneously
-- **Use CPU-only** if you have a GPU (much slower)
+- **Run Ollama on the CPU** if you have a GPU (much slower; use the Ollama app on the host, or enable the container's GPU block)
 - **Ignore error messages** (they contain useful info)
 
 ---
@@ -960,7 +955,7 @@ from services.llm_orchestrator import (
 )
 
 # Initialize components
-llm_client = OllamaAdapter(endpoint="http://localhost:11434", model="llama2")
+llm_client = OllamaAdapter(endpoint="http://localhost:11434", model="gemma3:4b")
 orchestrator = WorkflowOrchestrator(output_base="./my_output")
 parser = WorkflowParser()
 
@@ -989,14 +984,14 @@ print(f"Output: {orchestrator.output_base / results['job_id']}")
 
 ### For Faster Inference
 
-1. **Use GPU:** Ensure NVIDIA Docker support is enabled
-2. **Choose smaller model:** Phi-3 is much faster than Llama 2
+1. **Use GPU:** the Ollama app on the host, or the container with its GPU block enabled
+2. **Choose smaller model:** `gemma3:4b` or `phi3` rather than a 7B model
 3. **Reduce temperature:** Lower temperature = faster but less creative
 4. **Keep model loaded:** Ollama keeps models in memory after first use
 
 ### For Better Quality
 
-1. **Use Llama 2 or Mistral:** Better understanding of complex requests
+1. **Use a 7B model** (e.g. `qwen2.5-coder:7b-instruct-q4_K_M`) or a cloud provider: better understanding of complex requests
 2. **Be explicit:** Include all parameters in your request
 3. **Use proper terminology:** "docking box center" vs "center point"
 
@@ -1004,29 +999,38 @@ print(f"Output: {orchestrator.output_base / results['job_id']}")
 
 ## Examples Gallery
 
+> The CLI examples below assume an LLM is configured, e.g. `LLM_PROVIDER=ollama`
+> and `LLM_MODEL=gemma3:4b` in `.env`, or `--llm-provider ollama --llm-model
+> gemma3:4b` on the command line. With the default (`none`), natural-language
+> commands and `--list-models` print a setup message and exit 1.
+
 ### Example 1: Quick Screening
 
 ```bash
-python nlp_orchestrator.py "Download ATP and 6lu7, prepare them, dock with center 10,20,30 and box 20,20,20, use exhaustiveness 4"
+python nlp_orchestrator.py "Download ATP and 6lu7, prepare them, dock with center 10,20,30 and box 20,20,20"
 ```
 
-**Output:** Fast docking (~2-5 min per ligand)
+**Output:** Default PSO search, a few seconds per ligand (2.5 s for ATP/6lu7, measured in [MOLDINA_DOCKING.md](MOLDINA_DOCKING.md))
 
 ### Example 2: Standard Workflow
 
 ```bash
-python nlp_orchestrator.py "Download ligands ATP, HEM, NAD and protein 6lu7, prepare at pH 7.4, dock with center 10,20,30 and box size 25,30,35 using 8 CPUs"
+python nlp_orchestrator.py "Download ligands ATP, HEM, NAD and protein 6lu7, prepare at pH 7.4, dock with center 10,20,30 and box size 25,30,35 with population 1000"
 ```
 
-**Output:** Standard quality docking (~10-20 min per ligand)
+**Output:** Three ligands with a larger PSO population, still seconds each. To dock
+them side by side, tick **Parallel ligand docking** in the GUI (see
+[BATCH_DOCKING.md](BATCH_DOCKING.md))
 
 ### Example 3: High-Quality Publication
 
 ```bash
-python nlp_orchestrator.py "Download 6lu7 and ATP, prepare with optimization, dock with center 10,20,30 and box 25,30,35, exhaustiveness 32, population 2000, then visualize with ray tracing"
+python nlp_orchestrator.py "Download 6lu7 and ATP, prepare with optimization, dock with vina, center 10,20,30 and box 25,30,35, exhaustiveness 16 and 4 CPUs"
 ```
 
-**Output:** Publication-quality results (~30-60 min per ligand)
+**Output:** Classic Vina search: about 1.5 min per ligand at exhaustiveness 8
+with 1 CPU, scaling with exhaustiveness and dropping with CPUs (measured in
+[MOLDINA_DOCKING.md](MOLDINA_DOCKING.md))
 
 ---
 
@@ -1054,7 +1058,7 @@ python nlp_orchestrator.py --output-dir /path/to/results "..."
 ### Logging Configuration
 
 ```bash
-# Debug mode
+# Debug mode (with an LLM configured in .env, or pass --llm-provider/--llm-model)
 python nlp_orchestrator.py --debug "..."
 
 # Or set environment variable
@@ -1089,10 +1093,10 @@ python -m pytest tests/test_llm_orchestrator.py --cov=services.llm_orchestrator
 python nlp_orchestrator.py --check-health
 
 # List models
-python nlp_orchestrator.py --list-models
+python nlp_orchestrator.py --llm-provider ollama --list-models
 
 # Test parsing (without execution)
-python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
+python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b --debug "Download 6lu7"  # Stop before execution
 ```
 
 ---
@@ -1119,7 +1123,7 @@ python nlp_orchestrator.py --debug "Download 6lu7"  # Stop before execution
 ## FAQ
 
 **Q: Do I need an internet connection?**  
-A: Only for initial model download and RCSB structure downloads. LLM runs locally.
+A: For RCSB structure downloads, and for the LLM: a local Ollama needs it only to download a model, while a cloud provider (OpenAI, Anthropic, MetaCentrum) sends your commands over the network. No LLM is configured by default.
 
 **Q: Can I use a different LLM?**  
 A: Yes, in two ways: switch Ollama models via `--llm-model` without rebuild, or switch providers entirely — Ollama, OpenAI, Anthropic, MetaCentrum, and any OpenAI-compatible server (LM Studio, vLLM, Groq, ...) all ship as built-in adapters. See [Supported LLM Providers](#supported-llm-providers).
@@ -1128,7 +1132,7 @@ A: Yes, in two ways: switch Ollama models via `--llm-model` without rebuild, or 
 A: Very good for clear, explicit commands. If ambiguous, the system will prompt for clarification.
 
 **Q: Can I run this without a GPU?**  
-A: Yes! CPU-only works but is slower. Remove the GPU config from docker-compose.yml.
+A: Yes. The Ollama container already runs on the CPU (its GPU block in docker-compose.yml is commented out); docking itself never uses a GPU.
 
 **Q: What if the LLM makes a mistake?**  
 A: The workflow parser validates all parameters. Invalid values are caught before execution.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The docking platform uses an LLM-driven approach to understand natural language commands and automatically select and configure which services to run. This document explains:
+The CLI and the GUI chat can use an LLM to turn a natural-language command into a set of services and parameters. No LLM is configured by default, and the GUI's **Run Docking** always runs all five steps, so the LLM selection described in Part 1 applies only to natural-language commands. This document explains:
 
 1. **How the LLM selects services** - what triggers each service
 2. **Input/output requirements** - what each service needs and produces
@@ -62,11 +62,12 @@ User: "Show results of docking"
 **Input Parameters:**
 ```json
 {
-  "protein_id": "6lu7",           // 4-char PDB ID (required)
-  "ligand_ids": ["ATP", "HEM"],   // List of ligand codes (required)
+  "protein_id": "6lu7",           // 4-char PDB ID (optional: omit with a local protein file)
+  "ligand_ids": ["ATP", "HEM"],   // Ligand codes or names (optional)
+  "enable_name_resolution": false, // Resolve names via RCSB search (optional)
   "formats": {                    // Optional
-    "protein": "pdb",            // or "mmcif"
-    "ligand": "sdf"              // or "mol", "mol2"
+    "protein": "pdb",            // or "cif" ("mmcif" is accepted)
+    "ligand": "sdf"              // or "mol"
   },
   "save_dir": "/app/downloads"    // Output directory
 }
@@ -80,8 +81,9 @@ User: "Show results of docking"
     "/app/downloads/ATP.sdf",
     "/app/downloads/HEM.sdf"
   ],
-  "protein_metadata": {...},
-  "ligand_metadata": {...}
+  "sources": {...},
+  "checksums": {...},
+  "status": "ok"
 }
 ```
 
@@ -113,18 +115,22 @@ User: "Show results of docking"
 {
   "prepared_ligands": [
     {
-      "original_path": "/app/downloads/ATP.sdf",
+      "id": "ATP",
+      "input_path": "/app/downloads/ATP.sdf",
+      "pdb_path": "/app/prepared/ATP_prepared.pdb",
       "pdbqt_path": "/app/prepared/ATP.pdbqt",
-      "success": true,
-      "rotatable_bonds": 5
+      "rotatable_bonds": 5,
+      "conversion_method": "meeko",
+      ...
     },
-    {
-      "original_path": "/app/downloads/HEM.sdf",
-      "pdbqt_path": "/app/prepared/HEM.pdbqt",
-      "success": true,
-      "rotatable_bonds": 0
-    }
-  ]
+    ...
+  ],
+  "total": 2,
+  "total_ligands": 2,
+  "successful": 2,
+  "failed": 0,
+  "errors": [],
+  "status": "ok"
 }
 ```
 
@@ -154,12 +160,17 @@ User: "Show results of docking"
 {
   "prepared_proteins": [
     {
-      "original_path": "/app/downloads/6lu7.pdb",
+      "id": "6lu7",
+      "input_path": "/app/downloads/6lu7.pdb",
+      "pdb_path": "/app/prepared/6lu7_prepared.pdb",
       "pdbqt_path": "/app/prepared/6lu7.pdbqt",
-      "success": true,
-      "num_atoms": 2547
+      "initial_atoms": 2367,
+      "final_atoms": 4897,
+      "conversion_method": "manual_rigid",
+      ...
     }
-  ]
+  ],
+  "status": "ok"
 }
 ```
 
@@ -169,7 +180,7 @@ User: "Show results of docking"
 
 ### 4. MOLDINA_RUNNER Service (Docking)
 
-**Purpose:** Run molecular docking simulation using Moldina (PSO-based optimizer)
+**Purpose:** Run molecular docking with Moldina, using its PSO search (`docking_algorithm: "moldina"`, default) or the classic Vina search (`"vina"`)
 
 **Input Parameters:**
 ```json
@@ -182,28 +193,37 @@ User: "Show results of docking"
   "output_dir": "/app/docking_results",
   "center": [12.3, 34.5, -5.6],                   // Search box center [x,y,z] (REQUIRED)
   "box_size": [20.0, 20.0, 20.0],                 // Search box size [x,y,z] (REQUIRED)
-  "cpu": 1,                                        // CPU threads
-  "population": 500,                               // PSO population size
-  "exhaustiveness": 8,                             // Search exhaustiveness
+  "docking_algorithm": "moldina",                  // "moldina" (PSO) or "vina"
+  "cpu": 1,                                        // CPUs per ligand (Vina only)
+  "population": 500,                               // PSO population size (PSO only)
+  "exhaustiveness": 8,                             // Search exhaustiveness (Vina only)
   "num_modes": 15,                                 // Number of binding modes
-  "energy_range": 100.0                            // Energy range for clustering
+  "energy_range": 100.0,                           // Energy range for clustering
+  "parallel": false,                               // Dock several ligands at once
+  "max_workers": 1                                 // Concurrent ligands when parallel
 }
 ```
 
 **Outputs:**
 ```json
 {
+  "status": "ok",
+  "docking_algorithm": "moldina",
+  "workers": 1,
+  "stopped": false,
+  "total": 2,
   "successful": 2,
   "failed": 0,
   "results": [
     {
       "ligand_id": "ATP",
-      "output_path": "/app/docking_results/ATP_docking.pdbqt",
+      "output_path": "/app/docking_results/ATP_out.pdbqt",
+      "log_path": "/app/docking_results/ATP_out.log",
       "best_affinity": -8.5,
-      "num_poses": 9,
-      "poses": [
+      "num_modes_found": 15,
+      "modes": [
         {
-          "pose_rank": 1,
+          "mode": 1,
           "affinity": -8.5,
           "rmsd_lb": 0.0,
           "rmsd_ub": 0.0
@@ -213,9 +233,9 @@ User: "Show results of docking"
     },
     {
       "ligand_id": "HEM",
-      "output_path": "/app/docking_results/HEM_docking.pdbqt",
+      "output_path": "/app/docking_results/HEM_out.pdbqt",
       "best_affinity": -7.2,
-      "num_poses": 9,
+      "num_modes_found": 15,
       ...
     }
   ]
@@ -240,7 +260,7 @@ parse per ligand, restoring proper bond orders.
   "pose_results": [                                // From docking (run_docking's results)
     {
       "ligand_id": "ATP",
-      "output_path": "/app/docking_results/ATP_docking.pdbqt",
+      "output_path": "/app/docking_results/ATP_out.pdbqt",
       "modes": [{"mode": 1, "affinity": -8.5, "rmsd_lb": 0.0, "rmsd_ub": 0.0}]
     }
   ],
@@ -305,8 +325,9 @@ Orchestrator executes in this ORDER:
    ├─ Output: docking_results with poses and affinities
    └─ State saved: workflow_state["docking_results"]
 
-5. VISUALIZE (depends on PREPARE_PROTEIN and optionally DOCK)
-   ├─ Input: prepared_protein_pdb, docked ligand poses (from DOCK)
+5. VISUALIZE (depends on DOCK)
+   ├─ Input: prepared_protein_pdb, docked ligand poses (from DOCK); with no
+   │  docked poses the conversion is skipped (status "skipped")
    ├─ Output: per-ligand PDB/SDF/MOL2 pose files (convert_docked_poses on LIGAND_PREPARER)
    └─ Complete!
 ```
@@ -317,7 +338,7 @@ Orchestrator executes in this ORDER:
 - `prepare_ligands` requires output from `get_input_files`
 - `prepare_protein` requires output from `get_input_files`
 - `dock` requires output from both `prepare_ligands` AND `prepare_protein`
-- `visualize` requires output from `prepare_protein` (and optionally `dock`)
+- `visualize` requires output from `dock` (its poses) and `prepare_protein` (the receptor PDB it references)
 
 ### Data Flow Through Services
 
@@ -345,11 +366,14 @@ These come from parsing the user's natural language command:
   "protein_id": "6lu7",           // Extracted from user input
   "ligand_ids": ["ATP", "HEM"],   // Extracted from user input
   "ph": 7.4,                      // Default
-  "exhaustiveness": 8,            // Default
-  "cpu": 1,                       // Default
-  "population": 500,              // Default
+  "docking_algorithm": "moldina", // Default (PSO)
+  "exhaustiveness": 8,            // Default (Vina only)
+  "cpu": 1,                       // Default (Vina only)
+  "population": 500,              // Default (PSO only)
   "num_modes": 15,                // Default
   "energy_range": 100.0,          // Default
+  "parallel": false,              // Default
+  "max_workers": 1,               // Default
   "add_hydrogens": true,          // Default
   "remove_waters": true,          // Default
   "formats": {...}                // Defaults
@@ -372,10 +396,12 @@ These are **CRITICAL** and determine if docking can proceed:
 | Parameter | Default | Range | Impact |
 |-----------|---------|-------|--------|
 | `ph` | 7.4 | 0-14 | Affects protonation state |
-| `exhaustiveness` | 8 | 1-32 | Higher = slower but more thorough |
-| `cpu` | 1 | 1-max | Parallel threads for docking |
-| `population` | 500 | 100-4000 | PSO particles |
-| `num_modes` | 15 | 1-20 | Number of binding poses |
+| `docking_algorithm` | `moldina` | `moldina` (PSO) / `vina` | Search algorithm |
+| `exhaustiveness` | 8 | 1-64 | Vina only: higher = slower but more thorough |
+| `cpu` | 1 | 1-max | Vina only: CPUs per ligand |
+| `population` | 500 | 5-5000 | PSO only: swarm particles |
+| `num_modes` | 15 | 1-50 | Number of binding poses |
+| `energy_range` | 100.0 | 0.1-1000 | kcal/mol window above the best pose |
 
 ---
 
@@ -397,9 +423,10 @@ These are **CRITICAL** and determine if docking can proceed:
 - **Key:** `execute_workflow()` - Runs services in order
 - **Function:** `call_mcp_tool()` - Calls individual services
 
-### Schemas
-- **File:** [common/schemas.py](../common/schemas.py)
-- **Key:** `JobSpec` - Complete job specification
+### Workflow definition
+- **File:** [workflow_definition.py](../services/llm_orchestrator/workflow_definition.py)
+- **Key:** `WORKFLOW_STEPS`, `DEFAULT_PARAMETERS`, `PARAM_INVALIDATION_MAP` - the
+  canonical step list, defaults and rerun rules
 
 ---
 
@@ -493,11 +520,11 @@ original workflow, so a step the user never requested will not be included.
 
 4️⃣ DOCK
   Input: receptor=6lu7.pdbqt, ligands=[ATP.pdbqt], center, box_size
-  Output: ATP_docking.pdbqt with affinity=-8.5
+  Output: ATP_out.pdbqt with affinity=-8.5
   State: workflow_state["docking_results"] = {...}
 
 5️⃣ VISUALIZE
-  Input: receptor=6lu7.pdbqt, ligands=[ATP_docking.pdbqt], affinities=[-8.5]
+  Input: receptor=6lu7_prepared.pdb, poses=[ATP_out.pdbqt], affinities=[-8.5]
   Output: ATP_poses.sdf, ATP_poses.pdb, ATP_poses.mol2 (convert_docked_poses,
           read by the GUI's in-browser 3Dmol.js viewer)
   Complete! ✅
@@ -525,7 +552,7 @@ original workflow, so a step the user never requested will not be included.
 - If `get_input_files` fails → nothing else can run
 - If `prepare_ligands` fails → docking can't proceed
 - If `prepare_protein` fails → docking can't proceed
-- If `dock` fails → visualization uses prepared ligands instead
+- If `dock` fails for every ligand → the workflow fails (a batch where some ligands dock keeps going, with the failures listed in `errors`)
 
 ### No options for input/output specification
 
@@ -543,5 +570,5 @@ original workflow, so a step the user never requested will not be included.
 | **prepare_ligands** | get_input_files | ligand_paths | prepared_ligands (PDBQT) | When preparing or docking |
 | **prepare_protein** | get_input_files | protein_path | prepared_protein (PDBQT) | When preparing or docking |
 | **dock** | prepare_ligands, prepare_protein | receptor, ligands, center, box_size | docking_results | When docking requested |
-| **visualize** | prepare_protein (+ dock optional) | receptor, ligands | visualization script, PNG | When visualization requested |
+| **visualize** | dock | receptor PDB, docked poses | per-ligand `<id>_poses.{sdf,pdb,mol2}` + `receptor_pdb` | When visualization requested (always from the GUI) |
 

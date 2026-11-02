@@ -156,10 +156,15 @@ results = runner.run_moldina_docking(
     "docking_algorithm": "moldina",  # which search produced these results
     "stopped": False,        # True when the run was stopped (see below)
     "skipped": 0,            # ligands never docked because of the stop
+    "workers": 1,            # ligands docked concurrently (after the CPU clamp)
     "receptor": "protein.pdbqt",
     "total": 2,
     "successful": 2,
     "failed": 0,             # ligands whose Moldina run failed (not stopped ones)
+    "errors": [],            # one message per failed ligand
+    "config_file": "docking_results/center.txt",
+    "parameters_file": "docking_results/parameters.txt",
+    "output_dir": "docking_results",
     "results": [
         {
             "ligand_id": "ligand1",
@@ -167,6 +172,8 @@ results = runner.run_moldina_docking(
             "output_path": "docking_results/ligand1_out.pdbqt",
             "log_path": "docking_results/ligand1_out.log",
             "best_affinity": -8.5,  # kcal/mol
+            "num_modes_found": 15,
+            "checksum": "a1b2c3...",
             "modes": [
                 {
                     "mode": 1,
@@ -304,8 +311,14 @@ For each ligand, Moldina creates:
 
 1. **{ligand}_out.pdbqt** - Docked poses in PDBQT format
 2. **{ligand}_out.log** - Docking log with affinities and statistics
-3. **moldina_config.txt** - Moldina configuration used
-4. **ligands.txt** - List of ligand files processed
+3. **{ligand}_moldina_output.log** - Moldina's raw stdout/stderr for that ligand
+
+Once per run, in the output directory:
+
+4. **center.txt** - The box center and size passed to Moldina
+5. **parameters.txt** - The search parameters used (algorithm, population,
+   exhaustiveness, cpu, modes, energy range)
+6. **docking_progress.json** - Live per-ligand progress (read by the GUI)
 
 ### Log File Format
 
@@ -334,9 +347,7 @@ results = runner.run_moldina_docking(
     output_dir=output_dir,
     center=center,
     box_size=box_size,
-    cpu=8,
-    population=200,        # Smaller population
-    exhaustiveness=8,      # Standard exhaustiveness
+    population=200,        # Smaller PSO swarm (PSO ignores cpu/exhaustiveness)
     num_modes=5,           # Fewer modes
     energy_range=3.0       # Only best modes
 )
@@ -351,9 +362,9 @@ results = runner.run_moldina_docking(
     output_dir=output_dir,
     center=center,
     box_size=box_size,
-    cpu=8,
-    population=1000,       # Larger population
-    exhaustiveness=32,     # High exhaustiveness
+    docking_algorithm="vina",
+    cpu=8,                 # Vina uses cpu cores per ligand
+    exhaustiveness=32,     # High exhaustiveness (Vina only)
     num_modes=20,          # More modes
     energy_range=100.0     # All modes
 )
@@ -378,7 +389,8 @@ for i in range(0, len(ligands), batch_size):
         output_dir=f"./batch_{i//batch_size}",
         center=center,
         box_size=box_size,
-        cpu=8
+        parallel=True,     # dock several ligands at once
+        max_workers=4,     # clamped server-side to the CPU budget
     )
     
     # Process results...
@@ -451,24 +463,26 @@ make
 - Ensure population ≥ 5
 
 **Problem**: "No poses found"
-- Increase population size
-- Increase exhaustiveness
+- Increase population size (PSO) or exhaustiveness (Vina)
 - Enlarge search box
 - Check ligand is dockable (rotatable bonds)
 
 ### Performance Issues
 
 **Problem**: Docking very slow
-- Reduce population size
-- Reduce exhaustiveness
-- Use fewer CPUs (paradoxically can help)
-- Process ligands in smaller batches
+- PSO: reduce population size
+- Vina: reduce exhaustiveness, or raise `cpu` (it runs that many cores per ligand)
+- Switch to PSO (`docking_algorithm="moldina"`): about 40× faster per ligand in the
+  measurement above
+- Process ligands in smaller batches, or dock them in parallel
 
 ## Best Practices
 
-1. **Use PSO for Important Ligands**
-   - Use Moldina for detailed studies
-   - Use Vina for high-throughput screening
+1. **Pick the Search per Task**
+   - PSO (default) is far faster per ligand: good for screening many ligands
+   - Vina found better poses in the measurement above at ~40× the time: use it
+     to refine the most promising ligands
+   - Benchmark your own system before choosing
 
 2. **Validate Search Box**
    - Always verify center and size
@@ -523,9 +537,7 @@ docking_results = runner.run_moldina_docking(
     output_dir="./moldina_results",
     center=(10.5, 20.3, -5.2),
     box_size=(25, 30, 35),
-    cpu=8,
-    population=500,
-    exhaustiveness=16
+    population=500         # PSO (default); cpu/exhaustiveness apply to Vina mode
 )
 
 # 4. Analyze results

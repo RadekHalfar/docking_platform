@@ -24,8 +24,9 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `protein_id` | string | **Yes** | - | PDB identifier (4 characters, e.g., '6lu7') |
-| `ligand_ids` | array | No | `[]` | List of ligand identifiers (e.g., `['ATP', 'HEM']`) |
+| `protein_id` | string | No | - | PDB identifier (4 characters, e.g., '6lu7'); omit with a local protein file |
+| `ligand_ids` | array | No | `[]` | List of ligand identifiers or names (e.g., `['ATP', 'HEM']`) |
+| `enable_name_resolution` | boolean | No | `false` | Resolve ligand names to chem_comp IDs via RCSB search |
 | `formats` | object | No | `{'protein': 'pdb', 'ligand': 'sdf'}` | File formats for download |
 | `save_dir` | string | No | `"./data"` | Directory to save downloaded files |
 
@@ -288,8 +289,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
 #### `parallel` / `max_workers` - Concurrent Ligands
 - **Default:** `parallel=false` (sequential — one ligand docked at a time)
 - **Purpose:** Dock up to `max_workers` *different* ligands at the same time
-  (each still its own independent, single-`--cpu` Moldina process — not
-  batched into one invocation)
+  (each still its own independent Moldina process, not batched into one
+  invocation; PSO uses one core per process, Vina uses `cpu` cores)
 - **GUI:** "Parallel ligand docking" checkbox + "Max parallel workers" number
   input in the Advanced expander, capped at `moldina-runner`'s
   configured `deploy.resources.limits.cpus` in `docker-compose.yml` (parsed
@@ -352,13 +353,13 @@ Complete overview of all parameters used in the molecular docking workflow acros
   - Publication quality: 16-32
 
 #### `num_modes` - Binding Modes
-- **Range:** 1 - 100
+- **Range:** 1 - 50 (clamped)
 - **Default:** 15
 - **Purpose:** Number of top-scoring poses to return
 - **Impact:** More modes = more output, longer runtime
 
 #### `energy_range` - Energy Window
-- **Range:** 1.0 - 1000.0 kcal/mol
+- **Range:** 0.1 - 1000.0 kcal/mol (clamped)
 - **Default:** 100.0
 - **Purpose:** Keep poses within this energy of best pose
 - **Typical:** 3-5 kcal/mol for publication
@@ -507,35 +508,39 @@ as **CPUs per ligand** in Vina mode, next to `parallel`/`max_workers` (dock seve
 ligands concurrently); workers × `cpu` never exceeds the docking service's CPU limit. See
 [Optional parallel docking](BATCH_DOCKING.md#optional-parallel-docking).
 
-**Fast (testing):**
-```json
-{
-  "cpu": 2,
-  "population": 100,
-  "exhaustiveness": 4
-}
-```
-⏱️ Time: ~2-5 minutes per ligand
+Measured times are in [MOLDINA_DOCKING.md](MOLDINA_DOCKING.md) (6lu7 + ATP,
+box 22 Å); scale them for your own system.
 
-**Standard (research):**
+**Fast screening (PSO, default):**
 ```json
 {
-  "cpu": 4,
-  "population": 500,
-  "exhaustiveness": 16
+  "docking_algorithm": "moldina",
+  "population": 500
 }
 ```
-⏱️ Time: ~10-20 minutes per ligand
+⏱️ Time: a few seconds per ligand (2.5 s measured). Raise `population` for a
+more thorough swarm.
 
-**Thorough (publication):**
+**Classic Vina search:**
 ```json
 {
-  "cpu": 8,
-  "population": 2000,
-  "exhaustiveness": 32
+  "docking_algorithm": "vina",
+  "exhaustiveness": 8,
+  "cpu": 4
 }
 ```
-⏱️ Time: ~30-60 minutes per ligand
+⏱️ Time: about 34 s per ligand measured (106 s with `cpu: 1`); run time grows
+with `exhaustiveness` and drops with `cpu`.
+
+**Thorough (Vina):**
+```json
+{
+  "docking_algorithm": "vina",
+  "exhaustiveness": 32,
+  "cpu": 4
+}
+```
+⏱️ Time: roughly 4× the `exhaustiveness: 8` run.
 
 ---
 
@@ -552,8 +557,8 @@ fields until the box covers the binding site. See
 
 ### Method 0b: Chat Command (Auto-Fill from Protein Geometry)
 
-Once a protein is loaded, two chat commands (GUI and CLI `--interactive`
-both) compute the box straight from the protein's own atom coordinates —
+Once a protein is loaded, two chat commands compute the box (GUI chat with
+or without an LLM; the CLI's `--interactive` needs a configured LLM to start) straight from the protein's own atom coordinates —
 no clicking, no manual numbers:
 
 - **"set up box center as protein center"** sets `center` to the
@@ -697,7 +702,6 @@ Purpose: Compare binding at different pH
 - Use adequate exhaustiveness (≥8 for real work)
 - Remove crystallographic waters
 - Keep important cofactors
-- Use ray tracing for publication figures
 
 **Do not:**
 - Use pH 7.4 blindly (check protein's functional pH)
@@ -705,7 +709,6 @@ Purpose: Compare binding at different pH
 - Use exhaustiveness < 4 (unreliable)
 - Remove all heteroatoms without checking
 - Dock in entire protein (too slow, inaccurate)
-- Submit low-DPI images to journals
 
 ---
 
@@ -736,4 +739,4 @@ Before running docking, verify:
 
 ---
 
-*Last updated: October 30, 2025*
+*Last updated: November 2, 2026*

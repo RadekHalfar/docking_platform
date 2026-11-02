@@ -32,6 +32,12 @@ both when present.)
 
 ## CLI usage
 
+The CLI takes a natural-language command, so it needs a configured LLM
+(`LLM_PROVIDER`/`LLM_MODEL` in `.env`, or `--llm-provider`/`--llm-model`; see
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md)). Without one, it prints a setup
+message and exits 1. The GUI's **Batch Processing** drop docks a folder's worth
+of files without an LLM.
+
 ```bash
 # Protein from RCSB, all ligands from a local folder
 python nlp_orchestrator.py --ligand-folder /data/ligands \
@@ -69,7 +75,8 @@ The LLM recognizes phrasing like "all ligands in `<path>`" or "every ligand file
 and sets `ligand_folder` instead of `ligand_ids`. As with the CLI flag, the path must be
 container-side when running in Docker (see "Why the path appears twice" above). If the LLM
 fails to extract the folder (uncommon phrasing, unusual path format), fall back to the
-`--ligand-folder` flag, which is always reliable since it bypasses LLM parsing entirely.
+`--ligand-folder` flag: the folder then comes from the flag, not from the LLM's reading of
+the command (the rest of the command is still parsed by the LLM).
 
 ### Why the path appears twice
 
@@ -92,8 +99,10 @@ point at an empty or nonexistent directory inside the container even though the 
 folder is correct.
 
 This mirrors `--protein-file` and `--ligand-files`, which rely on the project's existing
-permanent mounts (`./demo_output:/app/demo_output`, etc. in `docker-compose.yml`) for the
-same reason — paths passed to the orchestrator are always container-side paths.
+permanent mounts for the same reason: `script-runner` mounts the repo at `/workspace`
+(e.g. `./demo_output` is `/workspace/demo_output` there), while the MCP services see
+`./demo_output` as `/app/demo_output`. Paths passed to the orchestrator are always
+container-side paths.
 
 ## Expected result structure
 
@@ -107,9 +116,10 @@ multiple `$$$$`-delimited molecules expands into one result per molecule (e.g. a
 
 ## Performance guidance
 
-Each ligand is prepared and docked independently. A folder with more than ~20 ligands can
-take many minutes end-to-end, since `exhaustiveness` applies per ligand, not to the batch
-as a whole.
+Each ligand is prepared and docked independently, so the search settings (`population`
+in PSO mode, `exhaustiveness` and `cpu` in Vina mode) apply per ligand, not to the batch as
+a whole. PSO takes seconds per ligand; Vina mode can take minutes, so a folder of more than
+~20 ligands in Vina mode can take a long time end-to-end.
 
 By default, docking is **strictly sequential** — one Moldina invocation at a time, never
 more than one ligand in flight — because batching many ligands into a single Moldina
@@ -117,8 +127,9 @@ process previously triggered the Linux OOM killer once the container's memory li
 exceeded (see `services/moldina_runner/__init__.py`). A very large batch (hundreds of
 ligands — e.g. an entire multi-molecule SDF screen, see
 [Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files)) can therefore
-take hours, and the whole `dock` step is one long-running call with no incremental result
-visibility until it completes or errors.
+take hours, and the whole `dock` step is one long-running MCP call. The runner writes
+`docking_progress.json` as ligands finish, so the GUI shows live per-ligand progress, but
+the results themselves arrive when the call completes (or is stopped).
 
 ### Optional parallel docking
 

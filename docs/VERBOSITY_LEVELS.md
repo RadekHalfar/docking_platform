@@ -2,6 +2,9 @@
 
 `nlp_orchestrator.py` supports three verbosity levels that control output detail during workflow execution.
 
+The examples assume an LLM is configured (`LLM_PROVIDER`/`LLM_MODEL` in `.env`,
+or `--llm-provider`/`--llm-model`); see [LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md).
+
 ## Overview
 
 | Level | Flag | Purpose | Use Case |
@@ -21,8 +24,8 @@ python nlp_orchestrator.py --verbose low "Download 6lu7 and ATP, prepare and doc
 
 **Output Example:**
 ```
-📥 STEP 1: Downloading structures...
-   ✅ Downloaded protein and 1 ligand(s)
+📥 STEP 1: Getting input files...
+   ✅ Got protein (RCSB download) and 1 ligand(s) (RCSB download)
 
 🧪 STEP 2: Preparing ligands...
    ✅ Prepared 1 ligand(s)
@@ -34,7 +37,7 @@ python nlp_orchestrator.py --verbose low "Download 6lu7 and ATP, prepare and doc
    ✅ Docking completed: 1 successful
 
 🎨 STEP 5: Generating visualization...
-   ✅ Visualization created
+   ✅ Visualization prepared: 1 ligand(s)
 
 ✅ WORKFLOW COMPLETED SUCCESSFULLY
 ```
@@ -54,15 +57,15 @@ python nlp_orchestrator.py --verbose normal "Download 6lu7 and ATP, prepare and 
 
 **Output Example:**
 ```
-2025-10-31 15:38:56,816 - services.llm_orchestrator.llm_client - INFO - Calling Ollama with model: llama2
-2025-10-31 15:40:23,886 - services.llm_orchestrator.orchestrator - INFO - Starting workflow execution: job_1730389223
+2026-10-29 07:04:38,816 - services.llm_orchestrator.llm_adapters - INFO - Calling Ollama with model: gemma3:4b
+2026-10-29 07:04:50,886 - services.llm_orchestrator.orchestrator - INFO - Starting workflow execution: job_20261029_070450_7a1a17
 
 ================================================================================
-STEP 1: Downloading structures
+STEP 1: Getting input files
 ================================================================================
-2025-10-31 15:40:23,887 - services.llm_orchestrator.orchestrator - INFO - Calling download_structures on http://localhost:8001
-2025-10-31 15:40:25,123 - services.llm_orchestrator.orchestrator - INFO - ✅ Downloaded protein: /app/orchestrator_output/job_1730389223/downloads/6LU7.pdb
-2025-10-31 15:40:25,123 - services.llm_orchestrator.orchestrator - INFO - ✅ Downloaded 1 ligands
+2026-10-29 07:04:50,887 - services.llm_orchestrator.orchestrator - INFO - Calling download_structures on http://rcsb-downloader:8001
+2026-10-29 07:04:52,123 - services.llm_orchestrator.orchestrator - INFO - ✅ Got protein (RCSB download): /workspace/orchestrator_output/job_20261029_070450_7a1a17/downloads/6LU7.pdb
+2026-10-29 07:04:52,123 - services.llm_orchestrator.orchestrator - INFO - ✅ Got 1 ligand(s) (RCSB download)
 
 ================================================================================
 STEP 2: Preparing ligands
@@ -87,11 +90,7 @@ python nlp_orchestrator.py --verbose mcp_demo "Download 6lu7 and ATP, prepare an
 
 **Output Example:**
 ```
-2025-10-31 15:38:56,816 - services.llm_orchestrator.llm_client - INFO - Calling Ollama with model: llama2
-
-================================================================================
-STEP 1: Downloading structures
-================================================================================
+📥 STEP 1: Getting input files...
 
 ────────────────────────────────────────────────────────────────────────────────
 📡 MCP Client → Server: http://localhost:8001
@@ -99,7 +98,7 @@ STEP 1: Downloading structures
 JSON-RPC Request:
 {
   "jsonrpc": "2.0",
-  "id": "orchestrator_job_1730389223",
+  "id": "orchestrator_job_20261029_070450_7a1a17_3f9c2a1b",
   "method": "tool_call",
   "params": {
     "name": "download_structures",
@@ -110,7 +109,7 @@ JSON-RPC Request:
         "protein": "pdb",
         "ligand": "sdf"
       },
-      "save_dir": "/app/orchestrator_output/job_1730389223/downloads"
+      "save_dir": "/workspace/orchestrator_output/job_20261029_070450_7a1a17/downloads"
     }
   }
 }
@@ -118,11 +117,13 @@ JSON-RPC Request:
 📡 MCP Server → Client Response:
 {
   "jsonrpc": "2.0",
-  "id": "orchestrator_job_1730389223",
+  "id": "orchestrator_job_20261029_070450_7a1a17_3f9c2a1b",
   "result": {
-    "protein_path": "/app/orchestrator_output/job_1730389223/downloads/6LU7.pdb",
-    "ligand_paths": ["/app/orchestrator_output/job_1730389223/downloads/ATP.sdf"],
-    "success": true
+    "protein_path": "/app/orchestrator_output/job_20261029_070450_7a1a17/downloads/6LU7.pdb",
+    "ligand_paths": ["/app/orchestrator_output/job_20261029_070450_7a1a17/downloads/ATP.sdf"],
+    "sources": {"protein": "https://files.rcsb.org/download/6LU7.pdb", "ligands": ["..."]},
+    "checksums": {"protein": "...", "ligands": ["..."]},
+    "status": "ok"
   }
 }
 ────────────────────────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ python nlp_orchestrator.py --verbose mcp_demo --interactive
   (or to the `on_message` sink a caller passes `WorkflowOrchestrator`; the GUI's
   `OrchestratorBridge` passes its run's log queue)
 - **Normal**: Standard Python logging with INFO level
-- **MCP Demo**: Enables DEBUG level logging + prints formatted JSON-RPC messages
+- **MCP Demo**: Suppresses all logging (`VerbosityFilter` drops every record) and prints the step lines plus the formatted JSON-RPC messages instead
 
 The three integer constants (`VERBOSITY_LOW = 0`, `VERBOSITY_NORMAL = 1`, `VERBOSITY_MCP_DEMO = 2`) are
 defined once in `services/llm_orchestrator/orchestrator.py` and imported by `nlp_orchestrator.py` —

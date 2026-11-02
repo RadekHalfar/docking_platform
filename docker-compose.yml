@@ -217,7 +217,6 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
-      - OLLAMA_URL=http://ollama:11434
     depends_on:
       rcsb-downloader:
         condition: service_healthy

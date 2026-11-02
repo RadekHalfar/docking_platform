@@ -1635,13 +1635,24 @@ def test_no_llm_check_health_still_fails_on_a_down_service(monkeypatch, tmp_path
 
 
 def test_a_configured_llm_is_still_health_checked(monkeypatch, tmp_path, capsys):
-    client = Mock(check_health=Mock(return_value=False))
+    client = Mock(check_health=Mock(return_value=False), endpoint="https://api.openai.com/v1")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=client))
     monkeypatch.setattr(cli.WorkflowOrchestrator, "check_services_health", lambda self: {"rcsb_downloader": True})
 
     assert _main(monkeypatch, tmp_path, "--check-health") == 1
     assert "❌ openai" in capsys.readouterr().out
+
+
+def test_check_health_prints_the_url_the_client_uses(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setattr("services.llm_orchestrator.llm_adapters.OpenAIAdapter.check_health", lambda self: True)
+    monkeypatch.setattr(cli.WorkflowOrchestrator, "check_services_health", lambda self: {"rcsb_downloader": True})
+
+    assert _main(monkeypatch, tmp_path, "--check-health") == 0
+    out = capsys.readouterr().out
+    assert "✅ openai (https://api.openai.com/v1)" in out
+    assert "11434" not in out
 
 
 @pytest.mark.parametrize("argv", [["dock ATP into 6lu7"], ["--interactive"]])

@@ -83,7 +83,7 @@ via `convert_docked_poses` (on `ligand_preparer`). The GUI's in-browser
 All workflow outputs are saved under:
 
 ```text
-orchestrator_output/job_<timestamp_ms>/
+orchestrator_output/job_<YYYYMMDD>_<HHMMSS>_<6 hex>/
 ```
 
 Typical contents:
@@ -92,8 +92,12 @@ Typical contents:
 - `prepared/`
 - `docking_results/`
 - `visualization/` (if visualize is used)
-- `docking_box.json` (the docking box that was used)
-- `workflow_results.json`
+- `saved_results/<name>/` (each **save results as** bundle, with its
+  `docking_box.json`)
+- `workflow_results.json`, plus the session files (`workflow_parameters.json`,
+  `workflow_state.json`, `workflow_manifest.json`)
+- `job.log` (the run's step-by-step log) and `checkpoints/` (parameter
+  revisions for `history` / `undo`)
 
 ## 8. Run Tests
 

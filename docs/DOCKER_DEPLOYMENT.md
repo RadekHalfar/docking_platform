@@ -101,7 +101,7 @@ curl http://localhost:8001/health
 
 Expected response:
 ```json
-{"status": "healthy", "service": "rcsb_downloader", "version": "1.0"}
+{"service": "rcsb_downloader", "status": "ok"}
 ```
 
 ### 5. Run Workflow Without Local Python Environment
@@ -113,9 +113,15 @@ so script edits on host are picked up immediately (no image rebuild needed).
 # Check orchestration health from inside container network
 docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --check-health
 
-# Run full natural-language workflow
-docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"
+# Run full natural-language workflow (needs an LLM; none is configured by
+# default -- here the opt-in local Ollama, see "Choose an LLM" in the README)
+docker compose --profile local-llm up -d ollama
+docker exec -it mcp-llm ollama pull gemma3:4b
+docker compose --profile dev run --rm script-runner python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b "Download 6lu7 and ATP, prepare and dock"
 ```
+
+Without an LLM, natural-language commands print a setup message and exit 1;
+dock from the GUI's forms instead.
 
 If docking coordinates are missing, the CLI asks for `center`/`box_size` and
 parses them from your answer. To pick the box visually, use the GUI's box
@@ -305,14 +311,11 @@ MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
 # LLM_ENDPOINT=http://ollama:11434
 # LLM_MODEL=gemma3:4b
 LLM_PROVIDER=none
-
-# Optional backward-compatible alias (legacy)
-OLLAMA_URL=http://ollama:11434
-
-# Resource Limits
-MOLDINA_CPU_LIMIT=4
-MOLDINA_MEMORY_LIMIT=4G
 ```
+
+Moldina's CPU and memory limits are not environment variables: they are set
+under `services.moldina-runner.deploy.resources.limits` in
+`docker-compose.yml` (10 CPUs / 8G by default).
 
 ### Custom Moldina Binary
 
@@ -333,35 +336,28 @@ how to build it from source, and what to verify before replacing it.
 
 ### Volume Mounts
 
-The docker-compose.yml configures two main volumes:
+Every MCP service bind-mounts three host directories:
 
-1. **Cache Volume** (`./cache` → `/app/cache`):
-   - Stores downloaded PDB structures
-   - Shared across all services
-   - Improves performance by avoiding re-downloads
+1. **Cache** (`./cache` → `/app/cache`): downloaded PDB/ligand structures,
+   shared across services so nothing is downloaded twice.
+2. **Workflow output** (`./orchestrator_output` → `/app/orchestrator_output`):
+   one `job_<id>/` directory per workflow run (GUI and CLI). The `ui` and
+   `script-runner` containers mount the same directory at
+   `/workspace/orchestrator_output`.
+3. **Demo output** (`./demo_output` → `/app/demo_output`): output of the
+   standalone demo scripts (e.g. `example_complete_workflow.py`).
 
-2. **Output Volume** (`./demo_output` → `/app/output`):
-   - Stores processing results
-   - Accessible from host system
-   - Contains docking results and visualizations
+The only named volume is `ollama-data` (the opt-in Ollama's models).
 
 ### Managing Volumes
 
 ```bash
-# View volumes
+# The bind mounts are plain host directories: back them up like any folder
+tar czf cache-backup.tar.gz cache/
+tar czf results-backup.tar.gz orchestrator_output/
+
+# Named volumes (only ollama-data)
 docker volume ls
-
-# Inspect a volume
-docker volume inspect docking_platform_cache-data
-
-# Backup cache
-docker run --rm -v docking_platform_cache-data:/cache -v $(pwd):/backup ubuntu tar czf /backup/cache-backup.tar.gz /cache
-
-# Restore cache
-docker run --rm -v docking_platform_cache-data:/cache -v $(pwd):/backup ubuntu tar xzf /backup/cache-backup.tar.gz -C /
-
-# Clean up unused volumes
-docker volume prune
 ```
 
 ---
@@ -501,10 +497,10 @@ docker inspect --format='{{json .State.Health}}' mcp-moldina-runner | python -m 
 **Problem:** "Moldina not found in container"
 
 **Solutions:**
-1. Check if Vina is installed:
+1. Check that the binary is in the image (Vina mode runs the same binary
+   without the PSO flags, so there is no separate `vina`):
    ```bash
    docker exec mcp-moldina-runner which moldina
-   docker exec mcp-moldina-runner which vina
    ```
 
 2. Provide custom Moldina binary (see Configuration section)
@@ -577,7 +573,7 @@ docker network inspect docking_platform_mcp-network
 
 **Test connectivity between containers:**
 ```bash
-docker exec mcp-rcsb-downloader ping mcp-ligand-preparer
+docker exec mcp-rcsb-downloader curl -s http://ligand-preparer:8002/health
 ```
 
 ### Integration Tests Cannot Reach Services
@@ -591,11 +587,6 @@ docker compose --profile dev run --rm \
   -e SERVICE_HOST=host.docker.internal \
   script-runner python -m pytest tests/test_docker_integration.py --tb=short
 ```
-
-### Unknown Mark Warning For slow
-
-If pytest still prints `PytestUnknownMarkWarning: slow` in your environment,
-the test still runs correctly and passes; this is an environment-specific warning with pytest 9.
 
 ---
 
@@ -767,22 +758,17 @@ future phase in `dev_plan.md`.
        file: ./secrets/api_key.txt
    ```
 
-2. **Run as non-root user**:
-   ```dockerfile
-   RUN useradd -m appuser
-   USER appuser
-   ```
+2. **Enable TLS/SSL** with reverse proxy (nginx/traefik)
 
-3. **Enable TLS/SSL** with reverse proxy (nginx/traefik)
+(Every image already runs as the non-root `appuser`.)
 
 ### Scaling Services
 
-```bash
-# Scale moldina runner to 3 instances
-docker compose up -d --scale moldina-runner=3
-
-# Use load balancer (e.g., nginx) to distribute requests
-```
+`docker compose --scale` does not work as the file stands: each service has a
+fixed `container_name` and a fixed host port. Running several docking
+runners would need those removed and a load balancer (e.g. nginx) in front.
+Within one runner, use parallel ligand docking instead (see
+[BATCH_DOCKING.md](BATCH_DOCKING.md)).
 
 ### Monitoring
 
@@ -811,7 +797,9 @@ the same `/mcp` JSON-RPC endpoint documented in [API.md](API.md) — POST with
 
 ### GPU Check (Ollama)
 
-Only when the `local-llm` profile is running.
+Only when the `local-llm` profile is running. The Ollama container runs on
+the CPU: its GPU block in `docker-compose.yml` is commented out. Enable it
+there if `nvidia-container-toolkit` is installed, then check:
 
 ```bash
 # Verify GPU device request was applied to the ollama container
@@ -882,13 +870,14 @@ You now have a fully containerized MCP Docking System that:
 - Requires only Docker (no local Moldina or RDKit installation).
 - Works across Windows, Linux, and macOS.
 - Includes health checks and resource limits.
-- Supports scaling and deployment workflows.
 - Includes comprehensive tests.
 
 **Next steps:**
 1. Build images: `./docker_build.ps1`
 2. Start services: `docker compose up -d`
-3. Run workflow: `docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "Download 6lu7 and ATP, prepare and dock"`
-4. View results in `./demo_output/`
+3. Open the GUI at http://localhost:3000 and click **Run Docking** (or, with an
+   LLM configured, run a natural-language workflow from the CLI as in step 5
+   above)
+4. View results in the GUI's Results tab, or in `./orchestrator_output/<job_id>/`
 
 For issues or questions, check the [Troubleshooting](#troubleshooting) section or open an issue on GitHub.

@@ -493,3 +493,22 @@ moved from Streamlit to NiceGUI.
   - **CI runs the GUI tests:** a new `gui-tier` job builds the `ui` image
     and runs the NiceGUI tests and the two results-rendering test files,
     which had always been skipped on GitHub.
+
+## Unreleased — Cleanup and docs audit (Phase 19)
+
+- **Stage 19.1 (2026-11-02): cleanup pass and a full docs audit.**
+  - **`--check-health` shows the URL each LLM client really uses**
+    (e.g. `https://api.openai.com/v1` for OpenAI), not the Ollama endpoint
+    for every provider.
+  - **The unused `JobSpec` schema family is gone** from `common/schemas.py`
+    (its `DockingSpec` still claimed 9 modes; the real default is 15). The
+    two MCP tool-definition models stay.
+  - **The unused `OLLAMA_URL` variable is gone** from `docker-compose.yml`.
+  - **Docs brought up to date** after Phases 14–18, checked against the code:
+    the job-ID format, Python 3.10+, no-LLM defaults for every CLI example,
+    the real docking outputs (`center.txt`, `parameters.txt`,
+    `<ligand>_out.pdbqt`, result keys), parameter ranges, PSO vs. Vina
+    guidance and measured timings, the `search_ligands` tool, the protein
+    tool's real defaults and response, volumes and health payloads in
+    DOCKER_DEPLOYMENT, and Sessions-tab wording instead of the Streamlit
+    sidebar.

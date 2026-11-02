@@ -131,7 +131,7 @@ This prevents partial/corrupt writes if a process crashes mid-save.
 
 Implementation detail (Phase 3):
 - Atomic write/read helpers are centralized in `common/file_io.py`
-- `WorkflowStateManager` and `common.utils.save_metadata`/`load_metadata` now use these shared helpers
+- `WorkflowStateManager` uses these shared helpers (`atomic_write_json`, `load_json_dict`, `FileLock`)
 - This removes duplicated JSON persistence logic and keeps behavior consistent
 
 ## Revision Model
@@ -317,7 +317,7 @@ keys to `pending`. It clears `pending` only when a run of the active job
 CLI's `rerun`, where `pending` is cleared either way. `InteractiveSession.activate()` resets
 `pending` (the GUI reuses one session object across Loads).
 
-`pending_changed_params` lives in memory only, so a sidebar Load re-seeds it
+`pending_changed_params` lives in memory only, so a Load (Sessions tab) re-seeds it
 from disk: when `WorkflowStateManager.parameters_ran()` is False (a restore
 not yet redocked, a cancelled redock plan), `resume_session()` sets
 `pending |= CORE_PARAMS`. The per-key detail is not on disk, so this is an
@@ -381,8 +381,9 @@ This means `show state` always reflects whether the current parameters match the
 This prevents saving a bundle where the metadata parameters do not match the docking results on disk.
 
 **GUI (Stage 13.3).** The **Save results as…** panel and the chat `save
-results as <name>` share `ui/core/save_results.py::save_results()` (in
-`ui/app.py` until Stage 16.2). Like the CLI, it reads
+results as <name>` share `ui/core/save_results.py`: `plan_save()` (or
+`plan_chat_save()`) plans the save on the event loop, `write_bundle()` copies
+the files off it, and `finish_save()` reports the result. Like the CLI, it reads
 the bundle's revision from `get_current_revision()` and its parameters from
 `load_latest_parameters()`. Its guard, `save_block_reason()`, refuses:
 
@@ -448,7 +449,7 @@ read-only operation over completed jobs.
 
 Column headers use each job's top-level `job_name` field when present (the optional,
 non-unique display label set from the GUI's **Session name** field or renamed later via the
-sidebar's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)), falling
+Sessions tab's **Rename** button — see [docs/GUI_GUIDE.md](GUI_GUIDE.md#naming-a-session)), falling
 back to the job directory basename (i.e. the job ID) when a job has no name. Since the
 label isn't unique, a label shared by several of the compared jobs gets each one's job ID
 appended (`trial_a (job_…)`), in the GUI and the CLI alike. Before Stage 16.7 two

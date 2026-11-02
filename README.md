@@ -1,6 +1,6 @@
 # MCP-Based Docking System
 
-A fully containerized molecular docking pipeline using Model Context Protocol (MCP) to coordinate protein preparation, ligand preparation, Moldina PSO-based docking, and an in-browser 3Dmol.js visualization.
+A fully containerized molecular docking pipeline using Model Context Protocol (MCP) to coordinate protein preparation, ligand preparation, Moldina docking (PSO or classic Vina search), and an in-browser 3Dmol.js visualization.
 
 **Zero Installation Required:** Everything runs in Docker containers, so you do not need to install Moldina, RDKit, or other dependencies locally.
 
@@ -34,7 +34,7 @@ anything server-side.
 1. **RCSB Downloader** - Fetches protein structures and ligands from RCSB PDB.
 2. **Protein Preparer** - Cleans proteins, adds hydrogens, and converts to PDBQT.
 3. **Ligand Preparer** - Prepares ligands (protonation, 3D conformers, PDBQT conversion), and converts docked poses to PDB/SDF/MOL2 for the viewer/downloads.
-4. **Moldina Runner** - Executes Moldina PSO-based molecular docking.
+4. **Moldina Runner** - Executes Moldina docking: its PSO search (default) or the classic Vina search, chosen per run.
 5. **GUI 3D Viewer** - In-browser 3Dmol.js viewer + visual docking-box picker (no server-side rendering; see [docs/GUI_GUIDE.md](docs/GUI_GUIDE.md)).
 6. **LLM Orchestrator** - Provides natural-language workflow orchestration via pluggable LLM providers (none configured by default; cloud or local Ollama).
 
@@ -68,7 +68,7 @@ docker compose ps
 # 6. Optional: run full tests in Docker
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/ --tb=short
 # GUI (NiceGUI) tests need the ui image instead (see docs/DOCKER_DEPLOYMENT.md#gui-tests):
-docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini \n  tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
+docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
 ```
 
 **See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) for the detailed guide.**
@@ -99,8 +99,8 @@ docker compose --profile local-llm up -d ollama
 ```
 
 Then pick **Ollama (local)** in the GUI's Settings. The dialog finds the
-running Ollama (the container, or the Ollama app on the host), offers the
-recommended models below with their sizes, and downloads the one you pick
+running Ollama (the container, or the Ollama app on the host), offers the two
+recommended models (the first two below) with their sizes, and downloads the one you pick
 with a progress bar; select it and press **Apply settings**. Models persist
 in the `ollama-data` volume. Without the GUI, download one with
 `docker exec -it mcp-llm ollama pull gemma3:4b`. For the CLI, pass the
@@ -152,7 +152,7 @@ docker compose --profile dev run --rm script-runner python nlp_orchestrator.py "
 **See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed instructions.**
 
 ```bash
-# Python 3.9+ required (not Python 2.7!)
+# Python 3.10+ required (not Python 2.7!); the Docker images use 3.12
 conda create -n docking-platform python=3.12
 conda activate docking-platform
 conda install -c conda-forge rdkit openbabel meeko
@@ -173,7 +173,7 @@ python3 -m services.moldina_runner.server
 - RCSB Downloader (port 8001)
 - Ligand Preparer (port 8002)
 - Protein Preparer (port 8003)
-- Moldina Runner (port 8004), with the Moldina executable built from source
+- Moldina Runner (port 8004), with the prebuilt Moldina executable committed under `Moldina/`
 - Web GUI (port 3000)
 
 All five images share one ~2 GB base layer, so together they take about
@@ -184,6 +184,9 @@ All five images share one ~2 GB base layer, so together they take about
 ## Example Workflow
 
 ### Using Natural Language
+
+These need an LLM (see [Choose an LLM](#choose-an-llm-optional)); set it in `.env`
+or add `--llm-provider`/`--llm-model`.
 
 ```powershell
 # Simple command-line mode
@@ -230,24 +233,27 @@ python nlp_orchestrator.py --interactive
 # The GUI has the same history / undo / save-as commands (panel controls and
 # chat) -- see docs/GUI_GUIDE.md.
 
-# Example outputs:
-# 🤖 Parsing workflow...
-# 📋 Workflow Plan:
-#   1. Get protein: 6lu7
-#   2. Get ligand: ATP  
-#   3. Prepare ligands
-#   4. Prepare protein
-#   5. Run docking
-#   6. Create visualization
-# 
-# Required parameters needing clarification:
-#   - The protein PDB ID is invalid. Please provide a 4-character ID (e.g., '6lu7').
-#   - Please provide docking box center coordinates [x, y, z] (e.g., '10, 20, 30').
-# The protein PDB ID looks invalid. Please enter a valid 4-character ID (e.g., 6lu7):
-# I am missing docking box center [x, y, z]. Do you want to use default [10, 20, 30]? [Y/n]:
+# Example output (abridged):
+# Workflow Summary:
+# ==================================================
+# Services: get_input_files, prepare_ligands, prepare_protein, dock, visualize
 #
-# ✅ Executing workflow...
-# ✅ Results saved to ./orchestrator_output/job_20240115_123456/
+# Parameters:
+#   Protein: 6lu7
+#   Ligands: ATP
+#   Docking Center: [10.0, 20.0, 30.0]
+#   Box Size: [25.0, 25.0, 25.0]
+#
+# Executing workflow...
+# 📥 STEP 1: Getting input files...
+# ...
+# WORKFLOW RESULTS
+# Job ID: job_20261029_070450_7a1a17
+# Status: completed
+#
+# A missing value (e.g. the box center) is first asked for in a short
+# follow-up conversation; see --clarification-mode in docs/LLM_ORCHESTRATION.md.
+# Results land in ./orchestrator_output/<job_id>/.
 ```
 
 ### Using Python API
@@ -295,7 +301,7 @@ docking_platform/
 │   ├── file_utils.py           # Local-folder ligand scanning
 │   ├── path_utils.py           # Host<->container path conversion
 │   ├── config.py               # Env-var-backed service port/cache-dir defaults
-│   ├── schemas.py              # JobSpec and MCP tool schemas
+│   ├── schemas.py              # MCP tool-definition models
 │   └── utils.py                # Validation, checksums, misc helpers
 │
 ├── services/                    # MCP service implementations
@@ -408,7 +414,7 @@ python3 -m pytest tests/ -v
 docker compose up -d
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/test_docker_integration.py -v
 
-# Expected: ~110+ tests passing
+# Expected: ~1,300 tests passing (a few skip without RDKit or live services)
 ```
 
 ## Key Features
@@ -417,7 +423,7 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - **Three Verbosity Levels** - Choose minimal, detailed, or protocol-level output.
 - **Modular LLM Layer** - Provider interface + adapters (no provider by default; Ollama, OpenAI, Anthropic, MetaCentrum, OpenAI-compatible) with runtime model selection.
 - **Containerized Deployment** - Run all dependencies in Docker.
-- **Moldina PSO Docking** - PSO-based docking for pose search.
+- **Moldina Docking** - PSO search (default, fast) or the classic Vina search, selectable per run.
 - **In-Browser 3Dmol.js Viewer** - Client-side pose viewing and a visual docking-box picker, no server-side rendering.
 - **Cross-Platform** - Works across Windows and Linux path styles.
 - **Caching** - Reuses downloaded structures to reduce repeated work.
@@ -431,9 +437,9 @@ docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal scrip
 - See [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md#production-deployment) for details and what's required before any shared/remote deployment
 
 ### Python Version
-- **Use `python3` command** (Python 3.12+) when `python` points to an incompatible interpreter
+- **Use `python3` command** (Python 3.10+; Docker and CI use 3.12) when `python` points to an incompatible interpreter
 - System `python` may be Python 2.7 (not compatible)
-- Check: `python3 --version` should show 3.9+
+- Check: `python3 --version` should show 3.10+
 
 ### Windows Users
 - Use PowerShell (not CMD)

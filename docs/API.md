@@ -66,8 +66,9 @@ Downloads protein structures and ligand molecules from RCSB PDB.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `protein_id` | string | Yes | PDB identifier (4 characters, e.g., '1ABC') |
-| `ligand_ids` | array | No | List of ligand identifiers (e.g., ['ATP', 'HEM']) |
+| `protein_id` | string | No | PDB identifier (4 characters, e.g., '1ABC'). Omit to skip the protein download (e.g. with a local protein file) |
+| `ligand_ids` | array | No | List of ligand identifiers or names (e.g., ['ATP', 'HEM', 'aspirin']) |
+| `enable_name_resolution` | boolean | No | Resolve ligand names to chem_comp IDs via RCSB search (default: false; the interactive flow uses `search_ligands` plus a user choice instead) |
 | `formats` | object | No | File formats: `{"protein": "pdb"\|"cif", "ligand": "sdf"\|"mol"}` |
 | `save_dir` | string | No | Directory to save files (default: "./data") |
 
@@ -127,6 +128,35 @@ Downloads protein structures and ligand molecules from RCSB PDB.
   "error": {
     "code": -32602,
     "message": "Invalid PDB ID: INVALID"
+  }
+}
+```
+
+### Tool: search_ligands
+
+Searches the names in RCSB's chemical component dictionary (`chem_comp.name`,
+usually the systematic name) and returns ranked component-ID candidates (used
+by the chat's "search ligand" flow).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `name` | string | Yes | Ligand search text (e.g., 'adenosine') |
+| `max_results` | number | No | Maximum number of candidates (default: 10) |
+
+**Response Example:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "search_1",
+  "result": {
+    "query": "adenosine",
+    "candidates": [
+      {"component_id": "A1II9", "name": "A1II9", "score": 1.0},
+      {"component_id": "ADN", "name": "ADN", "score": 0.959},
+      {"component_id": "AMP", "name": "AMP", "score": 0.917}
+    ]
   }
 }
 ```
@@ -223,6 +253,7 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
       }
     ],
     "total": 2,
+    "total_ligands": 2,
     "successful": 2,
     "failed": 0,
     "errors": [],
@@ -230,6 +261,9 @@ Prepares ligand molecules for molecular docking by converting them to PDBQT form
   }
 }
 ```
+
+`total` counts input files; `total_ligands` counts prepared molecules (a
+multi-molecule SDF file yields several).
 
 **Error Response Example:**
 ```json
@@ -357,18 +391,19 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
 2. Remove water molecules (optional)
 3. Remove non-protein heteroatoms (optional)
 4. Add explicit hydrogens at specified pH
-5. Assign Gasteiger partial charges
-6. Convert to PDBQT format
+5. Convert to a rigid-receptor PDBQT (AutoDock atom types; charges written as
+   0.000, which Vina-style scoring doesn't use)
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `protein_paths` | array | Yes | List of paths to protein files (PDB, CIF) |
-| `output_dir` | string | No | Directory to save prepared proteins (default: "./data/prepared") |
+| `output_dir` | string | Yes | Directory to save prepared proteins |
 | `ph` | number | No | pH for protonation state (default: 7.4) |
 | `remove_waters` | boolean | No | Remove water molecules (default: true) |
-| `remove_heteroatoms` | boolean | No | Remove non-protein heteroatoms (default: true) |
+| `remove_heteroatoms` | boolean | No | Remove all heteroatoms/ligands (default: false) |
+| `keep_residues` | array | No | Residue names to keep when removing heteroatoms (e.g., ['HEM', 'ZN']) |
 | `add_hydrogens` | boolean | No | Add explicit hydrogens (default: true) |
 
 **Request Example:**
@@ -384,7 +419,7 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
       "output_dir": "/data/jobs/job_001/prepared",
       "ph": 7.4,
       "remove_waters": true,
-      "remove_heteroatoms": true,
+      "remove_heteroatoms": false,
       "add_hydrogens": true
     }
   }
@@ -403,15 +438,17 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
         "input_path": "/data/jobs/job_001/raw/6lu7.pdb",
         "pdb_path": "/data/jobs/job_001/prepared/6lu7_prepared.pdb",
         "pdbqt_path": "/data/jobs/job_001/prepared/6lu7.pdbqt",
+        "initial_atoms": 2367,
+        "final_atoms": 4897,
+        "atoms_removed": -2530,
+        "conversion_method": "manual_rigid",
         "checksum": "x1y2z3a4b5c6...",
-        "conversion_method": "meeko",
-        "atom_count": 4897,
-        "residue_count": 306,
         "preparation_params": {
           "ph": 7.4,
+          "add_hydrogens": true,
           "remove_waters": true,
-          "remove_heteroatoms": true,
-          "add_hydrogens": true
+          "remove_heteroatoms": false,
+          "keep_residues": []
         }
       }
     ],
@@ -506,7 +543,7 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
     "total": 2,
     "successful": 2,
     "failed": 0,
-    "config_file": "/data/jobs/job_001/docking/moldina_config.txt",
+    "config_file": "/data/jobs/job_001/docking/center.txt",
     "output_dir": "/data/jobs/job_001/docking",
     "results": [
       {
@@ -553,8 +590,8 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
 ```
 
 **Notes:**
-- Moldina is Linux-only; Windows users require WSL (Windows Subsystem for Linux)
-- Uses Particle Swarm Optimization (PSO) for improved binding pose prediction
+- Moldina is a Linux binary. In Docker nothing more is needed; running the service natively on Windows needs WSL
+- `docking_algorithm` picks the search: Particle Swarm Optimization (`moldina`, default) or the classic Vina Monte Carlo search (`vina`), both in the same binary
 - Results are sorted by best_affinity (most negative = best binding)
 - A run can be stopped mid-batch by creating `STOP_REQUESTED` in `output_dir`:
   no further ligands start, running Moldina processes are killed, and the

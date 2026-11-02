@@ -346,7 +346,7 @@ for e in errors:
 
 ### Essential
 - **RDKit**: Molecule processing and preparation
-- **Python 3.9+**: Runtime environment
+- **Python 3.10+**: Runtime environment (the Docker images use 3.12)
 
 ### Recommended
 - **Meeko**: Modern PDBQT conversion (replaces MGLTools)
@@ -376,7 +376,7 @@ pip install -r requirements.txt
 
 ```bash
 # Create conda environment
-conda create -n docking python=3.9
+conda create -n docking python=3.12
 conda activate docking
 
 # Install chemistry packages

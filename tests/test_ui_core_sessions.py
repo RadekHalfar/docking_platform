@@ -225,7 +225,7 @@ def test_list_sessions_returns_completed_and_failed(tmp_path, job):
 def test_session_row_labels():
     named = {"job_id": "job_1", "job_name": "my*run", "protein_id": "6LU7", "ligand_count": 2}
     assert sessions.session_row_label(named, sessions.completed_session_detail(named)) == (
-        "**my\*run**  `job_1`  6LU7 (2 ligand(s))"
+        r"**my\*run**  `job_1`  6LU7 (2 ligand(s))"
     )
     unnamed = {"job_id": "job_2", "job_name": "", "protein_id": "?", "first_error": "x" * 100}
     detail = sessions.failed_session_detail(unnamed)

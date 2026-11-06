@@ -609,7 +609,8 @@ async def test_an_unreadable_log_keeps_the_last_one_and_the_tick_going(
     with user.client:
         await controller.tick()
 
-    assert synced == [1]
+    # At least once: the page's own timer also ticks during the await.
+    assert synced
     assert "STEP 1" in _text(user, "session-log-text")
 
 

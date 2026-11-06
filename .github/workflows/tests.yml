@@ -42,3 +42,21 @@ jobs:
           mcp-docking-ui:latest
           python -m pytest -c ui_nice/pytest.ini
           tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
+
+  # A real dock (Stage 19.3): the Moldina binary is only in its own image, and
+  # the job above mocks it. No network or running service is needed.
+  real-docking:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the base and moldina-runner images
+        run: |
+          docker build -f docker/base.Dockerfile -t mcp-docking-base:latest .
+          docker build -f docker/moldina_runner.Dockerfile -t mcp-moldina-runner:latest .
+
+      - name: Run a real dock
+        run: >
+          docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace
+          mcp-moldina-runner:latest
+          python -m pytest tests/test_real_docking.py -p no:cacheprovider

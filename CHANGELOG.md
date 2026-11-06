@@ -517,3 +517,25 @@ moved from Streamlit to NiceGUI.
   - Poses of a Meeko-made PDBQT keep their per-pose scores; others convert through OpenBabel.
   - **Same-named inputs** (`x.sdf` and `x.pdbqt`) no longer overwrite each other's prepared file: the first is docked, the second is listed as an error.
   - **Fixed:** searching a ligand name with no RCSB match (e.g. "aspirin") answers "No ligands found" instead of failing with "Expecting value…".
+- **Stage 19.3 (2026-11-06): test-suite audit — a real docking test, an MCP
+  contract test, and fixes to outdated tests.**
+  - **A real dock is now tested** (`tests/test_real_docking.py`): the real
+    Moldina binary, both searches, through to converted poses. Everything
+    else mocks the binary, so nothing proved it still accepts the flags the
+    runner builds, or that its output parses. CI runs it in its own job.
+  - **The orchestrator-to-service boundary is now tested**
+    (`tests/test_mcp_contract.py`): the real orchestrator calls each real MCP
+    server, with only the service classes faked. A renamed MCP parameter used
+    to pass the whole suite and fail only in production.
+  - **The hermetic suite runs in 21s instead of 109s.** The Docker
+    integration tests lacked the `integration` marker, so every run — and
+    every CI job — waited 60s for services that were never there.
+  - **The live-service workflow test now docks.** It downloaded a protein and
+    stopped; it now runs download → prepare → dock → convert poses, each step
+    reading the previous one's real output.
+  - **Fixed a flaky GUI test** that failed about half the time on a loaded
+    machine (it counted redraws that the page's own timer also triggers).
+  - **Tests that could not fail** repaired: the affinity sort tested a copy of
+    the sort instead of the real one, `_parse_moldina_stdout` had no test at
+    all, a PDBQT format assert sat behind a condition that could skip it, and
+    the path tests imported from a demo script rather than `common/`.

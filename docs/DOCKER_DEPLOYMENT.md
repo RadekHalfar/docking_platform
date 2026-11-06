@@ -588,6 +588,21 @@ docker compose --profile dev run --rm \
   script-runner python -m pytest tests/test_docker_integration.py --tb=short
 ```
 
+### Real Docking Tests
+
+`tests/test_real_docking.py` runs the real Moldina binary (no network, no
+running service), which only the `moldina-runner` image has. Everything else
+mocks the binary, so this is the one test that proves it still accepts the
+flags the runner builds and that its output parses:
+
+```bash
+docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace \
+  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py
+```
+
+It self-skips where no binary is available, so the default suite stays
+hermetic. CI runs it in its own `real-docking` job.
+
 ---
 
 ## Advanced Usage

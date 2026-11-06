@@ -375,29 +375,95 @@ class TestMoldinaExecution:
 
 
 class TestAffinitySort:
-    """Tests for affinity sort key (M3 fix: None-safe comparison)."""
+    """run_moldina_docking ranks its results (M3 fix: None-safe comparison)."""
 
-    def test_affinity_sort_puts_none_last(self):
-        results = [
-            {"best_affinity": None},
-            {"best_affinity": -7.5},
-            {"best_affinity": -8.0},
-        ]
-        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
-        assert results[0]["best_affinity"] == -8.0
-        assert results[1]["best_affinity"] == -7.5
-        assert results[2]["best_affinity"] is None
+    def test_best_score_first_zero_after_negative_no_score_last(self, temp_dir, mock_platform_linux, mock_subprocess):
+        with patch.object(MoldinaRunner, '_find_moldina_executable', return_value='/usr/bin/Moldina'):
+            runner = MoldinaRunner(cache_dir=temp_dir)
+        receptor = os.path.join(temp_dir, "receptor.pdbqt")
+        Path(receptor).touch()
+        output_dir = os.path.join(temp_dir, "output")
+        tables = {
+            "none": "no results table",
+            "zero": "mode |   affinity\n   1          0.0      0.000      0.000\n",
+            "weak": "mode |   affinity\n   1         -7.5      0.000      0.000\n",
+            "strong": "mode |   affinity\n   1         -8.0      0.000      0.000\n",
+        }
+        ligand_paths = []
+        for ligand_id in tables:
+            ligand_paths.append(os.path.join(temp_dir, f"{ligand_id}.pdbqt"))
+            Path(ligand_paths[-1]).touch()
 
-    def test_affinity_sort_zero_sorts_after_negative_before_none(self):
-        results = [
-            {"best_affinity": None},
-            {"best_affinity": 0.0},
-            {"best_affinity": -7.5},
-        ]
-        results.sort(key=lambda x: x['best_affinity'] if x['best_affinity'] is not None else float('inf'))
-        assert results[0]["best_affinity"] == -7.5
-        assert results[1]["best_affinity"] == 0.0
-        assert results[2]["best_affinity"] is None
+        def mock_moldina_run(cmd, *args, **kwargs):
+            ligand_id = Path(cmd[cmd.index('--ligand') + 1]).stem
+            Path(output_dir, f"{ligand_id}_out.pdbqt").write_text("MODEL 1\nENDMDL\n")
+            return Mock(returncode=0, stdout=tables[ligand_id], stderr='')
+
+        mock_subprocess.run.side_effect = mock_moldina_run
+
+        results = runner.run_moldina_docking(
+            receptor_path=receptor,
+            ligand_paths=ligand_paths,
+            output_dir=output_dir,
+            center=(0, 0, 0),
+            box_size=(20, 20, 20),
+        )
+
+        assert [r["ligand_id"] for r in results["results"]] == ["strong", "weak", "zero", "none"]
+        assert results["results"][-1]["best_affinity"] is None
+
+
+# Recorded from the real binary ("AutoDock Vina aea4fd5-mod", 2026-11-06). Each
+# search prints its own column widths. tests/test_real_docking.py runs the binary.
+MOLDINA_PSO_STDOUT = """AutoDock Vina aea4fd5-mod
+Scoring function : vina
+Rigid receptor: /tmp/p/mini_protein.pdbqt
+Ligand: /tmp/p/benzene.pdbqt
+Grid center: X 3.99065 Y 7.96565 Z 8.35306
+Grid size  : X 20 Y 20 Z 20
+Grid space : 0.375
+Search Algorithm: Particle Swarm Optimization (Moldina)
+PSO Population: 20
+CPU: 2
+Verbosity: 1
+
+Computing Vina grid ... done.
+Performing search ...
+
+mode |   affinity | dist from best mode
+     | (kcal/mol) | rmsd l.b.| rmsd u.b.
+-----+------------+----------+----------
+   1         -0.4      0.000      0.000
+   2         -0.4      7.009      7.376
+   3         -0.4      6.970      7.329
+
+"""
+
+MOLDINA_VINA_STDOUT = """AutoDock Vina aea4fd5-mod
+Scoring function : vina
+Rigid receptor: /tmp/p/mini_protein.pdbqt
+Ligand: /tmp/p/benzene.pdbqt
+Grid center: X 3.99065 Y 7.96565 Z 8.35306
+Grid size  : X 20 Y 20 Z 20
+Grid space : 0.375
+Search Algorithm: Monte Carlo (Vina Default)
+Exhaustiveness: 1
+CPU: 2
+Verbosity: 1
+
+Computing Vina grid ... done.
+Performing docking (random seed: 751700106) ...
+0%   10   20   30   40   50   60   70   80   90   100%
+|----|----|----|----|----|----|----|----|----|----|
+***************************************************
+
+mode |   affinity | dist from best mode
+     | (kcal/mol) | rmsd l.b.| rmsd u.b.
+-----+------------+----------+----------
+   1       -0.458          0          0
+   2      -0.4457      1.599       2.47
+
+"""
 
 
 class TestResultsParsing:
@@ -408,7 +474,37 @@ class TestResultsParsing:
         """Create runner"""
         with patch.object(MoldinaRunner, '_find_moldina_executable', return_value='/usr/bin/Moldina'):
             return MoldinaRunner(cache_dir=temp_dir)
-    
+
+    def test_parse_real_pso_stdout(self, runner):
+        results = runner._parse_moldina_stdout(MOLDINA_PSO_STDOUT)
+
+        assert results["best_affinity"] == -0.4
+        assert results["num_modes_found"] == 3
+        assert results["modes"][2] == {"mode": 3, "affinity": -0.4, "rmsd_lb": 6.970, "rmsd_ub": 7.329}
+
+    def test_parse_real_vina_stdout(self, runner):
+        results = runner._parse_moldina_stdout(MOLDINA_VINA_STDOUT)
+
+        assert results["best_affinity"] == -0.458
+        assert results["modes"] == [
+            {"mode": 1, "affinity": -0.458, "rmsd_lb": 0.0, "rmsd_ub": 0.0},
+            {"mode": 2, "affinity": -0.4457, "rmsd_lb": 1.599, "rmsd_ub": 2.47},
+        ]
+
+    def test_parse_stdout_ignores_numbers_outside_the_table(self, runner):
+        results = runner._parse_moldina_stdout("Grid size  : X 20 Y 20 Z 20\n   1    2    3    4\n")
+
+        assert results == {"modes": [], "best_affinity": None, "num_modes_found": 0}
+
+    def test_stdout_table_is_preferred_over_the_log(self, runner, temp_dir):
+        Path(temp_dir, "lig_out.log").write_text(
+            "mode |   affinity\n-----+------\n   1       -9.9      0.000      0.000\n"
+        )
+
+        result = runner._build_ligand_result("lig.pdbqt", temp_dir, MOLDINA_PSO_STDOUT)
+
+        assert result["best_affinity"] == -0.4
+
     def test_parse_vina_log_with_results(self, runner, temp_dir):
         """Test parsing log file with docking results"""
         log_content = """

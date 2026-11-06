@@ -1,7 +1,8 @@
 """
-Integration test example: Download and prepare ligands workflow.
+Download-then-prepare workflow across two service classes, in process.
 
-This demonstrates the complete workflow from downloading to preparation.
+The RCSB request is mocked and no service runs, so this is part of the hermetic
+suite. tests/test_docker_integration.py covers the real running services.
 """
 import pytest
 import os

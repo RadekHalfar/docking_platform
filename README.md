@@ -354,7 +354,9 @@ docking_platform/
 ├── tests/                       # Unit and integration tests
 │   ├── fixtures/               # Test data (benzene.sdf, water.sdf, ...)
 │   ├── test_*.py               # Per-module/service tests
-│   ├── test_integration.py     # End-to-end integration tests
+│   ├── test_mcp_contract.py    # Orchestrator -> MCP tool -> service signatures
+│   ├── test_integration.py     # Download-then-prepare, in process (RCSB mocked)
+│   ├── test_real_docking.py    # A real dock with the real Moldina binary
 │   └── test_docker_integration.py  # Tests against live Docker services
 │
 ├── docker/                      # Docker configurations
@@ -407,15 +409,24 @@ docking_platform/
 ### Running Tests
 
 ```bash
-# Run all unit tests
-python3 -m pytest tests/ -v
+# The hermetic suite: no network, no services, no Moldina binary. What CI runs.
+python3 -m pytest -m "not integration"
+# Expected: ~1,360 passing, ~12 skipping (the GUI tier below, and Windows-only checks)
 
-# Run Docker integration tests (requires services running)
+# The GUI tier (nicegui/pandas/plotly live only in the ui image)
+docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
+
+# A real dock with the real Moldina binary (no network or services needed)
+docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace \
+  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py
+
+# The live-service tests (requires the stack running)
 docker compose up -d
 docker compose --profile dev run --rm -e SERVICE_HOST=host.docker.internal script-runner python -m pytest tests/test_docker_integration.py -v
-
-# Expected: ~1,300 tests passing (a few skip without RDKit or live services)
 ```
+
+Tests that need a live service, the network or the Moldina binary carry the
+`integration` marker, so `-m "not integration"` is always safe to run offline.
 
 ## Key Features
 

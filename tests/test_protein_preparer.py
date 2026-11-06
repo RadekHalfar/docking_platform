@@ -368,12 +368,12 @@ class TestProteinPreparer:
         
         # Each ATOM line should have charge and atom type columns
         for line in atom_lines[:5]:  # Check first 5
-            if len(line) >= 78:
-                # Should have charge column around position 70-76
-                charge_part = line[70:76].strip()
-                # Should have atom type at the end
-                atom_type_part = line[77:].strip()
-                assert len(atom_type_part) > 0
+            assert len(line) >= 78
+            # Should have charge column around position 70-76
+            float(line[70:76])
+            # Should have atom type at the end
+            atom_type_part = line[77:].strip()
+            assert len(atom_type_part) > 0
 
 
 class TestProteinPreparerEdgeCases:

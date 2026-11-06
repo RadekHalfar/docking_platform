@@ -15,6 +15,7 @@ from services.llm_orchestrator.llm_adapters import (
     OpenAICompatibleAdapter,
     pull_ollama_model,
 )
+from services.llm_orchestrator.llm_factory import is_llm_configured
 
 
 class TestOllamaAdapter:
@@ -443,16 +444,14 @@ def test_llm_env_wiring_health_smoke():
     """Non-mocked smoke test for provider/endpoint wiring via environment."""
     provider = os.getenv("LLM_PROVIDER")
     endpoint = os.getenv("LLM_ENDPOINT")
-    model = os.getenv("LLM_MODEL", "llama2")
+    model = os.getenv("LLM_MODEL")
 
-    if not provider or not endpoint:
-        pytest.skip("LLM_PROVIDER/LLM_ENDPOINT not set; skipping runtime wiring smoke test")
+    if not is_llm_configured(provider) or not endpoint or not model:
+        pytest.skip("LLM_PROVIDER/LLM_ENDPOINT/LLM_MODEL not set; skipping runtime wiring smoke test")
 
     client = create_llm_client(provider=provider, endpoint=endpoint, model=model)
     if not client.check_health():
         pytest.skip("LLM endpoint not reachable in this test context")
-
-    assert client.check_health() is True
 
 
 class TestPullOllamaModel:

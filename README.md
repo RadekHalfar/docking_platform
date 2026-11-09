@@ -6,6 +6,8 @@ A fully containerized molecular docking pipeline using Model Context Protocol (M
 
 **Natural Language Interface (optional):** Control the workflow with text commands through a pluggable LLM layer: a cloud provider with an API key, or a local Ollama. The GUI's forms work without any LLM.
 
+> **New here and not a programmer?** Follow **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**: a step-by-step guide from installing Docker Desktop to your first docking run in the web interface, including optional API keys.
+
 ## Architecture
 
 ```
@@ -483,6 +485,7 @@ python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
 - **[docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md)** - Natural language interface guide and examples
 - **[docs/DOCKING_PARAMETERS.md](docs/DOCKING_PARAMETERS.md)** - Comprehensive guide to all docking parameters across all stages
 - **[docs/API.md](docs/API.md)** - Complete MCP tool specifications and JSON-RPC examples
+- **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** - Step-by-step guide for non-programmers: install, first docking in the GUI, optional LLM/API key setup
 - **[docs/INSTALLATION.md](docs/INSTALLATION.md)** - Installation instructions (Docker and local)
 - **[docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md)** - Docker deployment guide
 - **[docs/MOLDINA_DOCKING.md](docs/MOLDINA_DOCKING.md)** - The docking engine: PSO vs. Vina mode, output files, stopping a run

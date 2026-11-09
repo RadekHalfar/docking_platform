@@ -1,5 +1,7 @@
 # Installation Guide
 
+> Not a programmer? [GETTING_STARTED.md](GETTING_STARTED.md) walks through installation and a first docking run step by step.
+
 ## ⚡ Recommended: Docker Deployment
 
 **No local installation needed!** Docker containers include all dependencies (Moldina, RDKit, OpenBabel, Meeko).

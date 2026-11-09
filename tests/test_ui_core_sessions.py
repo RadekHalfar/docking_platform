@@ -1,4 +1,4 @@
-"""Tests for ui/core/sessions.py (Stage 16.1) -- hermetic, plain GuiSession."""
+"""Tests for ui/core/sessions.py -- hermetic, plain GuiSession."""
 import json
 
 import pytest
@@ -111,8 +111,8 @@ def test_resume_prefers_a_draft(state, tmp_path, job):
 
 
 def test_resume_drops_the_previous_runs_finished_bridge(state, tmp_path, job):
-    # Stage 16.7's real-data check: the finished bridge of the run before
-    # stayed, and both GUIs of the time drew its result as the loaded session's.
+    # The finished bridge of the run before must go, or the GUI draws its
+    # result as the loaded session's.
     state.job_id = "job_previous"
     state.bridge = _Bridge(running=False)
 
@@ -190,7 +190,7 @@ def test_delete_failure_is_returned(state, tmp_path):
 
 
 def test_rename_and_delete_come_in_two_halves(state, tmp_path, job):
-    # Stage 16.7: NiceGUI runs the file half off its event loop.
+    # NiceGUI runs the file half off its event loop.
     state.viewed_job_id = JOB_ID
 
     assert sessions.rename_session_file(job, " new ") is None
@@ -198,7 +198,7 @@ def test_rename_and_delete_come_in_two_halves(state, tmp_path, job):
     sessions.apply_session_rename(state, job, " new ")
     assert state.job_name == "new"
     # The listing entry follows too: a Load of it before the GUI re-lists
-    # resumed the old name (Review Stage R3).
+    # resumed the old name.
     assert job["job_name"] == "new"
 
     assert sessions.remove_session_dir(job) is None
@@ -208,7 +208,7 @@ def test_rename_and_delete_come_in_two_halves(state, tmp_path, job):
 
 
 # ---------------------------------------------------------------------------
-# Listing (Stage 16.7)
+# Listing
 # ---------------------------------------------------------------------------
 
 def test_list_sessions_returns_completed_and_failed(tmp_path, job):

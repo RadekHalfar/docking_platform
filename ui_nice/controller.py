@@ -1,4 +1,4 @@
-"""One browser client's page controller (Phase 16, Stage 16.4).
+"""One browser client's page controller.
 
 It holds the client's :class:`~ui.core.state.GuiSession` and what every
 action needs besides it (``output_base``, the bridge class), runs the live
@@ -12,8 +12,8 @@ All clients share one event loop, so slow file work runs off it
 (``run.io_bound``): the views' timer reads (:meth:`View.poll`), a geometry
 command's receptor read (:meth:`apply_geometry`) and a results bundle copy
 (:meth:`start_save`, from the chat, the Results tab's panel or its conflict
-buttons). Review Stage R2 measured those last two at up to 80 ms and 37 s on
-a Docker Desktop bind mount. A save, and a session's delete (Stage 16.7),
+buttons); those last two take up to 80 ms and 37 s on a Docker Desktop
+bind mount. A save, and a session's delete,
 hold :attr:`PageController.busy` while they run.
 
 When a run finishes, completed or failed, the page switches to the Results
@@ -80,7 +80,7 @@ class PageController:
         # it works on are off: Run, New Session and Reset, and the Sessions
         # tab's Load, Delete and Restore revision (blocked_reason) -- else a
         # Delete during a save removes the job dir under the copy, and a Load
-        # swaps the session it reports to (Review Stage R2, Deferred #3).
+        # swaps the session it reports to.
         self.busy: Optional[str] = None
         # True while views write the state into their widgets: NiceGUI fires
         # a widget's change handler on a programmatic change too, and the

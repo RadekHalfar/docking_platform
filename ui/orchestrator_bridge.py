@@ -13,9 +13,8 @@ class OrchestratorBridge:
     The orchestrator's step messages go line by line into this bridge's own
     queue (its ``on_message`` sink, see ``_log_message``), so the UI can
     stream progress without blocking, and concurrent runs in one process
-    never see each other's lines. Nothing touches ``sys.stdout`` (Phase 16
-    finding 1: the ``redirect_stdout`` this replaced swapped it
-    process-wide).
+    never see each other's lines. Nothing touches ``sys.stdout``: a
+    ``redirect_stdout`` would swap it process-wide.
     """
 
     def __init__(self) -> None:

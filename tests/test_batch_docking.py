@@ -1,4 +1,4 @@
-"""Tests for batch docking from a local folder (Phase 0b): ligand_folder parameter.
+"""Tests for batch docking from a local folder: ligand_folder parameter.
 
 Covers three layers:
 - common/file_utils.scan_ligand_folder(): filesystem discovery of ligand files.
@@ -216,7 +216,7 @@ def test_empty_ligand_folder_raises_runtime_error(tmp_path):
 def test_ligand_folder_same_basename_in_different_subdirs_raises(tmp_path):
     """A recursive scan can find two files sharing a basename in different
     subdirectories -- execute_workflow must raise rather than silently let
-    one overwrite the other in the shared downloads dir. See finding #3."""
+    one overwrite the other in the shared downloads dir."""
     ligand_dir = tmp_path / "ligands"
     sub_a = ligand_dir / "batch_a"
     sub_b = ligand_dir / "batch_b"

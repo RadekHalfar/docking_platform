@@ -128,7 +128,7 @@ a whole. PSO takes seconds per ligand; Vina mode can take minutes, so a folder o
 
 By default, docking is **strictly sequential** — one Moldina invocation at a time, never
 more than one ligand in flight — because batching many ligands into a single Moldina
-process previously triggered the Linux OOM killer once the container's memory limit was
+process can trigger the Linux OOM killer once the container's memory limit is
 exceeded (see `services/moldina_runner/__init__.py`). A very large batch (hundreds of
 ligands — e.g. an entire multi-molecule SDF screen, see
 [Multi-Molecule SDF Files](LIGAND_PREPARATION.md#multi-molecule-sdf-files)) can therefore
@@ -185,25 +185,24 @@ limit may be lower. Note this is still just a **UX suggestion**, not the authori
 enforcement happens server-side (below). When enabled, up to that many ligands are docked
 concurrently — each is still a fully independent, separately-timed-out Moldina process
 (never batched), so this is running several single-ligand invocations at once rather than
-reintroducing the original OOM-prone batching. Each worker runs with `cpu` cores (1 for
+OOM-prone batching. Each worker runs with `cpu` cores (1 for
 Moldina PSO, which ignores `--cpu`; the "CPUs per ligand" field for Vina), so `N` workers
 use `N × cpu` cores.
 
-#### Why the CPU limit didn't do what I expected
+#### How the CPU limit is detected
 
 The worker count is clamped server-side to the number of ligands and to
 `moldina-runner`'s real, schedulable CPU budget — **not just** `os.cpu_count()` alone.
 Docker Compose's `deploy.resources.limits.cpus` is enforced as a cgroup CFS *scheduling
-quota*, not a CPU affinity mask, so `os.cpu_count()` inside the container (and the GUI's
-own naive detection, before the fix described above) does **not** reflect it on its own —
-both can report far more cores than are actually available. The clamp therefore reads the
+quota*, not a CPU affinity mask, so `os.cpu_count()` inside the container does **not**
+reflect it on its own — it can report far more cores than are actually available. The clamp therefore reads the
 cgroup quota directly
 (`services/moldina_runner/__init__.py:_detect_effective_cpu_count()`; cgroup v2's
 `cpu.max`, falling back to v1's `cpu.cfs_quota_us`/`cpu.cfs_period_us`) and takes
 `min(configured quota, os.cpu_count())` — never trusting either number alone — then
 divides that by the CPUs per ligand, so workers × CPUs never exceeds it. That is `cpu`
 in Vina mode, whose search really uses `cpu` cores, and 1 in PSO mode, which ignores
-`cpu` (Review Stage R1, Phase 15: PSO used to be divided by `cpu` too). This
+`cpu`. This
 matters if you raise `cpus:` further: a higher quota doesn't require or reserve that many
 real cores, so deploying the same config on smaller hardware than it assumes (e.g.
 `cpus: '10'` run on a 4-core machine) would otherwise let the quota alone claim more
@@ -287,10 +286,11 @@ per-worker figure) ≈ 4.8 GiB, well under 8 GiB. The measured peak at 8 workers
 - These ligands dock in about 2.3 s each on their own. Ligands that take longer may scale
   differently, so re-benchmark with a representative job if your batches differ a lot.
 
-**Re-run (Review Stage R1, same day).** The run above measured each configuration's wall
-clock only after the memory sampler had stopped, so it could include up to one in-flight
-`docker stats` call (~1–2 s) — about the size of the 5% margin the rule works with. After
-that was fixed, the same command was run again
+**Re-run (same day).** The run above measured each configuration's wall clock only after
+the memory sampler had stopped, so it could include up to one in-flight `docker stats`
+call (~1–2 s) — about the size of the 5% margin the rule works with. With the wall clock
+taken before the sampler stops (as `benchmark_docking.py` does), the same command was run
+again
 ([`docs/benchmarks/2026-10-05_moldina_cpus10_mem8g_r1_rerun.json`](benchmarks/2026-10-05_moldina_cpus10_mem8g_r1_rerun.json),
 idle 45.3 MiB, 300/300 succeeded): 1 / 2 / 4 / 6 / 8 / 10 workers took 115.0 / 56.9 / 30.5 /
 24.8 / 22.8 / 23.1 s. 8 workers was the fastest outright and 6 (24.8 s) is outside 5%, so
@@ -301,7 +301,7 @@ constants, and `tests/test_worker_cap.py` checks them against both.
 #### Vina benchmark baseline (2026-10-06)
 
 The same probe and limits (`cpus: '10'`, `memory: 8G`, cgroup budget 10.00 cores),
-measured for `--docking-algorithm vina` (Stage 15.3). This sets
+measured for `--docking-algorithm vina`. This sets
 `MEASURED_BEST_WORKERS["vina"]` and `MEASURED_PEAK_MIB_PER_WORKER["vina"]`, and
 `tests/test_worker_cap.py` re-derives both from the JSON.
 

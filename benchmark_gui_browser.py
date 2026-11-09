@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Drive the GUI in a headless browser and time it (Phase 16, Stages 16.0 / 16.8).
+Drive the GUI in a headless browser and time it.
 
 This is the scripted half of the GUI performance measurement in
 docs/GUI_GUIDE.md, "Performance". It opens the GUI with ?perf, injects
@@ -40,13 +40,12 @@ the GUI's history). It changes nothing else: the Box X steps are made in
 Selectors are roles, labels and texts (NiceGUI's `.mark()` markers exist
 only for its User fixture, not in the page). Load and the box picker are on
 the Sessions and Setup tabs; the tab click before a timed action is not
-counted (`Driver.timed(prepare=...)`). The scenarios are the ones the
-Streamlit GUI was timed with in Stage 16.0 (the Streamlit selectors were
-removed with it in 16.8), so the numbers compare like for like.
+counted (`Driver.timed(prepare=...)`). The scenarios stay fixed, so runs
+on different versions compare like for like.
 
 The latency snippet also reports a *filtered* median that ignores Quasar's
-button ripple and tooltip (animation, not the page's work; Stage 16.8). The
-raw median is the one to compare with Streamlit's.
+button ripple and tooltip (animation, not the page's work). Both medians
+are recorded.
 """
 from __future__ import annotations
 

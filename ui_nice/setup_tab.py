@@ -1,4 +1,4 @@
-"""The Setup tab's form side (Phase 16, Stage 16.4): input mode and inputs,
+"""The Setup tab's form side: input mode and inputs,
 the Docking Box fields, the "Current parameters" summary, Advanced, the
 session name, the action buttons, the running session's progress, and the
 redock confirmation dialog.
@@ -169,7 +169,7 @@ class SetupView:
                 self._text("param_exhaustiveness", "Exhaustiveness").classes("grow").tooltip(
                     "Vina (Monte Carlo) only — Moldina (PSO) ignores it."
                 )
-            # A number input (Phase 15 Future Work): only whole numbers >= 1.
+            # A number input: only whole numbers >= 1.
             self.cpu = ui.number(
                 "CPUs per ligand", min=1, step=1, precision=0, on_change=self._on_cpu,
             ).mark("param_cpu")

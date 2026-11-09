@@ -1,5 +1,5 @@
 """Save results as… -- copy the active session's results into a named
-bundle (Phase 16, Stage 16.2).
+bundle.
 
 Shared by the results
 panel's controls and the chat's ``save results/docking/visualization as
@@ -8,7 +8,7 @@ panel's controls and the chat's ``save results/docking/visualization as
 Save as ``<name>_HHMMSS``.
 
 Copying a real session's results takes tens of seconds on a Docker Desktop
-bind mount (34-37 s for 17 MB of docking results, Review Stage R2). So a
+bind mount (34-37 s for 17 MB of docking results). So a
 save is three steps, and a GUI with an event loop runs only the middle one
 off it: :func:`plan_save` (checks, on the state), :func:`write_bundle` (the
 copy; touches no GUI state), :func:`finish_save` (the reply and the

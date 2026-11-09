@@ -1,4 +1,4 @@
-"""The LLM settings form's logic (Phase 16, Stage 16.7).
+"""The LLM settings form's logic.
 
 Loading and saving the settings file is ``ui.settings``' job.
 """
@@ -17,14 +17,14 @@ PROVIDER_LABELS = {
 }
 # The providers that take an API key field.
 API_KEY_PROVIDERS = ("openai", "anthropic", "metacentrum", "openai_compatible")
-# Apply's refusal of a provider without a model (Review Stage R5): LLM_MODEL
-# defaults to empty since Stage 18.2, so nothing else supplies one.
+# Apply's refusal of a provider without a model: LLM_MODEL defaults to
+# empty, so nothing else supplies one.
 MODEL_REQUIRED = "Pick or type a model for {provider}."
 
-# The Ollama models the settings dialog offers to download (Stage 18.3), as
+# The Ollama models the settings dialog offers to download, as
 # (name, download size, note). The same two README's "Choose an LLM" table
 # recommends: gemma3:4b is the light choice, and the model the platform's
-# live checks (docs/reviews/) parse workflows with; the Qwen 2.5 Coder 7B Q4
+# live checks parse workflows with; the Qwen 2.5 Coder 7B Q4
 # build has stronger instruction following but wants 16 GB RAM. Any other
 # Ollama library name can be typed in the dialog.
 RECOMMENDED_OLLAMA_MODELS = (
@@ -53,7 +53,7 @@ def settings_from_form(
       provider (including metacentrum, which has no override field yet) a
       stale value left over from an earlier openai_compatible session goes;
     - only :data:`API_KEY_PROVIDERS` have the API key and "Remember" fields,
-      so for the others a remembered key is not saved again (Review Stage R5).
+      so for the others a remembered key is not saved again.
     """
     takes_key = provider in API_KEY_PROVIDERS
     return {

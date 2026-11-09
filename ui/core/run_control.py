@@ -1,4 +1,4 @@
-"""Run, redock, stop and save-session actions (Phase 16, Stage 16.1).
+"""Run, redock, stop and save-session actions.
 
 Replies go into ``state.messages``; what else
 the page must do comes back as an :class:`~ui.core.state.Outcome`
@@ -37,8 +37,7 @@ def active_bridge_job_id(state) -> Optional[str]:
     background thread (it keeps writing to its job_dir with nothing left in
     the state able to observe or stop it) and, for Load/Delete
     specifically, desyncs ``job_id`` from the bridge's real target, which
-    defeats the very running-job guard those actions rely on (see
-    docs/reviews/stage_11_2_11_3_r2.md).
+    defeats the very running-job guard those actions rely on.
     """
     bridge = state.bridge
     if bridge is not None and bridge.is_running():
@@ -54,16 +53,14 @@ def any_bridge_running(state) -> bool:
 def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outcome:
     """"Run Docking": start a new job, or -- with a session active -- stage
     a redock plan for confirmation (:func:`plan_redock`)."""
-    # DEFERRED (Review Stage R2, docs/reviews/stage_16_r2.md, Deferred #1):
-    # this, confirm_redock() and save_session() do their file work
+    # NOTE (known limitation): this, confirm_redock() and save_session() do their file work
     # (validation's file checks, WorkflowStateManager init, checkpoint,
     # job.log) inline: 150-600 ms per click on a Docker Desktop bind mount,
     # which NiceGUI runs on the event loop every client shares. Fix if the
     # GUI serves more than one user, or a stall is noticed: split each like
     # ui.core.save_results (plan on the loop -> file work in run.io_bound ->
     # apply on the loop), with PageController.busy holding the session
-    # meanwhile. Widened by Review Stage R3 (docs/reviews/stage_16_r3.md,
-    # Deferred #1): NiceGUI's Load (sessions.resume_session) and its Save
+    # meanwhile. Likewise, NiceGUI's Load (sessions.resume_session) and its Save
     # results bundle click (save_results.plan_save's save_block_reason) do
     # the same kind of reads inline, ~55 ms for the largest (1.2 MB)
     # session; the same fix and trigger apply.
@@ -77,8 +74,7 @@ def run_docking(state, output_base: Path, bridge_factory: BridgeFactory) -> Outc
     # for a previous (unrelated) protein/session no longer applies. Without
     # this, a geometry chat command would keep preferring that stale path
     # over this new job's own prepare_protein result once it completes,
-    # silently computing geometry from the wrong protein (Review Stage R1,
-    # Phase 12).
+    # silently computing geometry from the wrong protein.
     clear_box_picker_state(state)
 
     # Always include visualization — it runs after docking and produces the PNG.
@@ -140,8 +136,8 @@ def plan_redock(state, params: dict) -> Outcome:
 
     # Steps the last run never got to (stopped or failed part-way) must run
     # even with no parameter change, and must stay plannable: intersecting
-    # with the executed steps alone dropped dock/visualize for good after a
-    # stopped first run (Review Stage R1, Phase 13).
+    # with the executed steps alone would drop dock/visualize for good after
+    # a stopped first run.
     last = session.last_results or {}
     executed = set(last.get("services_executed", []))
     unfinished = set() if last.get("status") == "completed" else set(WORKFLOW_STEPS) - executed
@@ -267,7 +263,7 @@ def process_docking_bridge(state) -> bool:
     # COMPLETED SUCCESSFULLY") are lost. is_running() is read *before*
     # draining: once the thread is seen finished, everything it printed is
     # already queued. The log is the run's own, not the last chat message's
-    # (Review Stage R1, deferred #1): a chat sent mid-run stays as typed.
+    # a chat sent mid-run stays as typed.
     running = bridge.is_running()
     lines = bridge.get_log_lines()
     state.run_log.extend(lines)
@@ -279,8 +275,7 @@ def process_docking_bridge(state) -> bool:
     # result execute_workflow() returns, so a subsequent redock's
     # original_services/last_results reflect this run instead of going
     # stale -- reusing the on-disk merge execute_workflow() already does
-    # rather than re-deriving it here (see docs/reviews/stage_11_1_r1.md
-    # finding #5).
+    # rather than re-deriving it here.
     session = state.interactive_session
     if result is not None and session.has_active_job() and session.job_id == state.job_id:
         session.last_results = result

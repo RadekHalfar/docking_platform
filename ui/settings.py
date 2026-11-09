@@ -2,7 +2,7 @@
 
 Settings survive a browser refresh (which resets the GUI's per-tab state) by
 being written to a small JSON file on disk. The API key is written to that
-file only when the user ticks "Remember API key" (Stage 18.3); otherwise it
+file only when the user ticks "Remember API key"; otherwise it
 comes from the LLM_API_KEY env var or is re-entered in the UI for the
 current session only. The file is always written with mode 0600
 (:data:`SETTINGS_FILE_MODE`), because it may hold that key in plain text.
@@ -42,7 +42,7 @@ def load_settings() -> Dict[str, Any]:
 
     settings = {
         # Spelled as the factory reads it, so the dialog shows the provider
-        # the client uses ("OpenAI" in .env is openai, Review Stage R5).
+        # the client uses ("OpenAI" in .env is openai).
         "provider": (os.getenv("LLM_PROVIDER") or "").strip().lower() or NO_LLM_PROVIDER,
         "model": os.getenv("LLM_MODEL", ""),
         "endpoint": os.getenv("LLM_ENDPOINT", DEFAULT_ENDPOINT),
@@ -73,7 +73,7 @@ def save_settings(settings: Dict[str, Any]) -> None:
     if remember and settings.get("api_key"):
         to_save["api_key"] = settings["api_key"]
     # Replaced, not rewritten in place: no half-written file, and the
-    # non-root GUI can update a file the former root Streamlit GUI created.
+    # non-root GUI can update a file another uid (e.g. root) created.
     atomic_write_json(SETTINGS_FILE, to_save, mode=SETTINGS_FILE_MODE)
 
 

@@ -263,7 +263,7 @@ class TestRenameJob:
         (services/llm_orchestrator/orchestrator.py) and atomic_write_json --
         without them, a rename racing a concurrent redock's locked
         read-merge-write to the same file could clobber its freshly-merged
-        results (docs/reviews/stage_11_2_11_3_r2.md finding #3).
+        results.
         """
         job_dir = tmp_path / "job_a"
         _write_workflow_results(job_dir, job_name="Old name")
@@ -335,7 +335,7 @@ def _count_reads(monkeypatch):
 
 class TestListCompletedAndFailedJobs:
     def test_a_relist_reads_only_the_sessions_that_changed(self, tmp_path, monkeypatch):
-        # Review Stage R4: every Sessions tab open re-parsed every session
+        # Every Sessions tab open re-parsed every session
         # (4-6 s for ~190 on a bind mount).
         _write_workflow_results(tmp_path / "job_a", dock_results=[{"ligand_id": "ATP"}])
         _write_workflow_results(tmp_path / "job_b", status="failed", errors=["boom"])
@@ -350,7 +350,7 @@ class TestListCompletedAndFailedJobs:
         assert reads == ["job_a"] and completed[0]["job_name"] == "renamed and longer"
 
     def test_a_listing_entry_changed_by_the_caller_does_not_change_the_next_listing(self, tmp_path):
-        # The GUI writes a rename into the entry it holds (Review Stage R3).
+        # The GUI writes a rename into the entry it holds.
         _write_workflow_results(tmp_path / "job_a", job_name="old")
         completed, _ = list_completed_and_failed_jobs(str(tmp_path))
         completed[0]["job_name"] = "changed"
@@ -367,7 +367,7 @@ class TestListCompletedAndFailedJobs:
 
     def test_one_scan_gives_both_lists(self, tmp_path, monkeypatch):
         # Parsing every results file is the slow part (4-6 s for ~170
-        # sessions on a bind mount); the GUI read them twice (Review Stage R3).
+        # sessions on a bind mount); the GUI read them twice.
         _write_workflow_results(tmp_path / "job_a", dock_results=[{"ligand_id": "ATP"}])
         _write_workflow_results(tmp_path / "job_b", status="failed", errors=["boom"])
         _write_workflow_results(tmp_path / "job_c", status="cancelled")

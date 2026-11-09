@@ -35,7 +35,7 @@ _SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
 # Repo root as seen from wherever pytest runs (tests/ is always one level down).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-CENTER = [-25.544, 12.854, 58.25]  # 6LU7 geometric center (Phase 12 real-data check)
+CENTER = [-25.544, 12.854, 58.25]  # 6LU7 geometric center
 
 
 @pytest.fixture

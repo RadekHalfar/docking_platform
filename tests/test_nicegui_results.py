@@ -1,9 +1,7 @@
-"""The NiceGUI Results tab (Phase 16, Stage 16.6): the Session Viewer,
+"""The NiceGUI Results tab: the Session Viewer,
 Save results as…, the Session Log, the downloads and their route, Compare
 Sessions, and the switch to Results when a run finishes.
 
-Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
-each ported test keeps its old name.
 Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 """
 import asyncio
@@ -107,7 +105,7 @@ async def test_completed_session_from_disk_renders_results_and_viewer(user: User
 @pytest.mark.parametrize("algorithm, label", [("vina", "Vina (Monte Carlo)"), (None, "Moldina (PSO)")])
 async def test_results_name_the_algorithm_that_docked(user: User, page, output_base, algorithm, label):
     data = completed_job_data(Path("/nonexistent.pdb"))
-    if algorithm:  # None: a result written before Phase 15
+    if algorithm:  # None: a result written without the key
         data["results"]["dock"]["docking_algorithm"] = algorithm
     (output_base / JOB_ID).mkdir()
     (output_base / JOB_ID / "workflow_results.json").write_text(json.dumps(data))
@@ -170,8 +168,7 @@ async def test_failed_session_shows_its_errors_and_log(user: User, page, output_
 
 async def test_a_result_that_cannot_be_read_is_said_so(user: User, page, output_base, monkeypatch):
     # Only OSError was caught: anything else (a malformed result) left the
-    # viewer on what it showed before, and the load was never retried
-    # (Review Stage R3).
+    # viewer on what it showed before, and the load was never retried.
     completed_job_on_disk(output_base, JOB_ID)
 
     def malformed(*args):
@@ -188,8 +185,7 @@ async def test_a_result_that_cannot_be_read_is_said_so(user: User, page, output_
 
 
 async def test_a_rename_of_the_viewed_session_follows_into_its_status(user: User, page, output_base):
-    # The status line kept the name the session was read with (Review
-    # Stage R3).
+    # The status line must not keep the name the session was read with.
     page.seed(lambda state: completed_session_with_artifacts(state, output_base))
     await user.open("/")
     open_results(user, page)
@@ -300,7 +296,7 @@ async def test_save_results_blocked_while_parameters_pending(user: User, page, o
 
 
 async def test_save_results_blocked_when_parameters_never_ran_after_load(user: User, page, output_base):
-    # Real case found during Stage 13.3: a revision restored but never
+    # A real case: a revision restored but never
     # redocked, then the session Loaded again -- `pending` is reset by the
     # Load, so only the on-disk manifest still shows the results predate it.
     def seed(state):
@@ -320,7 +316,7 @@ async def test_save_results_blocked_when_parameters_never_ran_after_load(user: U
 
 async def test_a_failed_save_check_is_shown_not_left_pending(user: User, page, output_base, monkeypatch):
     # An uncaught failure of the background check left the button off with
-    # no reason, never checked again (Review Stage R3).
+    # no reason, never checked again.
     def unreadable(state, output_base):
         raise PermissionError("[Errno 13] Permission denied: 'workflow_manifest.json'")
 
@@ -374,7 +370,7 @@ async def test_conflict_cancel_hides_the_buttons(user: User, page, output_base):
 
 
 async def test_panel_and_conflict_saves_copy_off_the_event_loop(user: User, page, output_base, monkeypatch):
-    # Review Stage R2, Deferred #2: a real copy took 34-37 s with every
+    # A real copy took 34-37 s with every
     # client frozen.
     copied_on_loop = []
     real_write_bundle = save_results.write_bundle
@@ -404,7 +400,7 @@ async def test_save_panel_only_for_the_active_session(user: User, page, output_b
 
 
 # ---------------------------------------------------------------------------
-# Downloads (ported) and the route (finding 3)
+# Downloads and the download route
 # ---------------------------------------------------------------------------
 
 async def test_file_downloads_exclude_saved_bundles(user: User, page, output_base):
@@ -484,8 +480,7 @@ async def test_download_route_refuses_anything_outside_the_session(http, output_
 
 
 async def test_download_route_streams_a_large_file(user: User, output_base):
-    # Called through ASGI directly: httpx's ASGITransport buffers the body
-    # (Stage 16.0 spike, S4).
+    # Called through ASGI directly: httpx's ASGITransport buffers the body.
     big = output_base / JOB_ID / "docking_results" / "big.pdbqt"
     big.parent.mkdir(parents=True)
     big.write_bytes(b"x" * (3 * 1024 * 1024))
@@ -500,7 +495,7 @@ async def test_download_route_streams_a_large_file(user: User, output_base):
     async def receive():
         # As a server does: the request once, then nothing until the client
         # disconnects (Starlette 1.8's FileResponse listens for that, and
-        # failed on a second http.request -- found in Review Stage R3).
+        # fails on a second http.request).
         if not requested:
             requested.append(1)
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -586,7 +581,7 @@ async def test_an_unreadable_log_keeps_the_last_one_and_the_tick_going(
     user: User, page, output_base, monkeypatch
 ):
     # poll() raised, which stopped tick() before its redraw, every second
-    # of the run (Review Stage R3).
+    # of the run.
     log = output_base / HISTORY_JOB_ID / "job.log"
 
     def seed(state):

@@ -1,5 +1,4 @@
-"""Local file uploads: saving them and taking them into the parameters
-(Phase 16, Stage 16.4).
+"""Local file uploads: saving them and taking them into the parameters.
 
 How the GUI receives the file (NiceGUI's ``ui.upload`` event) stays in the
 GUI; it hands over the name and the bytes.
@@ -25,15 +24,15 @@ def save_upload(name: str, data: bytes, upload_dir: Path) -> Path:
 
     Each upload gets a directory of its own, so a file is never replaced
     once a session's parameters point to it: with one flat directory, a
-    same-named upload from another tab or the other GUI silently swapped
-    the molecule an earlier session docks -- and redocks (Review Stage R2).
+    same-named upload from another tab would silently swap the molecule
+    an earlier session docks -- and redocks.
     """
     safe_name = Path(name).name
     if not safe_name or safe_name in (".", ".."):
         raise ValueError(f"Unusable uploaded filename: {name!r}")
 
-    # Shared: the services (another container) read the files, and older
-    # uploads here were written by the former root Streamlit UI.
+    # Shared: the services (another container) read the files, and other
+    # uids (e.g. a root container) may write here too.
     upload_dir = ensure_shared_directory(Path(upload_dir))
     dest_dir = ensure_shared_directory(tempfile.mkdtemp(dir=upload_dir, prefix="upload_"))
     dest = dest_dir / safe_name
@@ -63,9 +62,8 @@ def apply_ligand_uploads(state, paths: Sequence[Path], *, folder_mode: bool = Fa
     Clear button empties them), replacing any ligand IDs, and in Batch
     Processing mode a ligand folder. The reply names them all.
 
-    A dropped file named like one already set replaces it (owner's choice,
-    Review Stage R3), and so does a later file of the same name in the same
-    drop (Review Stage R4): two files of one name would fail the run's
+    A dropped file named like one already set replaces it, and so does a
+    later file of the same name in the same drop: two files of one name would fail the run's
     "Local ligand filename collision" check."""
     # Keyed by file name, in order: a replacement moves to the end. One pass,
     # so a Batch Processing drop of thousands of files stays cheap.

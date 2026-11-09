@@ -1,4 +1,4 @@
-"""The Results tab (Phase 16, Stage 16.6): the Session Viewer and Compare
+"""The Results tab: the Session Viewer and Compare
 Sessions.
 
 The Session Viewer shows the viewed session (a Load), else the active one:
@@ -11,12 +11,11 @@ Like the box picker, :meth:`ResultsView.sync` touches no file. A result is
 read off the event loop (``run.io_bound``) once, when what is shown changes
 (:meth:`ResultsView._load_key`): a run finishing, a redock, a Load, New
 Session. While a run goes, the timer's :meth:`ResultsView.poll` re-reads
-``job.log`` only if it changed (Review Stage R1, Deferred #3).
+``job.log`` only if it changed.
 
 Downloads are links to the ``/files/<job_id>/<path>`` route
 (``ui_nice/app.py``), so the browser streams them and no file's bytes are
-held here (finding 3). Saves copy off the event loop through the controller
-(Review Stage R2, Deferred #2).
+held here. Saves copy off the event loop through the controller.
 """
 from __future__ import annotations
 
@@ -57,7 +56,7 @@ _RESULT_STATUSES = ("completed", "failed", "cancelled")
 # tab (its keep-alive panel is detached) or the Session Viewer -- and
 # Plotly throws "Resize must be passed a displayed plot div element". The
 # observer fires again once the chart is shown, so a resize of a chart not
-# displayed is skipped (owner's choice, Review Stage R3). Re-check on a
+# displayed is skipped. Re-check on a
 # NiceGUI upgrade: the element may guard this itself.
 PLOTLY_RESIZE_GUARD = """
 <script type="module">
@@ -233,7 +232,7 @@ class ResultsView:
     def _job_name(self) -> Optional[str]:
         shown = self._shown
         # The active session's name as it is now: state.job_name names
-        # state.job_id, and a rename follows into it (Review Stage R3).
+        # state.job_id, and a rename follows into it.
         if shown.live or shown.job_id == self.state.job_id:
             return self.state.job_name
         return shown.result.get("job_name")
@@ -386,8 +385,7 @@ class ResultsView:
         self.pose_caption.set_text(f"Poses of {ligand}" if ligand else "No poses to show")
 
     def _redraw_poses(self) -> None:
-        # DEFERRED (Review Stage R3, docs/reviews/stage_16_r3.md, Deferred
-        # #2): a pose or ligand click re-sends every ligand's shown pose
+        # NOTE (known limitation): a pose or ligand click re-sends every ligand's shown pose
         # (set_ligands), a few KB each, so ~1 MB per click on a 300-ligand
         # batch. Fix if a click on a large batch is noticeably slow: a
         # MolViewer.set_ligand(ligand, entry) that sends only the ligand
@@ -441,8 +439,8 @@ class ResultsView:
                 results_view.job_log_if_changed, self.output_base, job_id, self._log_stat
             )
         except OSError:
-            # The log shown stays as last read. Raised, it stopped the tick
-            # before its redraw, every second of the run (Review Stage R3).
+            # The log shown stays as last read. Raised, it would stop the
+            # tick before its redraw, every second of the run.
             logger.warning("reading the log of %s failed", job_id, exc_info=True)
             return
         if self._shown.job_id != job_id:
@@ -477,8 +475,7 @@ class ResultsView:
         except Exception as exc:
             # The task's boundary: e.g. another uid's unreadable file, or a
             # malformed result. Say so, and don't retry; an uncaught one
-            # left the viewer on its previous session for good (Review
-            # Stage R3).
+            # would leave the viewer on its previous session for good.
             logger.warning("reading the results of %s failed", job_id, exc_info=True)
             read = _Read(error=str(exc))
         if self._loading != key:
@@ -552,8 +549,8 @@ class ResultsView:
         try:
             reason = await run.io_bound(save_results.save_block_reason, self.state, self.output_base)
         except Exception as exc:
-            # The task's boundary: an uncaught failure left the button off
-            # with no reason, never checked again (Review Stage R3).
+            # The task's boundary: an uncaught failure would leave the
+            # button off with no reason, never checked again.
             logger.warning("checking whether the results can be saved failed", exc_info=True)
             reason = f"Could not check whether the results can be saved: {exc}"
         if self._reason_loading != key:

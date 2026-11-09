@@ -77,7 +77,7 @@ def test_to_container_path_preserves_absolute_windows_drive_style():
 
 
 # ---------------------------------------------------------------------------
-# from_container_path -- reverse direction, Stage 12.3 (CLI reading a
+# from_container_path -- reverse direction (CLI reading a
 # prepared-protein path an MCP service returned, e.g. "/app/orchestrator_
 # output/job_x/..."). Shared by the GUI (ui/core) and nlp_orchestrator.py.
 # ---------------------------------------------------------------------------

@@ -1,8 +1,6 @@
-"""The NiceGUI chat drawer (Phase 16, Stage 16.4): commands, the LLM parse
+"""The NiceGUI chat drawer: commands, the LLM parse
 off the event loop, and the run log.
 
-Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
-each ported test keeps its old name.
 Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 
 The LLM is never called: tests patch the parse functions on
@@ -58,7 +56,7 @@ def _running(page, output_base):
 
 
 # ---------------------------------------------------------------------------
-# Revision history and undo (Stage 13.2)
+# Revision history and undo
 # ---------------------------------------------------------------------------
 
 async def test_chat_history_without_active_session(user: User, page):
@@ -125,7 +123,7 @@ async def test_chat_undo_of_state_only_revision_is_refused(user: User, page, out
 
 
 # ---------------------------------------------------------------------------
-# Save results as (Stage 13.3)
+# Save results as
 # ---------------------------------------------------------------------------
 
 async def test_chat_save_refused_while_job_runs(user: User, page, output_base):
@@ -157,7 +155,7 @@ async def test_chat_save_docking_as_name(user: User, page, output_base):
 
 
 # ---------------------------------------------------------------------------
-# Docking algorithm (Stage 15.3)
+# Docking algorithm
 # ---------------------------------------------------------------------------
 
 async def test_chat_parse_without_algorithm_keeps_the_selector(user: User, page, monkeypatch):
@@ -186,8 +184,8 @@ async def test_chat_parse_naming_an_unknown_algorithm_renders_without_crash(user
     assert "'gnina' is not recognised, so Moldina (PSO) stays selected" in reply
     assert "docking_algorithm" not in reply
 
-    # Review Stage R1, Phase 15, correctness #6: the bad name used to ride
-    # along into every follow-up merge and be asked about again each time.
+    # The bad name must not ride along into every follow-up merge and be
+    # asked about again each time.
     monkeypatch.setattr(
         f"{PARSER}.parse_followup_with_llm",
         lambda client, message, **_kw: {"services_add": [], "parameters": {"ph": 6.5}},
@@ -199,7 +197,7 @@ async def test_chat_parse_naming_an_unknown_algorithm_renders_without_crash(user
 
 
 async def test_chat_parse_keeps_the_users_vina_cpu_exhaustiveness_and_ph(user: User, page, monkeypatch):
-    """Review Stage R1, Phase 15, correctness #3: only what the message
+    """Only what the message
     named reaches the form, not the validator's defaults."""
     monkeypatch.setattr(f"{PARSER}.parse_workflow_with_llm", _parse_returning({"center": [10.0, 20.0, 30.0]}))
     with_worker_cap(page, WorkerCap(10, "compose"))
@@ -235,7 +233,7 @@ async def test_chat_algorithm_command_moves_the_selector_and_resets_workers(user
 
 
 # ---------------------------------------------------------------------------
-# The LLM parse runs off the event loop (Stage 16.4)
+# The LLM parse runs off the event loop
 # ---------------------------------------------------------------------------
 
 async def test_chat_input_is_disabled_while_the_llm_parses(user: User, page, monkeypatch):
@@ -261,7 +259,7 @@ async def test_chat_input_is_disabled_while_the_llm_parses(user: User, page, mon
 
 
 async def test_parse_in_flight_is_dropped_after_new_session(user: User, page, output_base, monkeypatch):
-    # Review Stage R1, deferred #2: a session change during the LLM call
+    # A session change during the LLM call
     # must not receive that call's result.
     release = threading.Event()
 
@@ -303,7 +301,7 @@ async def test_llm_failure_is_the_reply(user: User, page, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The run log (Review Stage R1, deferred #1)
+# The run log
 # ---------------------------------------------------------------------------
 
 async def test_run_log_streams_apart_from_the_chat(user: User, page, output_base):
@@ -326,7 +324,7 @@ async def test_run_log_streams_apart_from_the_chat(user: User, page, output_base
 
 
 async def test_underscores_in_chat_replies_are_not_italics(user: User, page):
-    # Found in Stage 16.4's real-data check: markdown2 read
+    # Without code-friendly, markdown2 reads
     # "check164_crystal_ligand.mol2" as check164<em>crystal</em>ligand.mol2.
     page.seed(lambda state: state.messages.append(
         {"role": "assistant", "content": "Local protein file set: **check164_crystal_ligand.mol2**, prepare_ligands"}
@@ -340,12 +338,12 @@ async def test_underscores_in_chat_replies_are_not_italics(user: User, page):
 
 
 # ---------------------------------------------------------------------------
-# Review Stage R2
+# Saving off the event loop
 # ---------------------------------------------------------------------------
 
 async def test_save_copies_off_the_event_loop_and_holds_the_session_meanwhile(user: User, page, output_base, monkeypatch):
     # A real session's bundle took 34-37 s on a Docker Desktop bind mount,
-    # every client's page frozen meanwhile (Review Stage R2).
+    # every client's page frozen meanwhile.
     import ui.core.save_results as core_save
 
     where, gate = [], threading.Event()
@@ -379,7 +377,7 @@ async def test_save_copies_off_the_event_loop_and_holds_the_session_meanwhile(us
 
 
 # ---------------------------------------------------------------------------
-# Starting docking from the chat (Stage 17.1)
+# Starting docking from the chat
 # ---------------------------------------------------------------------------
 
 async def test_chat_run_starts_a_job(user: User, page, monkeypatch):
@@ -461,7 +459,7 @@ async def test_chat_run_while_a_run_goes_is_refused(user: User, page, output_bas
 
 
 # ---------------------------------------------------------------------------
-# No LLM (provider "none", the Phase 18 default)
+# No LLM (provider "none", the default)
 # ---------------------------------------------------------------------------
 
 async def test_no_llm_chat_answers_with_the_setup_hint(user: User, page, monkeypatch):
@@ -478,8 +476,8 @@ async def test_no_llm_chat_answers_with_the_setup_hint(user: User, page, monkeyp
 
 
 def test_the_setup_hint_shows_its_save_placeholder():
-    # Bold, "<name>" reached the browser as an unknown HTML tag and vanished
-    # (Review Stage R5). Rendered as ui_nice.widgets.markdown renders it.
+    # Bold, "<name>" reached the browser as an unknown HTML tag and vanished.
+    # Rendered as ui_nice.widgets.markdown renders it.
     import markdown2
 
     from ui_nice.widgets import MARKDOWN_EXTRAS

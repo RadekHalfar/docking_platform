@@ -32,8 +32,8 @@ def _normalize_docking_algorithm_in_place(params: Dict[str, Any]) -> None:
 def _normalize_cpu_in_place(params: Dict[str, Any]) -> None:
     """Make "cpu" a whole number >= 1 ("4.0" -> 4). A value that isn't one
     (e.g. an LLM's "all") is dropped, so the default -- or, for an update,
-    the current value -- stays (Review Stage R4: it reached the form and the
-    docking call as given)."""
+    the current value -- stays, instead of reaching the form and the
+    docking call as given."""
     if "cpu" in params:
         cpu = whole_number(params["cpu"])
         if cpu is None:

@@ -240,12 +240,10 @@ docker compose up -d --remove-orphans
 ```
 
 `--remove-orphans` also stops containers of services that were removed from
-`docker-compose.yml`. **Upgrading past Phase 16 (2026-10-26):** the
-`ui-nice` service (NiceGUI on port 3001) is gone, since NiceGUI now serves
-`ui` on port 3000. A plain `docker compose up -d` leaves the old
-`mcp-ui-nice` container running as an orphan; use the command above, or
-`docker rm -f mcp-ui-nice`. The installer and its launcher scripts pass
-`--remove-orphans` themselves.
+`docker-compose.yml`, so an upgrade that drops a service leaves no stale
+container behind (see `CHANGELOG.md` for services removed between
+versions). The installer and its launcher scripts pass `--remove-orphans`
+themselves.
 
 ### Start Specific Services
 
@@ -440,8 +438,6 @@ in the default hermetic suite (and CI).
 - The Sessions tab reads its lists off the event loop as well:
   `open_sessions(user, page)` opens the tab as a click does, and tests
   `await sessions_listed(page)` before looking at the rows.
-- Many tests keep the names of the Streamlit render tests they replaced
-  (Phase 16); the mapping is in `docs/reviews/stage_16_8_parity.md`.
 - The test IDs print as `ui_nice::test_...`: with `-c`, pytest takes the
   config's directory as its rootdir. Cosmetic only.
 
@@ -543,25 +539,26 @@ directory:
 ```bash
 docker compose --profile dev run --rm script-runner chmod -R 777 /workspace/orchestrator_output/job_<id>
 ```
-- **Linux hosts, the GUI (Phase 16): `Permission denied` on a session,
-  upload or settings file the former Streamlit GUI created.** Until Stage
-  16.8 the GUI was Streamlit, running as root; the `ui` container now runs
-  as the non-root `appuser` (uid 1000) on the same `orchestrator_output/`
-  and `cache/`. Since Stage 16.3 the directories the GUI creates there (job
+- **Linux hosts, the GUI: `Permission denied` on a session, upload or
+  settings file owned by root.** The `ui` container runs as the non-root
+  `appuser` (uid 1000) on the same `orchestrator_output/` and `cache/` as
+  the services. The directories the GUI creates there (job
   dirs, `checkpoints/`, `saved_results/`, `uploads/`) are writable by every
   uid (`ensure_shared_directory()`), so is each job's `job.log`, and the
   JSON files are replaced rather than rewritten, which needs only the
   directory's permission. Each upload goes into a new directory of its own
   (`uploads/upload_<random>/<name>`), so no upload is ever written over.
-  Files the root GUI created **before** 16.3, and deleting a job dir the
-  root GUI created, still need root's files handed to uid 1000, once:
+  Files created by root with default permissions (for example by a root
+  container, or by a GUI version that ran as root — see `CHANGELOG.md`),
+  and deleting a job dir root created, need root's files handed to uid
+  1000, once:
   ```bash
   sudo chown -R 1000:1000 orchestrator_output cache
   ```
   On Docker Desktop (Windows/macOS) files created now on a bind mount
   show up as owned by the container's user. But files that already
-  carry root ownership are enforced: a root-owned 0644 upload from
-  2026-10-02 refused an in-place write with `Errno 13`. If that happens
+  carry root ownership are enforced: a root-owned 0644 upload refuses an
+  in-place write with `Errno 13`. If that happens
   there, run the same `chown` inside a root container, e.g.
   `docker exec -u root mcp-ui chown -R 1000:1000 /workspace/orchestrator_output /workspace/cache`.
 - Settings → Resources → File Sharing
@@ -676,8 +673,7 @@ with `docker compose up -d`.
 
 - **`local-llm`** — the Ollama container (`mcp-llm`, port 11434). Off by
   default so a default install doesn't download the ~4.8 GB image and a
-  3–5 GB model; most users either use a cloud provider or no LLM at all
-  (Phase 18). Models persist in the `ollama-data` volume.
+  3–5 GB model; most users either use a cloud provider or no LLM at all. Models persist in the `ollama-data` volume.
 - **`dev`** — `script-runner`, for scripts and the test suite.
 
 ```bash
@@ -745,16 +741,15 @@ this computer" is ticked in the GUI's Settings, the key is written to
 GUI's user, uid 1000 in the container). Anyone with that user's access, or
 root, on the machine can read it; leave the box unticked to keep the key in
 the browser session only, or set `LLM_API_KEY` in `.env` instead. On Docker
-Desktop for Windows the mode holds inside Docker (checked in Review Stage
-R5: a container running as another uid gets "Permission denied"), but on the
+Desktop for Windows the mode holds inside Docker (a container running as
+another uid gets "Permission denied"), but on the
 host itself the file is as private as the repo folder's own permissions, like
 `.env` next to it.
 
 If you need multi-user or remote/server deployment, do **not** simply remove
 the `127.0.0.1` binding. That requires additional hardening that is not yet
 implemented — a shared API-key/auth layer in front of every service, hardening
-of user-supplied paths, and TLS via a reverse proxy. This work is tracked as a
-future phase in `dev_plan.md`.
+of user-supplied paths, and TLS via a reverse proxy.
 
 ### Additional Hardening (once auth exists)
 

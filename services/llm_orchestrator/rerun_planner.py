@@ -58,8 +58,7 @@ def missing_required_params(steps: List[str], params: dict) -> List[str]:
 
     Shared by the CLI's ``_execute_partial_rerun`` (nlp_orchestrator.py) and
     the GUI's ``plan_redock`` (ui/core/run_control.py) so a fix to what counts
-    as "missing" for a rerun only has to be made in one place (see
-    docs/reviews/stage_11_2_11_3_r2.md).
+    as "missing" for a rerun only has to be made in one place.
     """
     missing: List[str] = []
     for step in steps:

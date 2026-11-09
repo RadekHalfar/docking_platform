@@ -1,15 +1,15 @@
-"""The chat drawer (Phase 16, Stage 16.4): the session label, the messages,
+"""The chat drawer: the session label, the messages,
 the docking run's log and the chat input.
 
 Commands are answered by ``ui.core.chat.submit``; the two that do slow
 file work (geometry, ``save ... as``) run it off the event loop through the
 controller. A run command ("run", "redock", "dock with vina") does what
-Run Docking does, through ``controller.run_docking`` (Stage 17.1). Any other message goes to the LLM: the blocking call runs in
+Run Docking does, through ``controller.run_docking``. Any other message goes to the LLM: the blocking call runs in
 ``run.io_bound`` with the input disabled, and its result is applied only if
 the session hasn't changed meanwhile (``chat.parse_context``). A save
 disables the input the same way (``controller.busy``). With no LLM set up
 (provider "none"), a "Set up an LLM to chat" button above the input opens
-the settings dialog (Stage 18.3).
+the settings dialog.
 """
 from __future__ import annotations
 

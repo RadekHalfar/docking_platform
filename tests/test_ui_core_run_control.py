@@ -1,4 +1,4 @@
-"""Tests for ui/core/run_control.py (Stage 16.1) -- hermetic.
+"""Tests for ui/core/run_control.py -- hermetic.
 
 A plain GuiSession, a fake bridge that never starts a thread, and a
 tmp_path OUTPUT_BASE. The ``Outcome`` assertions pin down when the page
@@ -299,7 +299,7 @@ def test_running_bridge_collects_lines_into_the_run_log(state):
 
 
 def test_chat_message_sent_mid_run_gets_no_log_lines(state):
-    # Review Stage R1 (Phase 16), deferred #1: the lines went to whatever
+    # The lines went to whatever
     # message was posted last, so a chat sent mid-run got the log appended.
     state.bridge = FakeBridge(running=True, lines=["step 1"])
     state.messages.append({"role": "user", "content": "show history"})
@@ -311,7 +311,7 @@ def test_chat_message_sent_mid_run_gets_no_log_lines(state):
 
 
 def test_finished_bridge_collects_its_last_lines_before_the_reply(state):
-    # Review Stage R1 (Phase 16): lines queued just before the thread ended
+    # Lines queued just before the thread ended
     # were never drained, so "WORKFLOW COMPLETED SUCCESSFULLY" never showed.
     state.bridge = FakeBridge(result={"status": "completed", "results": {}},
                               lines=["", "WORKFLOW COMPLETED SUCCESSFULLY"])
@@ -390,7 +390,7 @@ def test_no_bridge_is_a_noop(state):
 
 
 def test_process_docking_bridge_reports_whether_the_state_changed(state):
-    # NiceGUI redraws on this (Review Stage R2): a run that ended before
+    # NiceGUI redraws on this: a run that ended before
     # any tick saw it running must still count as a change.
     assert run_control.process_docking_bridge(state) is False  # no bridge
     state.bridge = FakeBridge(running=True)

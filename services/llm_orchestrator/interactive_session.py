@@ -26,7 +26,7 @@ def compute_changed_params(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -
     GUI's one-shot equivalent of how the CLI's ``InteractiveSession``
     incrementally accumulates ``pending_changed_params`` across individual
     ``set ...`` commands: the GUI submits the whole form at once and diffs it
-    against the last on-disk checkpoint. Since Stage 13.2 the GUI also keeps
+    against the last on-disk checkpoint. The GUI also keeps
     ``pending_changed_params`` for changes already checkpointed but not yet
     run to completion (a restored revision, a cancelled redock plan), which
     that diff can't see.
@@ -167,23 +167,23 @@ def save_results_bundle(
 
     # The bundle is written next to its final place and only then swapped in,
     # so a failed overwrite (disk full) keeps the old bundle instead of
-    # destroying it (Review Stage R1, Phase 13). Valid bundle names can't
+    # destroying it. Valid bundle names can't
     # start with '.', so these never collide with a real bundle.
     staging_dir = bundle_dir.with_name(f".{name}.partial")
     replaced_dir = bundle_dir.with_name(f".{name}.replaced")
     try:
         for leftover in (staging_dir, replaced_dir):
             shutil.rmtree(leftover, ignore_errors=True)
-        # Shared: sessions the former root Streamlit GUI created get
-        # bundles from the non-root GUI too (Phase 16).
+        # Shared: other uids (the services, a root container) may write
+        # into the same session directory.
         ensure_shared_directory(bundle_dir.parent)
         staging_dir.mkdir()
         included = _write_bundle_contents(job_dir, staging_dir, name, scope, revision, parameters)
         # The bundle's own directories too: replacing a bundle deletes its
         # files, which needs write access to every directory in it. Without
-        # this, a bundle the other GUI's uid saved (0o755 copytree dirs)
-        # can't be overwritten, and the failed cleanup then blocks every
-        # later overwrite of that name (Review Stage R2).
+        # this, a bundle another uid saved (0o755 copytree dirs) can't be
+        # overwritten, and the failed cleanup then blocks every later
+        # overwrite of that name.
         for directory in (staging_dir, *(d for d in staging_dir.rglob("*") if d.is_dir())):
             ensure_shared_directory(directory)
         # Overwrite replaces the whole bundle: merging would keep e.g. an

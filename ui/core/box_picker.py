@@ -1,4 +1,4 @@
-"""The box picker and protein geometry (Phase 16, Stage 16.2).
+"""The box picker and protein geometry.
 
 The picker keeps no box
 of its own: the Docking Box form fields (``form.BOX_FORM_KEYS``) are the
@@ -97,7 +97,7 @@ def start_box_picker_prep(state, output_base: Path, bridge_factory: Callable) ->
 
     try:
         # A copy: validate_workflow() keeps the list in this client's parser,
-        # and the module-level one is shared by every client (Review Stage R2).
+        # and the module-level one is shared by every client.
         validated = state.parser.validate_workflow({"services": list(PREP_SERVICES), "parameters": params})
     except Exception as exc:
         return False, f"Validation error: {exc}", "error"
@@ -139,7 +139,7 @@ def read_protein_geometry(receptor_path: Path) -> tuple[list[float], list[float]
 
     The slow half of :func:`apply_protein_geometry` (reading and parsing a
     receptor of up to a few MB: 35-80 ms for 0.4-0.9 MB on a Docker Desktop
-    bind mount, Review Stage R2), touching no state, so NiceGUI runs it off
+    bind mount), touching no state, so NiceGUI runs it off
     the event loop. Raises OSError / ValueError."""
     pdb_text = Path(receptor_path).read_bytes().decode("utf-8", errors="replace")
     return compute_protein_center_and_box(pdb_text)
@@ -225,13 +225,11 @@ def process_box_picker_bridge(
         failure_detail = "; ".join(result.get("errors", [])) or "unknown error"
         panel_error = "Could not prepare receptor: " + failure_detail
         failure = f"Could not fetch the protein: {failure_detail}"
-    # DEFERRED to Stage 16.5 (Review Stage R1, docs/reviews/stage_16_r1.md,
-    # deferred #4): any other ending -- "cancelled", or no result and no
+    # NOTE (known gap): any other ending -- "cancelled", or no result and no
     # error -- clears a pending geometry command without a chat reply,
     # though the user was told "I'll set this". Unreachable today: nothing
     # stops the prep job, so it never ends "cancelled", and a missing result
-    # always comes with an error. Stage 16.5 added no Stop (parity first), so
-    # this stays deferred. Fix if a later stage adds a Stop for the prep
+    # always comes with an error. Fix if a Stop is added for the prep
     # job: add an else branch that sets *failure* (e.g. "Receptor
     # preparation was stopped -- could not set this.") and test it.
     if panel_error:

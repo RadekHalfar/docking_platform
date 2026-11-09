@@ -2,9 +2,7 @@
 """
 Sample a GUI container's CPU% and memory over a fixed window.
 
-Phase 16 (Streamlit -> NiceGUI) times the GUI before the port (Stage 16.0)
-and again after it (Stage 16.8), so this tool measures any container the
-same way: it reuses benchmark_docking.py's ContainerStatsSampler
+This tool measures any container the same way: it reuses benchmark_docking.py's ContainerStatsSampler
 (`docker stats --no-stream` on a background thread) for --duration seconds
 and prints mean/peak CPU% and memory. Run it while the GUI is in the state
 you want to measure -- e.g. a completed session loaded and left alone

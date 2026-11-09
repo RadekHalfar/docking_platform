@@ -138,12 +138,11 @@ def with_default_parameters(parameters: Optional[Dict[str, Any]]) -> Dict[str, A
 
     The one place defaults are filled for storing and diffing parameters
     (WorkflowStateManager's save/load, compute_changed_params). A set saved
-    before a parameter existed lacks its key (docking_algorithm before
-    Phase 15), and what it lacks is what ran -- the default. Filling only
-    one side of a diff made a missing key read as a change: a bogus redock
-    plan, three times over (2026-10-01, Stage 13.4, Stage 15.3), each patched
-    at its own call site until Review Stage R1 of Phase 15
-    (docs/reviews/stage_15_r1.md) moved it here.
+    by a version without some parameter lacks its key (e.g.
+    docking_algorithm), and what it lacks is what ran -- the default.
+    Filling only one side of a diff would make a missing key read as a
+    change, i.e. a bogus redock plan; keeping the fill here means no call
+    site can forget it.
     """
     return {**get_default_parameters(), **(parameters or {})}
 

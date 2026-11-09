@@ -1,4 +1,4 @@
-"""The GUI's per-client state as a plain object (Phase 16, Stage 16.1).
+"""The GUI's per-client state as a plain object.
 
 ``GuiSession`` holds everything the GUI's logic reads and writes, one per
 browser client. Widget-local state (rename toggles, the revision selector,
@@ -66,7 +66,7 @@ class Outcome:
 
 @dataclass
 class GuiSession:
-    """One browser client's GUI state. Never module-global (finding 8)."""
+    """One browser client's GUI state. Never module-global: every client gets its own."""
 
     worker_cap: WorkerCap
     messages: List[dict] = field(default_factory=lambda: [dict(GREETING_MESSAGE)])

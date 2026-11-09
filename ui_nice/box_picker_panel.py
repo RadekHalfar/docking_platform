@@ -1,4 +1,4 @@
-"""The Setup tab's viewer side: the visual box picker (Phase 16, Stage 16.5).
+"""The Setup tab's viewer side: the visual box picker.
 
 "Load receptor for box picking" starts a background prepare job; once a
 receptor is prepared it is shown in a :class:`~ui_nice.mol_viewer.MolViewer`
@@ -146,7 +146,7 @@ class BoxPickerView:
             pdb_text, self._failed = None, (receptor, RECEPTOR_GONE)
         except OSError as exc:
             # e.g. another uid's 0o600 file. Recorded, so sync() doesn't
-            # start the same failing read again (Review Stage R2).
+            # start the same failing read again.
             pdb_text, self._failed = None, (receptor, RECEPTOR_UNREADABLE.format(error=exc))
         if self._loading != receptor:
             return  # another receptor was loaded meanwhile

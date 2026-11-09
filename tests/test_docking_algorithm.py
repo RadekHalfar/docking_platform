@@ -1,4 +1,4 @@
-"""Tests for common/docking_algorithm.py (Phase 15, Stage 15.1)."""
+"""Tests for common/docking_algorithm.py."""
 
 import pytest
 
@@ -52,7 +52,7 @@ def test_label_names_known_algorithms_and_shows_unknown_as_is():
 
 @pytest.mark.parametrize("dock_result,expected", [
     ({"docking_algorithm": "vina"}, "vina"),
-    ({"successful": 1}, "moldina"),  # written before Phase 15
+    ({"successful": 1}, "moldina"),  # written without the key
     ({"docking_algorithm": None}, "moldina"),
     (None, "moldina"),
 ])

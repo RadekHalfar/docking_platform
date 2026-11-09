@@ -8,8 +8,7 @@ as protein center" / "look across all protein" chat commands, GUI:
 `ui/core/chat.py`, CLI: `nlp_orchestrator.py`, both routed through
 `services/llm_orchestrator/workflow_llm_parser.py::detect_protein_geometry_command()`)
 and by `services/protein_preparer/__init__.py`'s manual-rigid-receptor PDBQT
-fallback, which previously duplicated this same column parsing independently
-(Review Stage R1, Phase 12, finding #4). The two callers still differ in
+fallback, so the column parsing exists once. The two callers still differ in
 which record types they use (`ATOM` only here vs. `ATOM`+`HETATM` there) and
 which fields they need -- that's each caller's own choice, not a difference
 in how a PDB atom line is parsed.

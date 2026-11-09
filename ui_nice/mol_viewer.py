@@ -1,8 +1,7 @@
-"""The 3Dmol.js viewer element (Phase 16, Stage 16.5; finding 4).
+"""The 3Dmol.js viewer element.
 
-One viewer per element, built once from the constructor's scene (the
-former Streamlit GUI rebuilt it, and reset the camera, on every render).
-Afterwards only the box
+One viewer per element, built once from the constructor's scene, so the
+camera is kept. Afterwards only the box
 overlay (:meth:`MolViewer.set_box`) and the ligand poses
 (:meth:`MolViewer.set_ligands`) are redrawn, so the camera stays where the
 user put it. A new receptor means a new element.
@@ -31,7 +30,7 @@ MODES = ("view", "box_picker")
 
 def serve_vendor_files() -> None:
     """Serve the vendored 3Dmol.js. It is a UMD bundle, not an ES module,
-    so the element loads it with a classic script tag (Stage 16.0 spike, S2)."""
+    so the element loads it with a classic script tag."""
     app.add_static_files(VENDOR_URL, str(VENDOR_DIR))
 
 

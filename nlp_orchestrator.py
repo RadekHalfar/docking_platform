@@ -81,7 +81,7 @@ logger = logging.getLogger(__name__)
 CLARIFICATION_MODE_HYBRID = "hybrid"
 
 # Printed when a natural-language command arrives with no LLM set up
-# (provider "none", the Phase 18 default).
+# (provider "none", the default).
 NO_LLM_MESSAGE = (
     "No LLM provider is configured, and natural-language commands need one.\n"
     "Pick one of:\n"
@@ -91,8 +91,8 @@ NO_LLM_MESSAGE = (
     "    then --llm-provider ollama --llm-model gemma3:4b (the model downloads on first use)\n"
     "The GUI (http://localhost:3000) runs docking from its forms without an LLM."
 )
-# Printed when a provider is set but no model (LLM_MODEL defaults to empty
-# since Phase 18); the GUI's Apply refuses the same (Review Stage R5).
+# Printed when a provider is set but no model (LLM_MODEL defaults to
+# empty); the GUI's Apply refuses the same.
 NO_MODEL_MESSAGE = (
     "LLM provider '{provider}' has no model set. Pass --llm-model <model> or set "
     "LLM_MODEL in .env (--list-models shows an Ollama's models)."
@@ -156,8 +156,8 @@ def _persist_parameter_updates(
     print("✅ Parameters saved to disk.")
 
     # Compute what changed and offer partial rerun -- the shared diff, so a
-    # key an old checkpoint lacks (docking_algorithm before Phase 15) reads
-    # as its default, not as a change (Review Stage R1, Phase 15).
+    # key an older checkpoint lacks (e.g. docking_algorithm) reads as its
+    # default, not as a change.
     changed_keys = compute_changed_params(old_params, current)
 
     # Keep docking_box.json on disk in sync whenever box coordinates change
@@ -189,7 +189,7 @@ def _handle_update_parameters(
     # The LLM's value is never trusted as-is: an unrecognised algorithm
     # would only fail later inside moldina-runner.
     #
-    # NOTE (Review Stage R1, Phase 15, altitude finding #4, deferred): this
+    # NOTE (known design debt): this
     # per-key clause exists because this write path (and
     # _persist_parameter_updates) bypasses WorkflowParser's validation gate,
     # which already normalises and rejects algorithms; the other
@@ -197,8 +197,7 @@ def _handle_update_parameters(
     # normalize_parameter_updates(updates) -> (clean, issues) built on
     # get_parameter_issue, called from _persist_parameter_updates, replacing
     # this clause. Trigger: the next enum- or alias-valued parameter, or
-    # the next LLM-extracted field that needs validation on this path. See
-    # dev_plan.md Phase 15 Future Work and docs/reviews/stage_15_r1.md.
+    # the next LLM-extracted field that needs validation on this path.
     if "docking_algorithm" in updates:
         raw_algorithm = updates.pop("docking_algorithm")
         algorithm = normalize_docking_algorithm(raw_algorithm)
@@ -501,8 +500,8 @@ def _execute_partial_rerun(
     # Determine which services were originally executed. Steps that were
     # planned but never ran (the first workflow was cancelled at its
     # confirmation prompt) must run whatever changed: they have no outputs
-    # to reuse -- the CLI twin of the GUI's rule from Review Stage R1,
-    # Phase 13 (Review Stage R1, Phase 15).
+    # to reuse -- the CLI twin of the GUI's rule in
+    # ui/core/run_control.plan_redock().
     last = session.last_results or {}
     executed = list(last.get("services_executed", []))
     unfinished = [s for s in last.get("services_planned", []) if s not in executed]
@@ -549,9 +548,8 @@ def _execute_partial_rerun(
     )
 
     # Update session with new results.
-    # Deferred (R1, Stage 11.1 review, docs/reviews/stage_11_1_r1.md finding
-    # #5): this hand-rolled merge duplicates the merge execute_workflow()
-    # now does itself against workflow_results.json on disk, and could
+    # NOTE (known design debt): this hand-rolled merge duplicates the merge execute_workflow()
+    # does itself against workflow_results.json on disk, and could
     # diverge from it (e.g. `results` here misses a step that's actually on
     # disk, or vice versa after an out-of-band edit). Revisit if that
     # divergence is ever observed in practice, or next time this function is
@@ -968,7 +966,7 @@ def _run_interactive_loop(
             if not user_input:
                 continue
 
-            # Multi-intent command sequencing (Phase 10) — only attempted for
+            # Multi-intent command sequencing — only attempted for
             # follow-up commands in an active session; a 'new <request>' is
             # one atomic natural-language payload and must never be split.
             if session.has_active_job() and not re.match(r"^new\s+\S", user_input, re.IGNORECASE):
@@ -1621,8 +1619,7 @@ def process_workflow(
                     state_manager,
                     # Nothing ran: the planned steps are kept apart, so a
                     # later rerun runs them all instead of only the steps
-                    # its change invalidates, which have no inputs yet
-                    # (Review Stage R1, Phase 15).
+                    # its change invalidates, which have no inputs yet.
                     last_results={
                         "status": "cancelled",
                         "services_executed": [],

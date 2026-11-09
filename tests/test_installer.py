@@ -123,7 +123,7 @@ class TestBuildAndStartServices:
     @patch("installer.install.subprocess.run")
     def test_relative_compose_file_does_not_double_apply_dotdot(self, mock_run, tmp_path, monkeypatch):
         # Regression test: a relative "-f ../docker-compose.yml" combined with
-        # a cwd naively derived from that same relative path used to resolve
+        # a cwd naively derived from that same relative path would resolve
         # two directories up instead of one.
         repo_dir = tmp_path / "repo"
         subdir = repo_dir / "dist"

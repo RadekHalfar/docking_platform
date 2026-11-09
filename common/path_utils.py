@@ -56,8 +56,7 @@ def from_container_path(
 
     Every process that reads the shared ``orchestrator_output/job_<id>/``
     tree -- each MCP service, the orchestrator/CLI process, and the ``ui``
-    container -- sees it at a different path (see ``dev_plan.md``'s Module
-    Interchange Contracts section). *local_root* is that caller's own view
+    container -- sees it at a different path. *local_root* is that caller's own view
     of the ``orchestrator_output`` directory itself (``OUTPUT_BASE`` for the
     ``ui`` container, ``WorkflowOrchestrator.output_base`` for the CLI).
     Returns *path* unchanged (as a ``Path``) if it isn't under

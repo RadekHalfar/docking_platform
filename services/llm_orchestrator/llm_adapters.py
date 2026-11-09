@@ -88,7 +88,7 @@ def list_ollama_models(
 
     None if *endpoint* is unreachable or doesn't answer like Ollama, and an
     empty list if it answers with no models -- so a caller can tell "isn't
-    running" from "nothing downloaded" (Stage 18.3).
+    running" from "nothing downloaded".
     """
     get = (session or requests).get
     try:
@@ -147,8 +147,7 @@ def pull_ollama_model(
                     raise RuntimeError(f"Failed to pull Ollama model {name}: {data['error']}")
                 if on_progress is not None:
                     on_progress(data.get("status", ""), data.get("completed") or 0, data.get("total") or 0)
-                # DEFERRED (Review Stage R5, docs/reviews/stage_18_r5.md,
-                # Deferred #1): checked per line only, so while Ollama sends
+                # NOTE (known limitation): checked per line only, so while Ollama sends
                 # none (verifying a multi-GB layer, a stalled connection) a
                 # Cancel waits for the next line, up to *timeout*, and the
                 # GUI's pull lock stays held. Fix: let the canceller close

@@ -23,7 +23,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -m "not integration"
 
-  # The GUI tier (Review Stage R5): NiceGUI, pandas and plotly exist only in
+  # The GUI tier: NiceGUI, pandas and plotly exist only in
   # the ui image, so the job above skips these tests. Run in the image built
   # here, exactly as locally (README "Running Tests").
   gui-tier:
@@ -43,7 +43,7 @@ jobs:
           python -m pytest -c ui_nice/pytest.ini
           tests/test_nicegui_*.py tests/test_ui_comparison.py tests/test_ui_results_rendering.py
 
-  # A real dock (Stage 19.3): the Moldina binary is only in its own image, and
+  # A real dock: the Moldina binary is only in its own image, and
   # the job above mocks it. No network or running service is needed.
   real-docking:
     runs-on: ubuntu-latest

@@ -1,9 +1,8 @@
 # Changelog
 
-Real, dated changes to `docking_platform`, condensed from the project's
-working plan (`dev_plan.md`). See `workplan_creation_guide.md` for how the
-plan itself is structured, and `dev_plan.md` for what's currently in
-progress.
+Real, dated changes to `docking_platform`, grouped by development phase
+and stage. Each phase ended with a review pass ("Review R1", "Review Stage
+R2", ...) whose fixes are listed under it.
 
 ## v1.0 — Interactive Docking Workflow (Phases 1–10)
 
@@ -103,8 +102,9 @@ user decides to stop.
 ### Server / Multi-Machine Deployment Security Hardening — completed items
 
 Started 2026-08-01 to make the platform safe to run somewhere other than a
-single trusted machine. Remaining open items are carried forward in
-`dev_plan.md`'s Future Work; what's already shipped:
+single trusted machine. Not yet done: an auth layer in front of every
+service, hardening of user-supplied paths, and TLS (see
+`docs/DOCKER_DEPLOYMENT.md`). What's already shipped:
 
 - **PyMOL selection-string injection RCE — fixed.** `docker/pymol_rpc_server.py`
   now exposes a dedicated `get_extent(selection)` RPC method that calls
@@ -133,15 +133,13 @@ single trusted machine. Remaining open items are carried forward in
   `./:/workspace` mount is now `:ro` (verified all of its actual writes land
   in the separately-mounted rw `cache`/`orchestrator_output` paths).
   `script-runner` stays read-write on purpose (opt-in dev tool that needs to
-  write `.pytest_cache/`/`test_output/`); full auth (still open, see
-  `dev_plan.md`) is what actually protects both from a remote attacker.
+  write `.pytest_cache/`/`test_output/`); full auth (still open) is what actually protects both from a remote attacker.
 - **Non-root `appuser` for four of six services — done.**
   `rcsb_downloader`, `ligand_preparer`, `protein_preparer`, `moldina_runner`
   now run as the non-root `appuser` created in `base.Dockerfile`, verified
   with real `docker build` + `docker run` (whoami/id report `appuser`/uid
   1000, `/health` responds, bind-mounted cache writes succeed).
-  `pymol_visualizer`/`pymol_interactive` remain root — see `dev_plan.md`'s
-  Future Work for why and what's left.
+  `pymol_visualizer`/`pymol_interactive` still run as root.
 
 ## v2.0 — GUI Sessions, Box Geometry, Algorithms, NiceGUI GUI (Phases 11–16)
 
@@ -149,8 +147,7 @@ The Streamlit GUI caught up with the CLI's interactive session (redock,
 resume, history, undo, save-as), docking gained a second search algorithm,
 parallel docking defaults are now measured rather than guessed, and the GUI
 moved from Streamlit to NiceGUI.
-`VERSION` (repo root) says `2.0` since Phase 11. Backfilled 2026-10-11 from
-`dev_plan.md`; every phase's review report is in `docs/reviews/`.
+`VERSION` (repo root) says `2.0` since Phase 11.
 
 - **Phase 11 — Session Logging & GUI Session Management (2026-09-12 – 09-14).**
   - Every job writes a human-readable `job.log`: parameter changes as diffs,
@@ -165,7 +162,7 @@ moved from Streamlit to NiceGUI.
   - GUI wording moved from "Job" to "Session". New Session detaches from
     the current job, Delete asks for confirmation, failed sessions are
     listed, and the Session Log is viewable.
-  - Reviews R1 (`stage_11_1_r1.md`) and R2 (`stage_11_2_11_3_r2.md`):
+  - Reviews R1 and R2:
     - R1: 14 findings, 9 fixed.
     - R2: all three risks its stage named were real bugs, among them New
       Session/Load orphaning a still-running job. All fixed.
@@ -212,7 +209,7 @@ moved from Streamlit to NiceGUI.
     workers is the best, at about 612 MiB each. The GUI default became
     `min(8, cap)`. Raw data is in
     `docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json`.
-  - **Review R1** (`stage_14_r1.md`, widened to cover 13.4/13.5):
+  - **Review R1** (widened to cover 13.4/13.5):
     - correctness: 11 findings, 10 fixed;
     - quality: 9 fixed, 3 deferred with triggers.
 - **Phase 15 — Selectable docking algorithm: Moldina (PSO) | Vina (Monte Carlo) (2026-10-05 – 10-07).**
@@ -228,8 +225,7 @@ moved from Streamlit to NiceGUI.
     same way.
   - **Vina benchmark:** best at 6 workers, recorded per algorithm next to
     Moldina's.
-  - **Review R1 with a Cross-Service Compatibility Review**
-    (`stage_15_r1.md`): 9 correctness fixes, including:
+  - **Review R1 with a Cross-Service Compatibility Review**: 9 correctness fixes, including:
     - a timeout too short for Vina;
     - chat messages resetting the user's CPU, exhaustiveness and pH fields;
     - a CLI bug from 2026-04-14 where a cancelled first workflow broke every
@@ -243,15 +239,15 @@ moved from Streamlit to NiceGUI.
 - **Phase 16 — GUI migration to NiceGUI (2026-10-07 – 10-26).**
   - **16.0:** the Streamlit GUI's baseline timing, scripted and headless
     (`benchmark_gui*.py`, `?perf` marks in the viewer), and a spike
-    answering five NiceGUI questions. Baseline numbers are in
-    `docs/GUI_GUIDE.md` "Performance".
+    answering five NiceGUI questions. Raw data is in
+    `docs/benchmarks/2026-10-07_gui_streamlit_*.json`.
   - **16.1 / 16.2:** the page's controller logic moved, unchanged, into
     framework-free `ui/core/` (state, form, run control, sessions, chat, box
     picker, save-as, results view). Streamlit's `ui/app.py` is now a thin
     adapter over it, and the core runs in the hermetic suite. The bridge
     stopped swapping the process-wide stdout, so concurrent runs no longer
     capture each other's log lines.
-  - **Review R1 (2026-10-08 – 10-11, `stage_16_r1.md`):**
+  - **Review R1 (2026-10-08 – 10-11):**
     - **Behaviour preservation:** confirmed function by function, and no
       GUI-framework import reaches `ui/core`.
     - **Logging:** the orchestrator writes to a per-run `on_message` sink.
@@ -293,8 +289,7 @@ moved from Streamlit to NiceGUI.
       184 ms rebuild, because the axis labels are made once and then moved.
     - **The viewer element also has a results mode** (affinity-coloured
       poses, swappable without moving the camera), for Stage 16.6.
-  - **Review Stage R2 (2026-10-12)**, covering 16.3–16.5
-    (`docs/reviews/stage_16_r2.md`):
+  - **Review Stage R2 (2026-10-12)**, covering 16.3–16.5:
     - **One tab no longer freezes the others** (NiceGUI). The slow work now
       runs off the event loop all clients share:
       - `save results as` (it took 34–37 s for a real session on a Docker
@@ -348,7 +343,7 @@ moved from Streamlit to NiceGUI.
       fails (each column gets its job ID); after a run, Load no longer
       shows that run's result under the loaded session's name.
   - **Review Stage R3 (2026-10-13)**, covering 16.6–16.7 plus the
-    Cross-Service Compatibility Review (`docs/reviews/stage_16_r3.md`):
+    Cross-Service Compatibility Review:
     - **NiceGUI fixes:**
       - Dropping a ligand file named like one already listed replaces it,
         with a chat note. Listing it twice made the run fail.
@@ -373,12 +368,27 @@ moved from Streamlit to NiceGUI.
     - **Fresh stack:** every image rebuilt, `down` / `up`, `--check-health`,
       a CLI workflow and a NiceGUI-driven run all passed.
   - **16.8 (2026-10-25 – 10-26): parity sign-off and the cutover.**
-    - **Re-timed** against the 16.0 baseline (`docs/GUI_GUIDE.md`
-      "Performance"): `show history` during a run went from 4.7 s to
-      62 ms and the GUI's CPU while running from 10% to 1%; a box step
-      redraws only the box, keeping the camera.
+    - **Re-timed** against the 16.0 Streamlit baseline, same driver,
+      inputs and machine (current figures and method in
+      `docs/GUI_GUIDE.md` "Performance"; raw data in `docs/benchmarks/`):
+
+      | Measurement | Streamlit (16.0) | NiceGUI (16.8) |
+      |---|---|---|
+      | `show history` during a run, median | 4,736 ms | 62 ms |
+      | `show history` on a finished session, median | 926 ms | 77 ms |
+      | GUI CPU mean while running / idle | 10.1% / 2.0% | 1.2% / 1.0% |
+      | GUI memory, mean | 132–141 MiB | 183 MiB |
+      | Box X ± step, median | 491 ms | 679 ms raw, ~310 ms without Quasar's ripple/tooltip animations |
+      | Viewer work per box step | full scene rebuild (~190 ms), camera reset | box-only redraw (117–146 ms), camera kept |
+      | Load, median | 1,026 ms | 1,287 ms (work done by ~0.4–0.6 s; the rest is the tab transition) |
+
+      Streamlit's numbers came from its page reruns: while a job ran,
+      every interaction waited for the 2 s poll cycle, and every box step
+      rebuilt the whole viewer scene. NiceGUI's live progress is a 1 s
+      timer, not a page rerun; its higher memory is the server-side page
+      element tree.
     - **Parity:** a 36-row browser checklist covering the original feature
-      list (`docs/reviews/stage_16_8_parity.md`), pre-run headless and
+      list, pre-run headless and
       signed off by the owner.
     - **The GUI at http://localhost:3000 is now NiceGUI.** The `ui` service
       (container `mcp-ui`) runs it as the non-root `appuser`, with a
@@ -394,8 +404,7 @@ moved from Streamlit to NiceGUI.
     - **Upgrading:** run `docker compose up -d --remove-orphans` (the
       installer and its launchers now do), or `docker rm -f mcp-ui-nice`;
       otherwise the old NiceGUI container keeps running on port 3001.
-  - **Review Stage R4 (2026-10-26), the phase's final review**
-    (`docs/reviews/stage_16_r4.md`):
+  - **Review Stage R4 (2026-10-26), the phase's final review**:
     - **Fixed:**
       - A chat CPU value like `4.0` or "all" no longer breaks the page.
         CPU counts are normalized where they enter, in the CLI as well.
@@ -462,7 +471,7 @@ moved from Streamlit to NiceGUI.
   `gemma3:4b` (3.3 GB) and `qwen2.5-coder:7b-instruct-q4_K_M` (4.7 GB), or
   any name typed in, with a progress bar and **Cancel**. Known issue: a
   typed name must be confirmed with Enter before **Download**, which
-  otherwise does nothing (`dev_plan.md` Future Work). A new **Remember
+  otherwise does nothing (still open). A new **Remember
   API key on this computer** box saves the key in the settings file
   (plain text, mode 0600); unticked, the key stays in the browser session as
   before, and unticking removes a saved one. With no LLM set up, the chat
@@ -471,8 +480,7 @@ moved from Streamlit to NiceGUI.
     silently. Ollama's `{"error": ...}` stream lines (a misspelled model, a
     full disk) were never recognised, so the retried request failed with a
     bare 404; the real error is now reported.
-- **Review Stage R5 (2026-10-29): Phase 18 reviewed.** Fixes
-  (`docs/reviews/stage_18_r5.md`):
+- **Review Stage R5 (2026-10-29): Phase 18 reviewed.** Fixes:
   - **Apply in Settings refuses a provider without a model** ("Pick or
     type a model for …"), and the CLI's commands and `--interactive` say so
     and exit. Since 18.2 an unset `LLM_MODEL` sent requests with model `""`.

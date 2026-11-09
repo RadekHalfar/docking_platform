@@ -1,4 +1,4 @@
-"""Orchestrator -> MCP tool -> service method, with only the services' work faked (Stage 19.3).
+"""Orchestrator -> MCP tool -> service method, with only the services' work faked.
 
 MCP calls cross a JSON-RPC boundary, so a renamed parameter is a runtime break,
 not a type error, and the orchestrator's other tests stub call_mcp_tool. Here the

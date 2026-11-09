@@ -41,7 +41,7 @@ def append_job_log(job_dir: "str | Path", level: str, message: str) -> None:
         if created:
             # Appended to in place, unlike the job's JSON files (tmp +
             # os.replace): writable by every uid, so the non-root GUI can log
-            # to a session the former root Streamlit GUI started (Phase 16).
+            # to a session another uid (e.g. a root container) started.
             # Best-effort, as in common.utils.ensure_shared_directory.
             try:
                 os.chmod(log_path, 0o666)

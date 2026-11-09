@@ -1,4 +1,4 @@
-"""Tests for common/docking_stop.py -- the cross-container stop-docking flag (Stage 13.1b)."""
+"""Tests for common/docking_stop.py -- the cross-container stop-docking flag."""
 from common.docking_stop import (
     STOP_FLAG_NAME,
     clear_docking_stop,

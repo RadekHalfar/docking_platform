@@ -1,12 +1,12 @@
 """Session history actions: Load, rename, delete, revision history and
-undo (Phase 16, Stage 16.1).
+undo.
 
 Scanning the sessions on
 disk is ``ui.job_history``'s job (it re-reads only sessions that changed);
 :func:`list_sessions` gives both lists in one call, and when to re-list is
 the GUI's concern.
 
-Rename and delete come in two halves (Stage 16.7): the file work
+Rename and delete come in two halves: the file work
 (:func:`rename_session_file`, :func:`remove_session_dir`), which NiceGUI
 runs off its event loop, and the state update that follows it
 (:func:`apply_session_rename`, :func:`forget_session`).
@@ -44,9 +44,8 @@ def load_params_into_form(state, params: dict) -> None:
     """
     # A receptor loaded for box picking belongs to the previous protein; kept
     # across a Load or restore that changes the protein, a geometry chat
-    # command would compute from the wrong one (Phase 12 R1's stale-receptor
-    # fix only covered New Session and a fresh job -- Review Stage R1,
-    # Phase 13).
+    # command would compute from the wrong one (New Session and a fresh job
+    # clear it too).
     protein_keys = ("protein_id", "protein_file")
     if [state.params.get(k) for k in protein_keys] != [params.get(k) for k in protein_keys]:
         clear_box_picker_state(state)
@@ -82,15 +81,14 @@ def resume_session(state, job: dict, output_base: Path) -> None:
     # activate() starts `pending` empty, but the latest parameters may never
     # have run (a restored revision, a cancelled redock plan) -- the next
     # redock would then say "nothing to redock" while Save says "Run
-    # Docking first" (Review Stage R1, Phase 13). The per-key detail isn't
+    # Docking first". The per-key detail isn't
     # on disk, so mark everything those parameters affect, as undo does.
     if not state_manager.parameters_ran():
         session.pending_changed_params |= CORE_PARAMS
     state.job_id = job["job_id"]
     state.job_name = job.get("job_name", "")
     # The previous session's run goes, as on New Session: its finished
-    # bridge was drawn as the loaded session's result (found in Stage 16.7's
-    # real-data check), and a redock staged for it must not be confirmed
+    # bridge would otherwise be drawn as the loaded session's result, and a redock staged for it must not be confirmed
     # against this job (confirm_redock also checks job_id as a second guard).
     detach_run(state)
     # Keeps process_docking_bridge()'s completion sync from overwriting
@@ -139,7 +137,7 @@ def apply_session_rename(state, job: dict, new_name: str) -> None:
     """After :func:`rename_session_file`: the viewed session's label and
     the listing entry *job* follow. The entry is what a later Load of it
     resumes with, so a Load before the GUI re-lists (seconds, with many
-    sessions) kept the old name (Review Stage R3)."""
+    sessions) would otherwise keep the old name."""
     name = new_name.strip()[:JOB_NAME_MAX_CHARS]
     job["job_name"] = name
     if state.viewed_job_id == job["job_id"]:
@@ -189,7 +187,7 @@ def undo_to_revision(state, revision: int) -> str:
         # Restoring only a runtime-state checkpoint would roll back
         # workflow_state.json under results it no longer matches, with
         # nothing marked to rerun -- the revision history panel only offers
-        # parameter revisions, so chat doesn't either (R1, Phase 13).
+        # parameter revisions, so chat doesn't either.
         return (
             f"Revision {revision} has no parameter checkpoint — only revisions marked "
             "[params] in `show history` can be restored."

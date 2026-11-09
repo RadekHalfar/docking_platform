@@ -1,8 +1,6 @@
 FROM mcp-docking-base:latest
 
-# The web GUI (NiceGUI, Phase 16). Versions pinned exactly: nicegui as
-# verified by the Stage 16.0 spike, plotly/pandas as in the former Streamlit
-# image. pytest-asyncio is for the GUI test tier (NiceGUI's User fixture is
+# The web GUI (NiceGUI). Versions pinned exactly, as tested. pytest-asyncio is for the GUI test tier (NiceGUI's User fixture is
 # async).
 RUN pip install --no-cache-dir \
     "nicegui==3.17.1" \

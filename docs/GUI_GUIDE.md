@@ -12,10 +12,6 @@ docking platform, served at http://localhost:3000 by the `ui` service in
   session's results, and Compare Sessions) and **Sessions** (the active
   session's revision history, and every session on disk).
 
-Until Phase 16 (Stage 16.8, 2026-10-26) the GUI was a Streamlit app; the
-NiceGUI GUI replaced it with the same features (the parity check is in
-[reviews/stage_16_8_parity.md](reviews/stage_16_8_parity.md)).
-
 The Setup tab takes its inputs as **RCSB IDs**, **Local Files** (a protein
 `.pdb`, `.cif` or `.mmcif`, plus `.sdf`/`.mol`/`.mol2`/`.pdbqt` ligands) or
 **Batch Processing** (a drop of many ligand files). Uploaded files are each
@@ -79,7 +75,7 @@ restarting the container.
   3.3 GB; `qwen2.5-coder:7b-instruct-q4_K_M`, 4.7 GB); any other Ollama
   library name can be typed in. **Press Enter after typing a name, then
   Download** — without Enter the typed name isn't taken and **Download**
-  does nothing (known issue, listed in `dev_plan.md` Future Work); a model
+  does nothing (known issue); a model
   picked from the list needs no Enter. **Download** shows a progress bar and a
   **Cancel** button (Ollama keeps what it has, so downloading again
   resumes). **Apply settings** is disabled until the download ends; closing
@@ -163,7 +159,7 @@ command (it goes to the LLM like any other request), and a name that
 reaches the form is downloaded as if it were an ID, so it fails and is left
 out of the run. The CLI can search, list the matching IDs and let you pick
 one; see
-[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name-phase-9).
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name).
 
 While a session runs, its step-by-step log streams into a **Run log**
 expander under the chat, not into the chat messages themselves, so a
@@ -242,8 +238,8 @@ saved with.
 
 The **Current parameters** summary shows the selected algorithm, the Results
 tab says which one produced a session's results ("Docked with …"), and the
-Compare Sessions table has an **Algorithm** row. Sessions from before the
-selector existed read as Moldina (PSO), which is what they ran. Switching
+Compare Sessions table has an **Algorithm** row. A session saved without
+an algorithm setting reads as Moldina (PSO), the default it ran with. Switching
 algorithm in an active session and clicking **Run Docking** redocks only
 docking and visualization.
 
@@ -499,8 +495,8 @@ under **Failed Sessions** so it can be inspected, redocked, or deleted like
 any other non-completed session. Ligands docked before the stop keep their
 output files in `docking_results/`, but the session isn't treated as
 docked: a later redock docks every ligand again. A stopped redock marks the
-whole session cancelled the same way, so the Results tab no longer shows
-the earlier run's results.
+whole session cancelled the same way, so the Results tab doesn't show the
+earlier run's results.
 
 ## Viewing a Session (Live or Historical)
 
@@ -618,16 +614,9 @@ under the headers names the docking algorithm each session used. The
 strongest predicted binder per ligand (most negative kcal/mol) is
 highlighted green — rendered as a plain HTML table so the highlight stays
 readable in both light and dark theme. When two of the sessions share a
-name, each column header gets its job ID in brackets, so they stay apart
-(before Stage 16.7 such a pair made the table fail).
+name, each column header gets its job ID in brackets, so they stay apart.
 
 ## Performance
-
-Phase 16 replaced the Streamlit GUI with NiceGUI (`dev_plan.md`, Part 9).
-To show whether the port helped, the Streamlit GUI was timed before it
-(Stage 16.0), and the NiceGUI GUI after it (Stage 16.8). Both used the same
-tools and the same reference session; the Streamlit numbers are kept below
-as the baseline.
 
 ### Tools
 
@@ -635,9 +624,9 @@ as the baseline.
 |---|---|
 | Interaction latency: from a click (or Enter in a text field) until the page stops changing for 300 ms | [`benchmark_gui_latency.js`](../benchmark_gui_latency.js), a DevTools console snippet. By hand: paste it into the console (Chrome blocks the first paste into DevTools; type `allow pasting` and press Enter, then paste again), do the action 5+ times, letting the page settle in between, then run `__lat.summary("<label>")`. For chat commands, run `__lat.summary("<label>", "enter")` instead, so the click that focused the chat box is left out. The median is the figure to record. |
 | GUI container CPU% and memory | [`benchmark_gui.py`](../benchmark_gui.py), `docker stats` on `mcp-ui`. Either for a fixed `--duration`, or with `--from-driver` between the driver's `SAMPLE-START` / `SAMPLE-STOP` lines. |
-| Viewer re-render time and render count | `?perf` in `ui_nice/mol_viewer.js`: a full scene build logs `mode=box_picker` / `view`, a box-only redraw `mode=box`, a pose change `mode=ligands`. (The Streamlit viewer of 16.0 logged the same line.) With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
-| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. Its scenarios are the ones 16.0 timed Streamlit with (Streamlit's selectors went with it in 16.8). |
-| Latency without Quasar's animations | Set `__lat.ignore = [".q-ripple", ".q-tooltip"]` in the snippet (the driver does this for NiceGUI). A sample still closes after 300 ms with no change at all, but `median_filtered_ms` ends at the last change outside those elements. Both medians are recorded; the raw one compares with Streamlit, which has neither animation. |
+| Viewer re-render time and render count | `?perf` in `ui_nice/mol_viewer.js`: a full scene build logs `mode=box_picker` / `view`, a box-only redraw `mode=box`, a pose change `mode=ligands`. With the GUI opened as `http://localhost:3000/?perf`, each viewer render logs `[perf] render #N mode=… atoms=… render=…ms frame=…ms` to the console and collects it in `__viewerPerf`. Without `?perf`, nothing is recorded. `render` is the synchronous JS time to rebuild and draw the scene; `frame` runs until the next animation frame, so it includes the paint. |
+| All of the above, scripted | [`benchmark_gui_browser.py`](../benchmark_gui_browser.py) drives the GUI in headless Chromium (Playwright). It injects the same latency snippet, performs the actions, counts the `[perf]` renders, and prints the sampling cues. |
+| Latency without Quasar's animations | Set `__lat.ignore = [".q-ripple", ".q-tooltip"]` in the snippet (the driver does this). A sample still closes after 300 ms with no change at all, but `median_filtered_ms` ends at the last change outside those elements. Both medians are recorded. |
 
 The scripted measurement is one pipeline, run from the repo root in Git
 Bash, with the stack running:
@@ -646,161 +635,82 @@ Bash, with the stack running:
 MSYS_NO_PATHCONV=1 docker run --rm --network container:mcp-ui     -v "$(pwd -W):/repo:ro" -v "$(pwd -W)/docs/benchmarks:/out"     mcr.microsoft.com/playwright/python:v1.55.0-noble     sh -c "pip install -q playwright==1.55.0 && python -u /repo/benchmark_gui_browser.py            --out /out/<date>_gui_nicegui_browser.json --screenshot /out/<date>_gui_nicegui_final.png"   | python3 benchmark_gui.py --from-driver --container mcp-ui            --json-out docs/benchmarks/<date>_gui_nicegui_stats.json
 ```
 
-(The 16.8 run used `mcp-ui-nice`, the NiceGUI container on port 3001 before
-the cutover, and `--gui nicegui`, an option removed with Streamlit.)
-
 The pipeline starts a real docking run on the live stack, so a new session
 appears in Session History. It takes about 5 minutes. The Box X steps are
 made in + / − pairs, so the box ends where it started.
 
 ### Reference session
 
-- **Inputs:** the receptor and the first 25 molecules of the 295-ligand
-  session `job_20260817_111507_854b2c`
-  (`orchestrator_output/<job>/downloads/receptor.pdb` and
-  `actives_final.sdf`). They are copied to the git-ignored
-  `data/benchmark_gui/` as `receptor.pdb` and `actives_first25.sdf`.
+- **Inputs:** a receptor (2,186 atoms) and the first 25 molecules of a
+  295-ligand actives set, copied to the git-ignored `data/benchmark_gui/`
+  as `receptor.pdb` and `actives_first25.sdf`.
 - **Run settings:** Local Files, box center (19.354, 16.789, 29.19), size
   20 × 20 × 20 Å, default algorithm (Moldina PSO), default Parallel (off),
   so the 25 ligands dock one after another.
-- **Machine state:** the laptop on mains power in normal (not
-  power-saving) mode, for both 16.0 and 16.8. Power-saving throttles the
-  CPU and skews every number.
+- **Machine state:** a laptop on mains power in normal (not power-saving)
+  mode. Power-saving throttles the CPU and skews every number.
 - **Phases** (the driver's order):
   - **setup**: inputs uploaded and the receptor loaded for box picking.
   - **running**: from Run Docking until the Stop button goes away.
   - **completed**: the finished session, first left idle for 60 s, then
     clicked.
-- **Not measured: a 295-ligand session.** In 16.0 Streamlit's Session
-  History listed only the 10 newest sessions, so
-  `job_20260817_111507_854b2c` couldn't be loaded from it, and a fresh
-  295-ligand run takes about 11 minutes. 16.8 judged the 25-ligand numbers
-  enough (see below).
 
 ### Results
 
-Stage 16.0 baseline, Streamlit, 2026-10-07, run by `benchmark_gui_browser.py`
-(headless Chromium 1600 × 1000).
-- **Session:** `job_20261007_144016_08e8a4`, 25 of 25 docked, Moldina,
-  1 worker, about 121 s from Run to finish.
-- **Raw data:** [`docs/benchmarks/2026-10-07_gui_streamlit_browser.json`](benchmarks/2026-10-07_gui_streamlit_browser.json)
-  and [`docs/benchmarks/2026-10-07_gui_streamlit_stats.json`](benchmarks/2026-10-07_gui_streamlit_stats.json).
-  In the stats file, `measured_at` is when the pipeline started. The
-  per-window `started_at` was added after this run.
-- **Latency:** median of 5 actions; Box X ± is 5 pairs, so 10 samples.
-
-Stage 16.8 re-time, NiceGUI, 2026-10-25, same driver (`--gui nicegui`),
-same browser and inputs, against the live `mcp-ui-nice`, on mains power.
-- **Session:** `job_20261025_070358_cbca43`, 25 of 25 docked, Moldina,
-  1 worker, about 123 s.
+Measured 2026-10-25 with `benchmark_gui_browser.py` (headless Chromium
+1600 × 1000).
+- **Session:** 25 of 25 docked, Moldina, 1 worker, about 123 s from Run to
+  finish.
 - **Raw data:** [`docs/benchmarks/2026-10-25_gui_nicegui_browser.json`](benchmarks/2026-10-25_gui_nicegui_browser.json)
   and [`docs/benchmarks/2026-10-25_gui_nicegui_stats.json`](benchmarks/2026-10-25_gui_nicegui_stats.json).
-- **Latency:** the raw median compares with Streamlit; the filtered one
-  (in brackets) leaves out Quasar's ripple and tooltip (see Tools).
-  **Corrected in Review Stage R4 (2026-10-26):** the 16.8 run's filter also
-  dropped changes to an element that merely *contained* a ripple (the
-  clicked button itself), so its filtered medians (30 / 31 / 1,219 ms) were
-  too low. The bracketed figures below are R4's re-measurement with the
-  fixed snippet, on the same reference session and the live GUI on port
-  3000; their raw medians (689 / 726 / 1,267 ms) match 16.8's. The JSON
-  files keep 16.8's original values.
+- **Latency:** median of 5 actions; Box X ± is 5 pairs, so 10 samples. The
+  figure in brackets is the filtered median, which leaves out Quasar's
+  ripple and tooltip (see Tools). The bracketed figures were re-measured
+  2026-10-26 with the current snippet; the JSON files' `median_filtered_ms`
+  values come from an earlier snippet that also dropped changes to an
+  element merely *containing* a ripple, and read too low.
 
-| Phase | Measurement | Streamlit (16.0) | NiceGUI (16.8) |
-|---|---|---|---|
-| setup | Box X ± latency, median (min–max) | 491 ms (186–637) | 679 ms (621–689) [310 ms] |
-| setup | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 184 ms | 1.0 (box only, camera kept); 117 ms |
-| running | `show history` latency, median (min–max) | 4,736 ms (2,492–12,823) | 62 ms (28–337) |
-| running | GUI container CPU mean / peak | 10.1% / 27.6% (52 samples, 115 s) | 1.2% / 6.8% (60 samples) |
-| running | GUI container memory mean / peak | 132 MiB / 141 MiB | 183 MiB / 184 MiB |
-| completed | GUI container CPU mean / peak, idle 60 s | 2.0% / 8.7% (26 samples) | 1.0% / 5.1% (29 samples) |
-| completed | GUI container memory mean / peak, idle | 141 MiB / 142 MiB | 183 MiB / 184 MiB |
-| completed | Viewer renders while idle | 0 | 1 (the Results viewer's first build, once) |
-| completed | `show history` latency, median (min–max) | 926 ms (243–954) | 77 ms (65–108) |
-| completed | Load latency, median (min–max) | 1,026 ms (202–1,087) | 1,287 ms (1,207–2,511) [1,260 ms] |
-| completed | Box X ± latency, median (min–max) | 899 ms (220–996) | 728 ms (685–771) [310 ms] |
-| completed | Viewer renders per Box X ± click; median render | 1.0 (full rebuild); 190 ms | 1.0 (box only, camera kept); 146 ms |
+| Phase | Measurement | Value |
+|---|---|---|
+| setup | Box X ± latency, median (min–max) | 679 ms (621–689) [310 ms] |
+| setup | Viewer renders per Box X ± click; median render | 1.0 (box only, camera kept); 117 ms |
+| running | `show history` latency, median (min–max) | 62 ms (28–337) |
+| running | GUI container CPU mean / peak | 1.2% / 6.8% (60 samples) |
+| running | GUI container memory mean / peak | 183 MiB / 184 MiB |
+| completed | GUI container CPU mean / peak, idle 60 s | 1.0% / 5.1% (29 samples) |
+| completed | GUI container memory mean / peak, idle | 183 MiB / 184 MiB |
+| completed | Viewer renders while idle | 1 (the Results viewer's first build, once) |
+| completed | `show history` latency, median (min–max) | 77 ms (65–108) |
+| completed | Load latency, median (min–max) | 1,287 ms (1,207–2,511) [1,260 ms] |
+| completed | Box X ± latency, median (min–max) | 728 ms (685–771) [310 ms] |
+| completed | Viewer renders per Box X ± click; median render | 1.0 (box only, camera kept); 146 ms |
 
-What the numbers say about Streamlit:
-- **Every box step rebuilds the whole viewer scene** (about 190 ms of JS
-  for the 2,186-atom receptor), and that is also what resets the camera.
-  Finding 4's fix should take this to an overlay update, not a rebuild.
-- **While a job runs, interactions wait for the page's 2 s poll cycle.** A
-  `show history` takes 2.5–12.8 s, against under 1 s once the session has
-  finished. The snippet also counted one sample as dropped: it was
-  superseded before it settled. During polling, the 300 ms quiet window
-  is a rough edge, so the running latency is the noisiest figure here.
-- **The polling itself costs CPU:** about 10% mean CPU while the job runs,
-  against 2% idle.
-- **Interactions are slower on a finished session than in setup** (box step
-  899 ms vs 491 ms), most likely because each rerun also redraws the results panel, which is
-  now full (not separately verified).
-
-What the 16.8 numbers say about NiceGUI:
-- **A running job no longer slows the page.** `show history` while a job
-  runs went from 4.7 s to 62 ms, and the GUI container's CPU from 10% to
-  1%: live progress is a 1 s timer reading two small things, not a page
-  rerun.
+What the numbers say:
+- **A running job doesn't slow the page.** `show history` while a job runs
+  takes 62 ms and the GUI container uses about 1% CPU: live progress is a
+  1 s timer reading two small things, not a page redraw.
 - **A finished session costs nothing extra.** Interactions on it are as
   fast as in setup; no results panel is redrawn on every click.
 - **Box X ± is done in about 310 ms.** That covers the round trip, the
   fields and the box-only redraw (117–146 ms of JS; the camera is kept).
   The rest of the raw 679–728 ms is Quasar's click ripple (it ends about
-  760 ms after the click) and the next button's tooltip, animations
-  Streamlit lacks. So NiceGUI's box step is faster than Streamlit's
-  491 ms, whose figure includes no animation.
-- **Load reads slower, 1.29 s against 1.03 s, but its work is done by
-  about 0.4–0.6 s.** A Load also switches to the Results tab. A mutation
-  timeline (scratch probe, 2026-10-25) shows the session drawn and the
-  viewer's canvas painted by 400–600 ms, then Quasar's tab-panel slide
-  transition and scroll-area thumb until about 1.3 s. The ripple filter
-  doesn't cover the transition, so the filtered median stays at 1.26 s.
-  The first Load of a session also builds its viewer (one 381 ms render).
-- **Memory is about 50 MiB higher** (183 MiB against 132–142 MiB):
-  NiceGUI's FastAPI/uvicorn process holds every page element server-side.
-  It stays flat between running and idle.
-- **Not measured: a 295-ligand session.** The 25-ligand numbers answer the
-  question the baseline asked (the polling and the full reruns are gone),
-  so no 295-ligand run was made.
-
-### Stage 16.5 interim: the NiceGUI box picker
-
-Measured 2026-10-12 in the setup phase only (the full re-time is 16.8).
-- **Setup:** headless Chromium 1600 × 1000 (Playwright 1.55), against a
-  side `ui-nice` container on the live stack. Same receptor
-  (`data/benchmark_gui/receptor.pdb`, 2,186 atoms) and box (19.354,
-  16.789, 29.19; 20 Å).
-- **Canvas:** the NiceGUI viewer is 55vh tall, against Streamlit's
-  450 px, so each frame costs a little more.
-
-| Measurement | Streamlit (16.0) | NiceGUI (16.5) |
-|---|---|---|
-| Viewer work per Box X ± click | full rebuild, 184 ms, camera reset | box-only redraw (`mode=box`), median 143 ms, camera kept |
-| Click → fields and summary updated | (inside the 491 ms) | about 94 ms |
-| Click → viewer redrawn, median of 10 | (inside the 491 ms) | 222 ms |
-| `benchmark_gui_latency.js` median (min–max) | 491 ms (186–637) | 726 ms (706–744) |
-| Scene build when the receptor loads (once) | 184 ms, every rerun | 496 ms, once |
-
-- **The latency snippet's NiceGUI figure is mostly animation, not work.**
-  It waits for 300 ms without DOM changes, and Quasar buttons keep
-  changing the DOM after the app is done:
-  - the click ripple ends about 760 ms after the click;
-  - the hover tooltip of the next button appears about 390 ms after it.
-
-  Streamlit's buttons have neither.
-- **Decided in 16.8 (owner, 2026-10-24):** the snippet can ignore
-  `.q-ripple` and `.q-tooltip` mutations (`__lat.ignore`), and both the raw
-  and the filtered median are recorded. The 16.0 baseline stays valid,
-  since Streamlit has neither animation.
-- **3Dmol labels are slow:** each `addLabel` draws a texture and
-  re-renders, and `removeLabel` re-renders too. A first version that
-  recreated the X/Y/Z labels on each step took 298 ms per redraw. The
-  viewer now makes them once and only moves them.
+  760 ms after the click) and the next button's tooltip (it appears about
+  390 ms after the click): the snippet waits for 300 ms without DOM
+  changes, and both keep changing the DOM after the app is done.
+- **Load's work is done by about 0.4–0.6 s.** A Load also switches to the
+  Results tab. A mutation timeline shows the session drawn and the viewer's
+  canvas painted by 400–600 ms, then Quasar's tab-panel slide transition and
+  scroll-area thumb until about 1.3 s. The ripple filter doesn't cover the
+  transition, so the filtered median stays at 1.26 s. The first Load of a
+  session also builds its viewer (one 381 ms render).
+- **Memory is about 183 MiB**, flat between running and idle: NiceGUI's
+  FastAPI/uvicorn process holds every page element server-side.
+- **Not measured: a 295-ligand session.** A full 295-ligand run takes about
+  11 minutes; the 25-ligand session exercises the same code paths.
 
 ## Code Structure (for developers)
 
-Since Phase 16 the GUI's logic lives in framework-free `ui/core/`
-(extracted from the Streamlit page in Stages 16.1–16.2, before the NiceGUI
-port), and `ui_nice/` draws it:
+The GUI's logic lives in framework-free `ui/core/`, and `ui_nice/` draws it:
 
 - **`ui/core/`** — framework-free, no GUI framework import:
   - `state.py`: `GuiSession`, one browser client's state, never module-global.
@@ -815,12 +725,12 @@ port), and `ui_nice/` draws it:
     per run, never into the chat messages.
   - `sessions.py`: Load, rename, delete, revision history and undo, and
     the session lists (`list_sessions()`, the row labels). Rename and
-    delete come in two halves (Stage 16.7), the file work
+    delete come in two halves, the file work
     (`rename_session_file()`, `remove_session_dir()`) and the state update
     after it (`apply_session_rename()`, `forget_session()`), so NiceGUI
     runs the first on a worker thread. `revision_panel_data()` reads the
     revision panel in one call.
-  - `llm_settings.py` (Stage 16.7): the settings form's providers,
+  - `llm_settings.py`: the settings form's providers,
     `settings_from_form()`, and Apply in two steps,
     `persist_settings()` (build the client, then save; no GUI state) and
     `use_settings()`.
@@ -850,15 +760,13 @@ port), and `ui_nice/` draws it:
   `ui.core.state.reply()`. It returns an
   `Outcome`, whose `error` is shown next to the control (the page redraws
   after every action). The bridge class and the LLM parse functions are
-  passed in, so tests swap in fakes. Since Review Stage R4 `ui/core` holds
-  only what the GUI calls: the inline helpers the Streamlit page used
-  (`save_results()`, `answer_with_llm()`, `rename_session()`, ...) are gone,
-  and the tests run the same halves the GUI does.
-- **`ui_nice/`** (Stage 16.3 on) — the NiceGUI GUI, served by the `ui`
+  passed in, so tests swap in fakes. `ui/core` holds only what the GUI
+  calls, and the tests run the same halves the GUI does.
+- **`ui_nice/`** — the NiceGUI GUI, served by the `ui`
   service on port 3000 as the non-root `appuser`:
   - `app.py`: the `/` page, which gives each client its own `GuiSession`
     (with the LLM settings and client), the `/health` route the compose
-    healthcheck uses, and (Stage 16.6) the `/files/{job_id}/{path}`
+    healthcheck uses, and the `/files/{job_id}/{path}`
     download route. It streams a `FileResponse` once
     `ui/core/results_view.resolve_job_file` has checked the path; that
     check is the route's security boundary.
@@ -871,8 +779,7 @@ port), and `ui_nice/` draws it:
     `output_base` and the bridge class, and runs the 1 s `ui.timer` that
     folds the background jobs into the state. Every handler calls a
     `ui/core` action and then `sync()`, which has each view update only
-    the widgets whose value changed. All clients share one event loop, so
-    (Review Stage R2):
+    the widgets whose value changed. All clients share one event loop, so:
     - `sync()` does no file I/O. A view's `poll()` reads what it shows
       from disk in `run.io_bound` (the run's progress), on timer ticks.
     - The timer redraws while a job runs and whenever processing a job
@@ -880,25 +787,28 @@ port), and `ui_nice/` draws it:
     - `apply_geometry()` and `start_save()` run the geometry command's
       receptor read and a save's copy in `run.io_bound`. A save can come
       from the chat (`run_save()`), the Results tab's panel or its
-      conflict buttons. While a save runs, or a session is deleted
-      (Stage 16.7), `busy` holds the session: chat input, Run, New
+      conflict buttons. While a save runs, or a session is deleted,
+      `busy` holds the session: chat input, Run, New
       Session, Reset, the save buttons, and the Sessions tab's Load,
       Delete and Restore revision. `blocked_reason()` says why they are
       off, for the views that check it.
     - `syncing` is set while views write widgets: NiceGUI fires change
       handlers on those writes too, and the handlers ignore them.
-  - `box_picker_panel.py` (Stage 16.5): the box picker on the Setup tab's
+  - `box_picker_panel.py`: the box picker on the Setup tab's
     right side. It reads the receptor in `run.io_bound`, once per
     receptor; a receptor that can't be read is shown with a Reload button
     and not read again. It draws the Docking Box fields on every `sync()`.
-  - `mol_viewer.py` + `mol_viewer.js` (Stage 16.5): the 3Dmol.js viewer
-    as a custom element (scene code first written for the Streamlit
-    viewer). One viewer per element: the
+  - `mol_viewer.py` + `mol_viewer.js`: the 3Dmol.js viewer
+    as a custom element. One viewer per element: the
     scene is built once, and `set_box()` / `set_ligands()` redraw only the
     box or the poses by `run_method`, so the camera is kept. They never
-    use `update()`, which would resend the receptor PDB. The 3Dmol bundle
-    (`ui/components/mol_viewer/vendor/`) is served from `/mol-viewer-vendor`.
-  - `results_tab.py` (Stage 16.6): the Results tab. Like the box picker,
+    use `update()`, which would resend the receptor PDB. The box's X/Y/Z
+    labels are made once and only moved: each 3Dmol `addLabel` draws a
+    texture and re-renders, and `removeLabel` re-renders too, so recreating
+    them on every step would cost several hundred ms per redraw. The 3Dmol
+    bundle (`ui/components/mol_viewer/vendor/`) is served from
+    `/mol-viewer-vendor`.
+  - `results_tab.py`: the Results tab. Like the box picker,
     its `sync()` reads no file. When what is shown changes (a run
     finishing, a redock, a Load, New Session), one `run.io_bound` trip
     reads the result, `ui/core/results_view.read_results_data` (receptor,
@@ -909,13 +819,13 @@ port), and `ui_nice/` draws it:
     can't send `rowClicked`: serializing its event args fails in the
     browser). Save results as… computes
     its block reason in `run.io_bound` too.
-  - `sessions_tab.py` (Stage 16.7): the Sessions tab. Its `sync()` reads
+  - `sessions_tab.py`: the Sessions tab. Its `sync()` reads
     no file either: the lists and the active session's revisions are read
     in one `run.io_bound` trip when the tab is opened, after its own
     actions, on Refresh, and, while it is open, when its change key
     (session, state manager, `job_done`, the chat messages) moves. A later
     read wins over an earlier one. Delete's `rmtree` runs in `run.io_bound`.
-  - `settings_dialog.py` (Stage 16.7): the Settings dialog. It lists the
+  - `settings_dialog.py`: the Settings dialog. It lists the
     Ollama models in `run.io_bound` (dropping a list for an endpoint no
     longer in the field), and Apply runs `persist_settings()` there.
   - `setup_tab.py` and `chat_drawer.py`: the Setup form and the chat
@@ -927,9 +837,6 @@ port), and `ui_nice/` draws it:
 - **`ui/orchestrator_bridge.py`** gives each run its own log. The bridge
   passes `WorkflowOrchestrator` an `on_message` sink that queues the step
   messages line by line (the CLI keeps the default, `print`), and nothing
-  touches `sys.stdout`. Before this, each bridge used
-  `contextlib.redirect_stdout`, which swaps the process-wide stdout: a
-  docking run and a box-picker receptor load at the same time captured
-  each other's lines. (Stage 16.1 first replaced it with a thread-routing
-  `sys.stdout` proxy; Phase 16's Review Stage R1 replaced that with the
-  sink.)
+  touches `sys.stdout`. Swapping the process-wide stdout (e.g. with
+  `contextlib.redirect_stdout`) would let a docking run and a box-picker
+  receptor load running at the same time capture each other's lines.

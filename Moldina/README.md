@@ -49,11 +49,8 @@ same (see "Updating this binary" below) before replacing this file.
 | Last replaced | commit `8ed4b94` (2026-08-06; its message is about an unrelated UI change) |
 
 No commit's message records which source commit this was built from, or
-who built it — the 2026-08-06 replacement wasn't even mentioned, which is
-why this table still listed the previous binary until Stage 15.1
-(2026-10-05) re-checked it. If you know that, please fill it in here
-— this table only records what could be recovered from the binary and git
-history.
+who built it. If you know that, please fill it in here — this table only
+records what could be recovered from the binary and git history.
 
 ## Updating this binary
 
@@ -65,16 +62,15 @@ history.
    Then run the real-docking test in it, which docks with both searches and
    parses the output (see [docs/DOCKER_DEPLOYMENT.md](../docs/DOCKER_DEPLOYMENT.md#real-docking-tests)):
    `docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py -p no:cacheprovider`
-5. Update the SHA-256, version, and (ideally) the exact source commit in the table above, and note it in your commit message — the previous two commits didn't, which is why this table has gaps.
+5. Update the SHA-256, version, and (ideally) the exact source commit in the table above, and note it in your commit message, so the provenance stays recoverable.
 
 ## Why not Git LFS or a from-source Docker build
 
 Both are the more standard fix for a binary this size, but:
 - Migrating *existing* history to Git LFS (`git lfs migrate`) rewrites
   commit hashes — that needs deliberate, coordinated action (force-pushing
-  rewritten history affects anyone else's clone), not a drive-by fix.
+  rewritten history affects anyone else's clone).
 - Switching `moldina_runner.Dockerfile` to build from source via the steps
   above would add real build time and a new external dependency
   (`github.com/It4innovations/moldina-multiple-ligand-molecular-docking-over-autodock-vina` availability) to every image build; worth
-  doing, but as a deliberate change someone verifies end-to-end, not
-  bundled into an unrelated fix.
+  doing, but as a deliberate change verified end-to-end.

@@ -1,4 +1,4 @@
-"""Tests for local file input (Phase 0a): protein_file / ligand_files parameters.
+"""Tests for local file input: protein_file / ligand_files parameters.
 
 Covers two layers:
 - WorkflowParser: get_parameter_issue() treats protein_file/ligand_files as
@@ -311,7 +311,7 @@ def test_missing_local_protein_file_raises_runtime_error(tmp_path):
 
 def test_ligand_basename_collision_raises_instead_of_overwriting(tmp_path):
     """Two different source files sharing a basename must never silently
-    overwrite one another in the shared downloads dir -- see finding #3."""
+    overwrite one another in the shared downloads dir."""
     dir_a = tmp_path / "a"
     dir_b = tmp_path / "b"
     dir_a.mkdir()

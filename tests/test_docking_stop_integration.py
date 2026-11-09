@@ -1,4 +1,4 @@
-"""Live check: Stop halts a running multi-ligand dock within seconds (Stage 13.1b).
+"""Live check: Stop halts a running multi-ligand dock within seconds.
 
 Opt-in (``integration`` marker) -- needs the full live stack, network access
 to RCSB, and a rebuilt ``mcp-moldina-runner`` image. Self-skips when
@@ -34,7 +34,7 @@ MOLDINA_URL = os.getenv("MCP_MOLDINA_RUNNER_URL", "http://localhost:8004")
 # Several cofactor-sized ligands at high exhaustiveness, docked one at a
 # time, so docking is still running when Stop is pressed.
 LIGANDS = ["ATP", "ADP", "GTP", "NAD", "FAD", "SAM", "COA", "HEM"]
-CENTER = [-25.544, 12.854, 58.25]  # 6LU7 geometric center (Phase 12 real-data check)
+CENTER = [-25.544, 12.854, 58.25]  # 6LU7 geometric center
 
 # Generous: downloads + preparation happen before docking starts.
 WAIT_FOR_DOCKING_S = 600

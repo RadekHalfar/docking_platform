@@ -1,4 +1,4 @@
-// The 3Dmol.js viewer as a NiceGUI custom element (Phase 16, Stage 16.5).
+// The 3Dmol.js viewer as a NiceGUI custom element.
 //
 // One viewer lives as long as the element: the scene (receptor, ligands, mode) is built once
 // in mounted(), and only setBox / setLigands redraw parts of it, so the
@@ -30,10 +30,9 @@ function affinityColorHex(affinity, minAff, maxAff) {
   return "0x" + toHex(r) + toHex(g) + "00";
 }
 
-// ---- ?perf timing (Stage 16.0 baseline; docs/GUI_GUIDE.md "Performance") --
-// Off unless the page URL has ?perf. The console line is the one the
-// Stage 16.0 Streamlit baseline logged, so benchmark_gui_browser.py
-// measures both the same way; mode is box_picker /
+// ---- ?perf timing (docs/GUI_GUIDE.md "Performance") ----------------------
+// Off unless the page URL has ?perf. benchmark_gui_browser.py reads the
+// console line; mode is box_picker /
 // view for a scene build, box for setBox, ligands for setLigands.
 const perfEnabled = (() => {
   try {

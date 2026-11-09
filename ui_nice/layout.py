@@ -1,15 +1,15 @@
-"""The NiceGUI page layout (Phase 16).
+"""The NiceGUI page layout.
 
 One page: a header (title, chat toggle, settings), a collapsible chat drawer
 on the right, and the main-area tabs Setup / Results / Sessions. Setup holds
 a resizable splitter, form on the left and viewer on the right.
 
-Stage 16.3 built the shell; Stage 16.4 fills the chat drawer
-(:mod:`ui_nice.chat_drawer`) and Setup's form side (:mod:`ui_nice.setup_tab`),
-Stage 16.5 Setup's viewer side, the box picker
-(:mod:`ui_nice.box_picker_panel`), Stage 16.6 the Results tab
+The parts live in their own modules: the chat drawer
+(:mod:`ui_nice.chat_drawer`), Setup's form side (:mod:`ui_nice.setup_tab`),
+Setup's viewer side, the box picker
+(:mod:`ui_nice.box_picker_panel`), the Results tab
 (:mod:`ui_nice.results_tab`), which the page switches to when a run
-finishes or a session is loaded, and Stage 16.7 the Sessions tab
+finishes or a session is loaded, the Sessions tab
 (:mod:`ui_nice.sessions_tab`) and the settings dialog
 (:mod:`ui_nice.settings_dialog`). All are driven by one
 :class:`~ui_nice.controller.PageController` per client, and

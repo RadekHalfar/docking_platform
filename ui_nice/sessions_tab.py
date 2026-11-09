@@ -1,9 +1,8 @@
-"""The Sessions tab (Phase 16, Stage 16.7): the active session's revision
+"""The Sessions tab: the active session's revision
 history with Restore, Session History (Load, Rename, Delete, Compare) and
 Failed Sessions.
 
-Every session is listed, not only the 10 newest as the former Streamlit
-GUI did (owner's decision, 2026-10-13).
+Every session is listed, not only the newest few.
 
 :meth:`SessionsView.sync` touches no file, and does nothing while the tab
 is hidden. The listing and the revision history are read off the event
@@ -14,15 +13,14 @@ the tab is shown, when the session changes in a way that can change them
 results file, 4-6 s for ~170 sessions on a Docker Desktop bind mount, so on
 a change it is re-read only when a run finishes or the active job changes
 (:meth:`SessionsView._listing_key`); a chat reply (Save Session and
-``undo`` post one) re-reads only the revisions (Review Stage R3). A
-delete's ``rmtree`` runs off the loop too (finding 7), holding
+``undo`` post one) re-reads only the revisions. A
+delete's ``rmtree`` runs off the loop too, holding
 ``controller.busy``.
 
 Load, Delete and Restore revision are off while a run goes in this client
 or the controller is busy with a save or a delete (Rename only for the
 latter)
-(:meth:`~ui_nice.controller.PageController.blocked_reason`; Review Stage
-R2, Deferred #3), except that a Delete of another session is allowed while
+(:meth:`~ui_nice.controller.PageController.blocked_reason`), except that a Delete of another session is allowed while
 a run goes.
 """
 from __future__ import annotations
@@ -181,12 +179,11 @@ class SessionsView:
                 )
 
     def _draw_rows(self, listing: _Listing) -> None:
-        # DEFERRED (Review Stage R4, docs/reviews/stage_16_r4.md, Deferred #1):
-        # a changed listing (a delete, a run finishing or another session
+        # NOTE (known limitation): a changed listing (a delete, a run finishing or another session
         # appearing while the tab is shown) rebuilds every row, ~13 elements
         # each, rename editor included -- ~2,500 elements for 190 sessions, an
         # estimated 0.1-0.3 s on the event loop -- and a click landing during
-        # the rebuild is lost (R4 Correctness #7; a rename no longer rebuilds).
+        # the rebuild is lost (a rename doesn't rebuild).
         # Fix if such a lost click or a stall is noticed: keep rows by job_id,
         # add/remove only the changed rows, build the rename editor on demand.
         # A name being typed survives the redraw (a run finishing re-lists).
@@ -372,7 +369,7 @@ class SessionsView:
             listing = await run.io_bound(_read_listing, self.controller.output_base, state_manager, keep)
         except Exception as exc:
             # The task's boundary: any failure is shown and ends the spinner
-            # (one it didn't catch left it spinning, Review Stage R3). The
+            # (one it didn't catch would leave it spinning). The
             # next change, Refresh or tab open reads again.
             logger.warning("reading the sessions failed", exc_info=True)
             if generation == self._generation:
@@ -387,7 +384,7 @@ class SessionsView:
         self.read_error = None
         drawn = self._drawn
         if drawn is not None and (listing.completed, listing.failed) == (drawn.completed, drawn.failed):
-            # The same sessions: keep the rows drawn (Review Stage R3).
+            # The same sessions: keep the rows drawn.
             self._drawn = listing
         self._listing, self._listing_manager = listing, state_manager
         self.sync()
@@ -460,8 +457,8 @@ class SessionsView:
             self._renaming = None
             # The row shows the new name now, in place. The re-list then finds
             # the same sessions (the entry *job* already has the new name) and
-            # keeps the rows: rebuilding them all lost a click made meanwhile,
-            # e.g. a Delete right after the rename (Review Stage R4).
+            # keeps the rows: rebuilding them all would lose a click made
+            # meanwhile, e.g. a Delete right after the rename.
             row = self._rows.get(job["job_id"])
             if row is not None:
                 row.label.set_content(sessions.session_row_label(job, row.detail))

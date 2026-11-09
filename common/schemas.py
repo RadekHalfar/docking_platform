@@ -13,8 +13,8 @@ class MCPToolParameter(BaseModel):
     # Matches common.mcp_tooling.tool_param()'s default -- every parameter
     # in this codebase is declared through that helper (or
     # build_tool_parameters()'s 3-tuple form, which defaults the same way),
-    # so this model's own default previously disagreed with how it's
-    # actually always constructed in practice.
+    # so this model's own default agrees with how it's actually always
+    # constructed in practice.
     required: bool = False
     default: Optional[Any] = None
 

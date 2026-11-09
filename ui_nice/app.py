@@ -1,12 +1,12 @@
-"""NiceGUI GUI entry point (Phase 16). Run: ``python ui_nice/app.py`` with
+"""NiceGUI GUI entry point. Run: ``python ui_nice/app.py`` with
 the repo root on ``PYTHONPATH`` (the container sets ``/workspace``).
 
 Serves the page at ``/``, a ``/health`` route for the compose
 healthcheck, and the Results tab's downloads at ``/files/<job_id>/<path>``
-(Stage 16.6, finding 3): streamed from disk, and only files inside that
+streamed from disk, and only files inside that
 session's directory (``ui.core.results_view.resolve_job_file``). Each
 browser client gets its own :class:`GuiSession` when its page is built;
-nothing per-user lives at module level (finding 8).
+nothing per-user lives at module level.
 """
 from __future__ import annotations
 

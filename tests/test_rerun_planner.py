@@ -1,4 +1,4 @@
-"""Tests for the dependency-aware partial rerun planner (Phase 3)."""
+"""Tests for the dependency-aware partial rerun planner."""
 import pytest
 from services.llm_orchestrator.rerun_planner import (
     STEP_ORDER,
@@ -115,7 +115,7 @@ def test_describe_non_empty():
 
 # ---------------------------------------------------------------------------
 # missing_required_params — shared by the CLI (_execute_partial_rerun) and
-# the GUI (_handle_redock_request), see docs/reviews/stage_11_2_11_3_r2.md
+# the GUI (ui/core/run_control.plan_redock)
 # ---------------------------------------------------------------------------
 
 def test_missing_required_params_none_missing():

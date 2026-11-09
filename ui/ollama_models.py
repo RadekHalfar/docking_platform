@@ -12,7 +12,7 @@ from services.llm_orchestrator.llm_adapters import pull_ollama_model
 from ui.settings import DEFAULT_ENDPOINT
 
 # Where an Ollama is looked for when the endpoint is still a default one
-# (Stage 18.3), in this order:
+# in this order:
 # - the bundled container of the `local-llm` compose profile;
 # - the Ollama app on the host itself (GPU / Apple Metal accelerated), which
 #   the ui container reaches through docker-compose.yml's `extra_hosts`;
@@ -52,8 +52,8 @@ def _resolves(host: str, timeout: float) -> bool:
     """Whether *host* resolves within *timeout* seconds.
 
     requests' timeout doesn't cover the name lookup, and Docker's DNS takes
-    about 7 s to say that a name such as ``ollama`` doesn't exist (measured
-    in Stage 18.3) -- which is the default stack without the `local-llm`
+    about 7 s to say that a name such as ``ollama`` doesn't exist (measured)
+    -- which is the default stack without the `local-llm`
     profile, so every settings dialog open would wait that long. The lookup
     runs in a daemon thread that is left to finish on its own.
     """

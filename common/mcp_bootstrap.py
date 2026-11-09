@@ -2,9 +2,8 @@
 
 Every service resolves host/port/cache-dir the same way: an explicit CLI
 flag wins if given, otherwise fall back to the env-var-backed default from
-common.config. This used to be duplicated and inconsistently implemented --
-two services (rcsb_downloader, ligand_preparer) had no argparse at all, so
-the --host/--port flags their own Dockerfiles pass were silent no-ops.
+common.config. Keeping this in one place means the --host/--port flags the
+services' Dockerfiles pass are honoured by every service the same way.
 """
 import argparse
 from typing import Optional

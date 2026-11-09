@@ -1,4 +1,4 @@
-"""Tests for Phase 2 results-rendering helpers (pure functions only)."""
+"""Tests for the results-rendering helpers (pure functions only)."""
 import pytest
 
 from ui.results import prepare_affinity_data, make_affinity_chart_figure

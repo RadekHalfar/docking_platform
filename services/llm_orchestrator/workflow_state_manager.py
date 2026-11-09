@@ -45,8 +45,8 @@ class WorkflowStateManager:
 
     def __init__(self, job_dir: Path):
         self.job_dir = Path(job_dir)
-        # Shared, not plain mkdir: different uids (the non-root GUI, sessions
-        # the former root Streamlit GUI created, Phase 16) write a session.
+        # Shared, not plain mkdir: different uids (the non-root GUI and
+        # services, a root container) write a session.
         # Every write below is tmp + os.replace, which needs only write
         # permission on the directory, so this is enough for either uid to
         # update files the other created.
@@ -224,7 +224,7 @@ class WorkflowStateManager:
         so callers check the run's status as well. Also True when no
         parameters were ever checkpointed (nothing to be ahead of).
 
-        NOTE (Review Stage R1, Phase 13, altitude finding #5, deferred): this
+        NOTE (known design debt): this
         and ``InteractiveSession.pending_changed_params`` are two sources of
         truth for "have these parameters run" -- the set is exact but lost
         on Load/restart, this survives but is a boolean, so the GUI seeds
@@ -232,11 +232,9 @@ class WorkflowStateManager:
         a full rerun). Fix: record the parameters revision each *completed*
         run used; pending keys are then the diff of that revision against
         the latest -- exact, persistent, replacing both. Touches the
-        orchestrator, this class and both front ends, so its own stage.
-        Trigger: a third caller needing "did these params run", the two
+        orchestrator, this class and both front ends. Trigger: a third caller needing "did these params run", the two
         disagreeing in a real session, or users objecting to the full
-        rerun after a Load. See dev_plan.md Phase 13 Future Work and
-        docs/reviews/stage_13_r1.md.
+        rerun after a Load.
         """
         params_revision = self.get_parameters_revision()
         if params_revision is None:
@@ -279,7 +277,7 @@ class WorkflowStateManager:
         return None
 
     # ------------------------------------------------------------------
-    # Phase 4: revision history and undo/restore
+    # Revision history and undo/restore
     # ------------------------------------------------------------------
 
     def list_revisions(self) -> List[Dict[str, Any]]:

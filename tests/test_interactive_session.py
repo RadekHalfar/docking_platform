@@ -1,4 +1,4 @@
-"""Tests for InteractiveSession helpers introduced/used by Stage 11.2 (GUI redock wiring)."""
+"""Tests for InteractiveSession helpers used by the GUI redock wiring."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ def test_no_prior_params_reports_every_key_as_changed():
 
 
 def test_key_missing_on_one_side_reads_as_its_default():
-    """Review Stage R1, Phase 15: a checkpoint from before docking_algorithm
-    existed, against a form that sends the default, is not a change -- and
+    """A checkpoint without docking_algorithm (written by an older
+    version), against a form that sends the default, is not a change -- and
     neither is a form without energy_range against a full checkpoint."""
     old = {"protein_id": "6lu7", "energy_range": 100.0}
     assert compute_changed_params(old, {"protein_id": "6lu7", "docking_algorithm": "moldina"}) == set()
@@ -46,7 +46,7 @@ def test_returns_a_set_not_a_list():
 
 
 # ---------------------------------------------------------------------------
-# resolve_prepared_protein_pdb_path -- Stage 12.2 (protein geometry auto-fill)
+# resolve_prepared_protein_pdb_path (protein geometry auto-fill)
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ def test_resolve_pdb_path_happy_path():
 
 
 # ---------------------------------------------------------------------------
-# InteractiveSession.activate (Phase 13, Stage 13.2)
+# InteractiveSession.activate
 # ---------------------------------------------------------------------------
 
 def test_activate_resets_pending_changed_params(tmp_path):

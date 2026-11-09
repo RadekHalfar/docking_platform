@@ -1,10 +1,10 @@
-"""What the results panel shows, as data (Phase 16, Stage 16.2).
+"""What the results panel shows, as data.
 
 The widgets stay in the GUI. Paths in a workflow result are the MCP
 services' own (``/app/orchestrator_output/...``) and are mapped onto
 *output_base* with ``common.path_utils.from_container_path``.
 
-Stage 16.6 adds what NiceGUI's Results tab needs: :func:`read_results_data`
+For NiceGUI's Results tab: :func:`read_results_data`
 does all of one result's file reads at once, so a GUI with an event loop
 runs it off the loop once per result, not per redraw or timer tick;
 :func:`job_log_if_changed` re-reads ``job.log`` only when it has changed;
@@ -172,7 +172,7 @@ def other_download_files(output_base: Path, job_id: str) -> list[Path]:
     return [f for f in sorted(files) if f.suffix in OTHER_DOWNLOAD_SUFFIXES]
 
 
-# ── One result's reads, at once (Stage 16.6) ──────────────────────────────────
+# ── One result's reads, at once ──────────────────────────────────────────────
 
 @dataclass
 class ResultsData:
@@ -230,7 +230,7 @@ def job_log_tail(text: str) -> str:
     return "\n".join(text.splitlines()[-JOB_LOG_TAIL_LINES:])
 
 
-# ── The download route's path checks (Stage 16.6, finding 3) ─────────────────
+# ── The download route's path checks ─────────────────────────────────────────
 
 DOWNLOAD_ROUTE = "/files"
 _JOB_ID = re.compile(r"job_[A-Za-z0-9_]+")

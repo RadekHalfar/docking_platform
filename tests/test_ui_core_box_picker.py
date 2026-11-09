@@ -1,4 +1,4 @@
-"""Tests for ui/core/box_picker.py (Stage 16.2) -- hermetic, plain GuiSession.
+"""Tests for ui/core/box_picker.py -- hermetic, plain GuiSession.
 
 The NiceGUI page's own wiring over the same code is covered by
 tests/test_nicegui_*.py (GUI test tier).
@@ -85,7 +85,7 @@ def test_viewer_click_writes_center_and_keeps_a_drawable_size(state):
 @pytest.mark.parametrize("sizes", [("", "", ""), ("0", "20", "20")])
 def test_viewer_click_fills_in_the_placeholder_size(state, sizes):
     # Unset or undrawable: the viewer draws the placeholder, so that is
-    # what a click must dock (Phase 14 R1).
+    # what a click must dock.
     _set_size(state, *sizes)
     box_picker.apply_viewer_click(state, [1.0, 2.0, 3.0])
     assert _box(state)[3:] == ["20.000"] * 3
@@ -142,7 +142,7 @@ def test_prep_starts_the_prep_services_and_clears_the_old_picker_state(state, tm
 
 def test_prep_gives_each_client_its_own_services_list(state, tmp_path):
     # validate_workflow() keeps the list in the client's parser; the
-    # module-level PREP_SERVICES is shared by every client (Review Stage R2).
+    # module-level PREP_SERVICES is shared by every client.
     state.form.update(input_mode="rcsb", param_protein_id="6lu7")
 
     box_picker.start_box_picker_prep(state, tmp_path, FakeBridge)
@@ -232,7 +232,7 @@ def test_completed_prep_records_the_receptor_and_applies_a_pending_command(state
 
 
 def test_completed_prep_applies_every_queued_command_in_order(state, tmp_path, receptor):
-    # Review Stage R1 (Phase 16): with one slot, "center" then "whole
+    # With one slot, "center" then "whole
     # protein" sent during a prep set only the box size.
     state.box_picker_bridge = FakeBridge(result=_prepared(receptor))
     state.pending_geometry_targets = ("center", "box_size")

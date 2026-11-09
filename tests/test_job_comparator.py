@@ -150,8 +150,8 @@ class TestCompareJobs:
         assert comparison["jobs"] == ["Wide box", "job_def"]
 
     def test_compare_jobs_tells_apart_jobs_with_the_same_name(self, tmp_path):
-        # Stage 16.7: two sessions both named "trial" gave the comparison
-        # table two columns with one label, and the GUI failed to draw it.
+        # Two sessions both named "trial" must not give the comparison
+        # table two columns with one label (the GUI can't draw that).
         job_a = tmp_path / "job_abc"
         job_b = tmp_path / "job_def"
         job_c = tmp_path / "job_ghi"
@@ -165,8 +165,8 @@ class TestCompareJobs:
         assert comparison["best_per_ligand"]["ATP"] == ("trial (job_abc)", -8.4)
 
     def test_compare_jobs_records_each_jobs_docking_algorithm(self, tmp_path):
-        # Stage 15.3: the comparison names which search produced each column;
-        # results written before Phase 15 have no key and were Moldina (PSO).
+        # The comparison names which search produced each column;
+        # results without the key (older versions) were Moldina (PSO).
         job_a = tmp_path / "job_abc"
         job_b = tmp_path / "job_def"
         _write_workflow_results(job_a, [{"ligand_id": "ATP", "best_affinity": -5.8}], docking_algorithm="vina")

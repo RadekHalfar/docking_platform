@@ -1,4 +1,4 @@
-"""Tests for ui/core/results_view.py (Stage 16.2) -- hermetic, tmp_path
+"""Tests for ui/core/results_view.py -- hermetic, tmp_path
 OUTPUT_BASE. Result paths use the MCP services' own mount
 (``/app/orchestrator_output/...``), as real workflow results do."""
 import json
@@ -172,7 +172,7 @@ def test_other_download_files_skips_saved_bundles(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# One result's reads (Stage 16.6)
+# One result's reads
 # ---------------------------------------------------------------------------
 
 def test_read_results_data_reads_receptor_poses_and_download_lists(tmp_path, job, monkeypatch):
@@ -225,7 +225,7 @@ def test_job_log_tail_keeps_the_last_lines():
 
 
 # ---------------------------------------------------------------------------
-# The download route's path checks (Stage 16.6, finding 3)
+# The download route's path checks
 # ---------------------------------------------------------------------------
 
 @pytest.fixture

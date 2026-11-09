@@ -1,4 +1,4 @@
-"""Tests for ui/core/llm_settings.py (Stage 16.7) -- hermetic, plain GuiSession."""
+"""Tests for ui/core/llm_settings.py -- hermetic, plain GuiSession."""
 import json
 
 import pytest
@@ -33,8 +33,8 @@ def test_settings_from_form_strips_and_keeps_only_the_fields_it_shows(provider, 
 
 @pytest.mark.parametrize("provider", ["ollama", "none"])
 def test_a_provider_without_a_key_field_neither_keeps_nor_remembers_one(provider):
-    # Its key fields are only hidden, so a remembered key used to be saved
-    # again with no way to untick it (Review Stage R5).
+    # Its key fields are only hidden; a remembered key must not be saved
+    # again with no way to untick it.
     settings = llm_settings.settings_from_form(provider, "m", "", "sk-old", "", remember_api_key=True)
 
     assert settings["api_key"] == "" and settings["remember_api_key"] is False
@@ -42,7 +42,7 @@ def test_a_provider_without_a_key_field_neither_keeps_nor_remembers_one(provider
 
 @pytest.mark.parametrize("provider", ["openai", "ollama", "openai_compatible"])
 def test_a_provider_without_a_model_is_refused_and_not_saved(state, settings_file, provider):
-    # LLM_MODEL is empty by default since Stage 18.2 (Review Stage R5).
+    # LLM_MODEL is empty by default.
     new = llm_settings.settings_from_form(provider, " ", "http://e", "k", "http://x/v1")
 
     with pytest.raises(ValueError, match="Pick or type a model"):
@@ -63,7 +63,7 @@ def test_apply_saves_all_but_the_key_and_rebuilds_the_client(state, settings_fil
 
 
 def test_settings_the_client_rejects_change_nothing(state, settings_file, monkeypatch):
-    # Saved first, a rejected provider used to stay on disk and in the session.
+    # Saved first, a rejected provider would stay on disk and in the session.
     def reject(settings):
         raise ValueError("Unsupported provider")
 
@@ -78,7 +78,7 @@ def test_settings_the_client_rejects_change_nothing(state, settings_file, monkey
 
 
 def test_applying_none_drops_the_client(state, settings_file):
-    # Phase 18: "None (forms only)" is a provider like any other in the form;
+    # "None (forms only)" is a provider like any other in the form;
     # it just has no client, so the chat answers with the setup hint.
     new = llm_settings.settings_from_form("none", "", "", "", "")
 

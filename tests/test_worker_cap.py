@@ -248,11 +248,11 @@ _BENCHMARKS_DIR = Path(__file__).resolve().parents[1] / "docs" / "benchmarks"
 class TestMeasuredConstantsMatchBenchmark:
     """The MEASURED_* constants are copied from checked-in benchmark runs;
     re-derive them from those JSONs with the documented rule so the two
-    can't drift apart (Phase 14 Review Stage R1)."""
+    can't drift apart."""
 
-    # Per algorithm, at 1 CPU per ligand: moldina's 14.3 run and its Review
-    # Stage R1 re-run with the wall-clock bias fixed (both must agree), and
-    # vina's Stage 15.3 run (docs/BATCH_DOCKING.md, "Benchmark baseline").
+    # Per algorithm, at 1 CPU per ligand: moldina's run and its same-day
+    # re-run with the wall-clock bias fixed (both must agree), and vina's
+    # run (docs/BATCH_DOCKING.md, "Benchmark baseline").
     BENCHMARKS = [
         ("moldina", "2026-10-05_moldina_cpus10_mem8g.json"),
         ("moldina", "2026-10-05_moldina_cpus10_mem8g_r1_rerun.json"),

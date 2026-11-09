@@ -1039,7 +1039,7 @@ class TestMoldinaRunnerParallel:
 
 
 # ---------------------------------------------------------------------------
-# Stop on request (Phase 13, Stage 13.1b) -- a STOP_REQUESTED flag file in
+# Stop on request -- a STOP_REQUESTED flag file in
 # output_dir halts the batch: no further ligands start, running Moldina
 # processes are killed. These use real subprocess.TimeoutExpired (only Popen
 # is replaced), so _run_cancellable's poll/terminate path really runs.
@@ -1238,7 +1238,7 @@ class TestRunCancellable:
 
 
 class TestDockingAlgorithm:
-    """Stage 15.1: docking_algorithm selects PSO ("moldina") or Monte Carlo ("vina")."""
+    """docking_algorithm selects PSO ("moldina") or Monte Carlo ("vina")."""
 
     _SHARED = dict(cpu=2, population=300, exhaustiveness=8, num_modes=9, energy_range=3.0)
 
@@ -1327,13 +1327,13 @@ class TestDockingAlgorithm:
 
     @pytest.mark.parametrize("algorithm,cpu,expected_workers", [
         ("vina", 1, 8), ("vina", 2, 4), ("vina", 4, 2), ("vina", 8, 1),
-        # PSO ignores --cpu (Stage 15.1 finding 2), so cpu must not cut its
-        # workers (Review Stage R1, Phase 15, correctness #2).
+        # PSO ignores --cpu, so cpu must not cut its
+        # workers.
         ("moldina", 4, 8), ("moldina", 8, 8),
     ])
     def test_workers_clamped_to_quota_divided_by_cpus_per_ligand(self, runner, temp_dir, mock_subprocess,
                                                                  algorithm, cpu, expected_workers):
-        """workers × CPUs per ligand never exceeds the container's CPU budget (finding 3)."""
+        """workers × CPUs per ligand never exceeds the container's CPU budget."""
         receptor, ligands, output_dir = self._files(temp_dir, n_ligands=10)
         mock_subprocess.run.return_value = Mock(returncode=0, stdout='', stderr='')
 

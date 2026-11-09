@@ -58,9 +58,9 @@ This system lets you control the full molecular docking pipeline with plain-lang
     Down   Prep   Prep   Docking Prep (poses)
 ```
 
-  ### Centralized Workflow Metadata (Phase 2)
+  ### Centralized Workflow Metadata
 
-  Workflow structure is now defined in one place: [services/llm_orchestrator/workflow_definition.py](../services/llm_orchestrator/workflow_definition.py).
+  Workflow structure is defined in one place: [services/llm_orchestrator/workflow_definition.py](../services/llm_orchestrator/workflow_definition.py).
 
   This shared module provides:
   1. Canonical step order
@@ -69,7 +69,7 @@ This system lets you control the full molecular docking pipeline with plain-lang
   4. Parameter invalidation map for partial reruns
   5. MCP service endpoint defaults and env-var overrides
 
-  `WorkflowParser`, `rerun_planner`, and `WorkflowOrchestrator` now consume this metadata directly.
+  `WorkflowParser`, `rerun_planner`, and `WorkflowOrchestrator` consume this metadata directly.
 
 ---
 
@@ -230,7 +230,7 @@ Then type commands interactively:
 🧬 > end session
 ```
 
-#### Session behavior (Phase 1 + Phase 2)
+#### Session behavior
 
 1. First natural-language request starts the active session job.
 2. After completion the CLI blocks and waits for a follow-up command.
@@ -238,7 +238,7 @@ Then type commands interactively:
 4. Use `new <request>` to explicitly start a fresh workflow in the same session.
 5. Use `end`/`quit`/`exit` or "end session" to stop.
 
-#### Multi-intent command sequencing (Phase 10)
+#### Multi-intent command sequencing
 
 A single input line may chain more than one follow-up command with `and`,
 `then`, or `and then`:
@@ -310,10 +310,7 @@ exists) is always treated as one atomic natural-language request, since its
 own text may legitimately contain "and"/"then"/"dock" as ordinary workflow
 vocabulary (e.g. `"new Download 6lu7 and ADP, prepare and dock"`).
 
-Migration note: before Phase 10, one input had to contain exactly one
-intent (see the intent table below) — chaining was not supported.
-
-#### Intent classification for follow-up commands (Phase 2)
+#### Intent classification for follow-up commands
 
 When a job is active, every command is classified into one of these intents before dispatch:
 
@@ -324,9 +321,9 @@ When a job is active, every command is classified into one of these intents befo
 | `end_session` | `end`, `end session`, `quit session` | Exit the session cleanly |
 | `new_workflow` | `new <request>` | Start a fresh workflow |
 | `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk, invalidate affected services |
-| `set_protein_geometry` | `set up box center as protein center`, `look across all protein` | Compute `center`/`box_size` from the loaded protein's own bounding box, persist to disk, invalidate affected services (Phase 12) |
-| `set_docking_algorithm` | `use vina`, `switch to PSO`, `dock with vina` | Switch the docking search; the "dock with …" forms rerun too (Phase 15, [below](#set-docking-algorithm-phase-15)) |
-| `search_ligand` | `search adenosine`, `find ligand heme` | Search RCSB ligands by name and pick one, which becomes the session's ligand (Phase 9, [below](#search-a-ligand-by-name-phase-9)) |
+| `set_protein_geometry` | `set up box center as protein center`, `look across all protein` | Compute `center`/`box_size` from the loaded protein's own bounding box, persist to disk, invalidate affected services ([below](#set-protein-geometry)) |
+| `set_docking_algorithm` | `use vina`, `switch to PSO`, `dock with vina` | Switch the docking search; the "dock with …" forms rerun too ([below](#set-docking-algorithm)) |
+| `search_ligand` | `search adenosine`, `find ligand heme` | Search RCSB ligands by name and pick one, which becomes the session's ligand ([below](#search-a-ligand-by-name)) |
 | `save_results` | `save results as hem_box_a` | Save named result bundle from current docking/visualization outputs |
 | `undo_revision` | `undo 14` | Restore parameters/state to a prior revision |
 | `rerun_steps` | `rerun`, `dock`, `rerun docking` | Re-execute invalidated steps with pre-flight validation |
@@ -344,7 +341,7 @@ After classifying `update_parameters`, the system:
 4. Immediately removes invalidated services from the executed set (e.g. changing `center` invalidates `dock` and `visualize`).
 5. Prints a confirmation with a hint to `rerun`.
 
-#### Set protein geometry (Phase 12)
+#### Set protein geometry
 
 `set_protein_geometry` is classified deterministically, like the other
 common keywords — never sent to the LLM, since the LLM has no access to
@@ -371,7 +368,7 @@ function ahead of its own chat-parsing call, so both commands work
 identically from the browser — see
 [GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
 
-#### Search a ligand by name (Phase 9)
+#### Search a ligand by name
 
 RCSB downloads a ligand by its component ID (`ATP`, `HEM`, `NAD`). When you
 only know a name, the CLI searches RCSB's chemical component dictionary
@@ -428,7 +425,7 @@ ligand is left out of the run, and if it was the only one the run fails with
 "No ligand files available for preparation". Search in the CLI, or on
 [rcsb.org](https://www.rcsb.org/), then enter the ID.
 
-#### Set docking algorithm (Phase 15)
+#### Set docking algorithm
 
 `set_docking_algorithm` is also classified deterministically
 (`workflow_llm_parser.py::detect_docking_algorithm_command()`). It is checked in
@@ -459,9 +456,9 @@ session already uses that algorithm (a plain redock). If the LLM intent
 classifier, rather than the detector, returns this intent, its name is
 normalised the same way and an unknown one is rejected. The GUI
 chat runs the same detector before its LLM parse. "use …" only switches;
-"dock with …" switches and then does what **Run Docking** does (Stage 17.1).
+"dock with …" switches and then does what **Run Docking** does.
 
-#### GUI run command (Phase 17)
+#### GUI run command
 
 The GUI chat also recognises a bare run command, `run`, `start docking`,
 `redock it again`, `go ahead`, with
@@ -477,8 +474,7 @@ reply. The CLI keeps its own broader `rerun|run|dock|execute` prefix in
 A GUI chat message changes only the form fields it names. The parser fills
 every default (`docking_algorithm`, `cpu`, `exhaustiveness`, `ph`, …), and
 a follow-up carries the previous turn's values, but neither reaches the
-form, so the user's own choices survive the message (Review Stage R1, Phase
-15). The first-parse prompt no longer shows `ph`/`exhaustiveness`/`cpu`/
+form, so the user's own choices survive the message. The first-parse prompt doesn't show `ph`/`exhaustiveness`/`cpu`/
 `population` at their defaults in its examples, so the model doesn't echo
 them as if the user had named them. An algorithm the LLM names but nobody
 recognises is reported once ("…is not recognised, so Moldina (PSO) stays
@@ -640,7 +636,7 @@ The LLM can identify these workflow stages:
 When required fields are missing or invalid, clarification runs in one of two modes:
 
 - `hybrid` (default): LLM + deterministic safety checks
-- `legacy`: deterministic prompts only (pre-hybrid behavior)
+- `legacy`: deterministic prompts only
 
 ### What Hybrid Is
 
@@ -777,7 +773,7 @@ supplied. The GUI sets it from the **Session name** field at submission time
 does not currently set it, so CLI-run jobs always persist `"job_name": ""`
 unless `execute_workflow(..., job_name=...)` is called directly.
 
-`status` is one of `"completed"`, `"failed"`, or (Stage 11.3) `"cancelled"` —
+`status` is one of `"completed"`, `"failed"`, or `"cancelled"` —
 the last one written when a caller passes `execute_workflow(...,
 cancel_event=...)` and that event gets set (e.g. the GUI's **Stop** button,
 [docs/GUI_GUIDE.md](GUI_GUIDE.md#stopping-a-running-session)) before the
@@ -785,7 +781,7 @@ next step starts; `errors` then includes `"Workflow cancelled by user
 request"`. A cancelled job's `services_executed`/`results` reflect whatever
 actually finished before cancellation, exactly as a partial run's would.
 
-Since Phase 11 (v2.0), `execute_workflow()` **merges** into any
+`execute_workflow()` **merges** into any
 `workflow_results.json` already on disk for that `job_dir` instead of
 overwriting it: `results` dicts are merged per-step (the new call's step
 results win on a repeat), `services_executed` is recomputed from every step
@@ -793,9 +789,9 @@ that now has a result, and an existing non-empty `job_name` survives a call
 that didn't supply one. This means a session that runs `get_input_files`,
 then later reruns only `dock` after a parameter change, still has both
 steps' results on disk — a fresh `job_dir` with nothing to merge with
-behaves exactly as before.
+simply gets the new call's results.
 
-**job.log** (new in Phase 11) is a plain-text, append-only narration of a
+**job.log** is a plain-text, append-only narration of a
 session's whole timeline in one file — the one place a multi-redock session
 reads end-to-end, since `workflow_results.json` only ever holds the current
 merged snapshot and the revisioned checkpoints under `checkpoints/` are
@@ -887,7 +883,7 @@ python nlp_orchestrator.py --llm-provider ollama --llm-model qwen2.5-coder:7b-in
 
 ### Ollama Not Starting
 
-Ollama is opt-in (Phase 18); a plain `docker compose up -d` doesn't start it.
+Ollama is opt-in; a plain `docker compose up -d` doesn't start it.
 
 **Start it:**
 ```bash
@@ -1172,14 +1168,14 @@ python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b --debug "
 
 ## Roadmap
 
-### Already Shipped (moved out of "planned")
+### Implemented
 
 - [x] Local ligand/protein files, not just RCSB (`--protein-file`, `--ligand-files`, `--ligand-folder` — see [Local File Input](#local-file-input))
-- [x] Web UI (NiceGUI, `ui_nice/` — see [GUI_GUIDE.md](GUI_GUIDE.md); Streamlit until Phase 16)
+- [x] Web UI (NiceGUI, `ui_nice/` — see [GUI_GUIDE.md](GUI_GUIDE.md))
 - [x] Result comparison (`compare_jobs()` / `nlp_orchestrator.py compare` — see [STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md#job-comparison))
 - [x] More LLM backends (OpenAI, Anthropic, MetaCentrum, any OpenAI-compatible server — see [Supported LLM Providers](#supported-llm-providers))
 - [x] Workflow history (revision history / `undo` in interactive mode — see [Revision history and undo](#revision-history-and-undo))
-- [x] Multi-intent command sequencing in one input line (`CHANGELOG.md` v1.0, Phase 10 — see [Multi-intent command sequencing](#multi-intent-command-sequencing-phase-10))
+- [x] Multi-intent command sequencing in one input line (see [Multi-intent command sequencing](#multi-intent-command-sequencing))
 
 ### Planned Features
 

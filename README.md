@@ -327,7 +327,7 @@ docking_platform/
 │       └── job_cleanup.py      # Opt-in job-directory retention/cleanup
 │
 ├── ui/                          # GUI logic and helpers, framework-free (the NiceGUI app is ui_nice/; see docs/GUI_GUIDE.md)
-│   ├── core/                   # GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view, llm_settings (Phase 16)
+│   ├── core/                   # GUI logic on a GuiSession: state, form, uploads, run_control, sessions, chat, box_picker, save_results, results_view, llm_settings
 │   ├── worker_cap.py           # docker-compose.yml-aware CPU cap + per-algorithm benchmarked default workers
 │   ├── orchestrator_bridge.py  # Background-thread workflow execution, per-run log sink (no stdout capture)
 │   ├── job_history.py          # Session list scan, job naming/rename

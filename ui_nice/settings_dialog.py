@@ -1,9 +1,9 @@
-"""The settings dialog (Phase 16, Stage 16.7): the LLM provider, endpoint,
+"""The settings dialog: the LLM provider, endpoint,
 model and API key.
 
 The fields are filled from the session's settings each time the dialog
 opens. With Ollama, a running Ollama is looked for
-(``ui.ollama_models.find_ollama``, Stage 18.3) and the model is picked from
+(``ui.ollama_models.find_ollama``) and the model is picked from
 the models it lists; that search runs off the event loop (``run.io_bound``)
 when the dialog opens, when Ollama is picked, when the endpoint field is
 committed (Enter or leaving it) and on Re-check. A result for an endpoint no
@@ -12,10 +12,10 @@ answers elsewhere (the bundled container, the app on the host), the field
 takes that endpoint. If none answers, the dialog says how to start one, and
 the model is a free-text field.
 
-A found Ollama can download models (Stage 18.3): the pull runs in
+A found Ollama can download models: the pull runs in
 ``run.io_bound``, its progress is stored by the worker thread and drawn by a
 timer, Cancel stops it, and Apply waits until it ends. Closing the dialog
-doesn't stop it; closing the page does (Review Stage R5).
+doesn't stop it; closing the page does.
 
 Apply builds the client and saves the settings file off the event loop
 (``ui.core.llm_settings.persist_settings``); the API key is saved only when
@@ -167,7 +167,7 @@ class SettingsView:
             ) or endpoint
             self.model_input.value = settings.get("model", "")
             # A model picked but not applied is dropped; _sync selects the
-            # session's (an unapplied pick survived a reopen, Review Stage R3).
+            # session's, so an unapplied pick doesn't survive a reopen.
             self.model_select.value = None
             self.api_key.value = settings.get("api_key", "")
             self.remember_key.value = bool(settings.get("remember_api_key"))
@@ -275,7 +275,7 @@ class SettingsView:
         self.download_status.set_text(f"{self.downloading}: {status}{size}" if self.downloading else "")
 
     async def _on_download(self) -> None:
-        # Known issue (dev_plan.md Future Work): a typed name becomes the
+        # Known issue: a typed name becomes the
         # select's value only on Enter, so without it Download does nothing.
         name = (self.download_model.value or "").strip()
         if not name or self.downloading is not None:
@@ -302,7 +302,7 @@ class SettingsView:
                 # The new model becomes the pick once it is listed (_sync
                 # keeps a still-listed pick otherwise) -- unless the user
                 # has moved to another provider meanwhile, whose model field
-                # it would overwrite (Review Stage R5).
+                # it would overwrite.
                 if self.provider.value == "ollama":
                     self.model_input.value = name
                     self.model_select.value = None

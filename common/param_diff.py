@@ -1,7 +1,7 @@
 """Shared "which dict keys changed" helper for parameter diffing.
 
 Used by :class:`~services.llm_orchestrator.workflow_state_manager.WorkflowStateManager`
-(job.log parameter-change lines) and, from Stage 11.2 on, the GUI's own
+(job.log parameter-change lines) and the GUI's own
 redock-diff check -- one definition of "changed" instead of two
 independently-maintained copies.
 """

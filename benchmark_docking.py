@@ -163,7 +163,7 @@ class ContainerStatsSampler:
     report how trustworthy the numbers are instead of silently getting fewer
     samples.
 
-    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): polled peaks
+    NOTE: polled peaks
     are lower bounds. The kernel records the exact one (cgroup v2
     memory.peak, readable in moldina-runner), but only per container
     lifetime unless reset per open file (kernel 6.12+), so it can't be
@@ -375,9 +375,9 @@ def timeout_per_ligand(args: argparse.Namespace) -> int:
     """--timeout-per-ligand, or a default that covers the slowest
     configuration, the sequential one. Vina's search grows with
     exhaustiveness (~62 s per ligand at 8, ~2x at 16), so a flat 180 s would
-    cut off a sequential Vina row at higher settings (Review Stage R1,
-    Phase 15; the same budget as the orchestrator's
-    docking_timeout_seconds(), with PSO's floor kept at 180 s)."""
+    cut off a sequential Vina row at higher settings (the same budget as
+    the orchestrator's docking_timeout_seconds(), with PSO's floor kept at
+    180 s)."""
     if args.timeout_per_ligand is not None:
         return args.timeout_per_ligand
     if args.docking_algorithm == "vina":
@@ -390,8 +390,8 @@ def workers_ran(requested: int, result: Optional[dict]) -> int:
     max_workers to its CPU quota // CPUs per ligand and to the ligand count,
     and reports the result as ``workers``; a row labelled with the request
     would, at --cpu 4, record parallel_8 and parallel_10 rows that both ran
-    2 workers (Review Stage R1, Phase 15). A failed call, or a server from
-    before that review, falls back to the request."""
+    2 workers. A failed call, or a server that doesn't report
+    ``workers``, falls back to the request."""
     ran = (result or {}).get("workers", requested)
     if ran != requested:
         print(f"  NOTE: the server ran {ran} worker(s), not {requested} "

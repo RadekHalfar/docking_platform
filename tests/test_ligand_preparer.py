@@ -686,7 +686,7 @@ def test_convert_docked_poses_skips_missing_or_absent_pose_files(preparer, tmp_p
 
 
 # ---------------------------------------------------------------------------
-# Already-prepared .pdbqt ligands (Stage 19.2)
+# Already-prepared .pdbqt ligands
 # ---------------------------------------------------------------------------
 
 # Shaped like a Meeko-written ligand: REMARK SMILES, a torsion tree, TORSDOF.

@@ -1,4 +1,4 @@
-"""Smoke tests for the NiceGUI page shell (Phase 16, Stage 16.3).
+"""Smoke tests for the NiceGUI page shell.
 
 nicegui is only installed in the ui image, so this file skips under the
 default suite/CI and really runs via
@@ -7,7 +7,6 @@ default suite/CI and really runs via
         python -m pytest -c ui_nice/pytest.ini tests/test_nicegui_*.py
 
 Isolation comes from tests/nicegui_harness.py (loaded by that config).
-The Streamlit-to-NiceGUI test mapping is in docs/reviews/stage_16_8_parity.md.
 """
 import pytest
 

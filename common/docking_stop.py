@@ -1,4 +1,4 @@
-"""Cross-container "stop docking now" signal (Phase 13, Stage 13.1b).
+"""Cross-container "stop docking now" signal.
 
 The dock step is one blocking ``run_docking`` MCP call to ``moldina-runner``
 that loops over every ligand, so the orchestrator's between-steps

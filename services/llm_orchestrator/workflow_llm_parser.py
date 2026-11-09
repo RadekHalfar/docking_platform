@@ -466,9 +466,8 @@ _PROTEIN_CENTER_RE = re.compile(
 # "look across all protein" / "cover the whole protein" / "whole protein
 # box" / "box size for the entire protein". Anchored to end-of-string
 # (allowing only trailing "box"/punctuation) rather than a bare .search()
-# match -- Review Stage R1 (Phase 12) found the unanchored version matched
-# "cover the whole protein pocket"/"...active site", silently swapping a
-# user's targeted box-resize request for a full-protein blind-docking box.
+# match: an unanchored match would hit "cover the whole protein
+# pocket"/"...active site", silently swapping a user's targeted box-resize request for a full-protein blind-docking box.
 # Requiring "protein" to end the phrase (mod "box"/punctuation) keeps the
 # intended cases matching while rejecting phrases that qualify "protein"
 # with something more specific than the whole structure.
@@ -502,7 +501,7 @@ def detect_protein_geometry_command(text: str) -> Optional[str]:
 # vina". Anchored over the whole command (only "the", a trailing
 # "algorithm"/"search"/"mode" and punctuation may surround the algorithm), so
 # "dock 6lu7 with ATP" or "dock with vina and visualize" never match -- the
-# former must stay a rerun, the latter a longer request (Phase 15 finding 6).
+# former must stay a rerun, the latter a longer request.
 _ALGORITHM_TERM = (
     r"(?P<alg>autodock[\s_-]+vina"
     r"|vina(?:\s*\(\s*monte[\s_-]+carlo\s*\)|[\s_-]+monte[\s_-]+carlo)?"
@@ -551,7 +550,7 @@ def detect_docking_algorithm_command(text: str) -> Optional[Dict[str, Any]]:
 
 
 # "run" / "start docking" / "redock it again" / "go ahead" -- the GUI chat's
-# Run Docking (Stage 17.1). Anchored over the whole message, and only filler
+# Run Docking. Anchored over the whole message, and only filler
 # words may follow the verb, so a request that names anything ("dock ATP
 # into 6lu7", "run 6lu7", "start a new session") never matches and still
 # fills the form.
@@ -589,8 +588,8 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
 
     if re.match(r"^undo\b", t):
         # Only a number right after "undo" is the revision: taking the first
-        # digit anywhere made "undo the box change and set exhaustiveness to
-        # 16" restore revision 16 (Review Stage R1, Phase 13). Without one,
+        # digit anywhere would make "undo the box change and set
+        # exhaustiveness to 16" restore revision 16. Without one,
         # name is None and the caller asks which revision.
         match = re.match(r"^undo\s+(?:to\s+)?(?:rev(?:ision)?\s*)?#?(\d+)\s*$", t)
         return {"intent": "undo_revision", "name": match.group(1) if match else None}
@@ -635,13 +634,12 @@ def _deterministic_intent(text: str) -> Optional[Dict[str, Any]]:
     # "set up box center as protein center" and "use protein center" both
     # start with a word that prefix matches on.
     #
-    # NOTE (Review Stage R1, Phase 12): unlike every other intent here,
+    # NOTE (known limitation): unlike every other intent here,
     # set_protein_geometry has no LLM-classifier fallback -- a paraphrase
     # outside these two regexes (e.g. "put the box in the middle of the
     # receptor") falls through to update_parameters, which correctly
     # refuses to invent center/box_size but gives no hint this feature
-    # exists. Deliberately deferred, not missed: see dev_plan.md Phase 12
-    # Future Work ("LLM-based recognition of this command"). The numeric
+    # exists. An LLM-based recognition tier is a possible extension. The numeric
     # computation would stay fully deterministic either way -- only intent
     # *recognition* would gain an LLM tier, like the other intents'
     # two-tier setup. Revisit if real usage shows a common

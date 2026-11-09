@@ -73,7 +73,7 @@ class TestListOllamaModels:
 
     def test_a_malformed_endpoint_returns_none(self):
         # urlsplit raised ValueError, so the dialog's search ended with
-        # neither the found status nor the Re-check panel (Review Stage R5).
+        # neither the found status nor the Re-check panel.
         assert list_ollama_models("http://[::1:11434") is None
 
     @patch("requests.get")

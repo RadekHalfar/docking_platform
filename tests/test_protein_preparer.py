@@ -302,7 +302,7 @@ class TestProteinPreparer:
         ATOM-only by design) and skips a malformed atom line without
         failing the whole conversion -- exercises the shared
         common.pdb_geometry.parse_pdb_atom_line() parser this method now
-        uses (Review Stage R1, Phase 12)."""
+        uses."""
         pdb_content = (
             "ATOM      1  N   ALA A   1       1.000   2.000   3.000  1.00  0.00           N\n"
             "HETATM    2  O   HOH A   2     100.000 100.000 100.000  1.00  0.00           O\n"

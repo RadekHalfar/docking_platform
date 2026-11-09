@@ -70,9 +70,8 @@ def build_comparison_html(comparison: Dict[str, Any]) -> str:
     """Render a ligand x job affinity table as a self-contained HTML string.
 
     Built as raw HTML/inline-CSS (the GUI shows it with ``ui.html``) rather
-    than a styled grid: the former Streamlit GUI's canvas-drawn dataframe
-    grid rendered highlighted cells as black text on a black background in
-    dark mode. Plain HTML follows normal DOM/CSS and inherits the page's
+    than a styled grid: a canvas-drawn dataframe grid can render
+    highlighted cells as black text on a black background in dark mode. Plain HTML follows normal DOM/CSS and inherits the page's
     theme, so only
     the highlighted "best" cells need an explicit (theme-independent)
     background + text color; all other cells are left unstyled and inherit
@@ -90,7 +89,7 @@ def build_comparison_html(comparison: Dict[str, Any]) -> str:
         f"<tr><th style='text-align:left;padding:4px 10px;{border}'>Ligand</th>{header_cells}</tr>"
     ]
     # One algorithm per job column, so a row rather than a column; absent
-    # from comparison dicts built before Phase 15.
+    # from comparison dicts built without algorithm data.
     algorithms = comparison.get("algorithms")
     if algorithms:
         algorithm_cells = "".join(

@@ -148,8 +148,8 @@ class _SlowStopSampler:
 
 class TestRunTimed:
     def test_wall_time_excludes_sampler_shutdown(self):
-        # Phase 14 R1: the wall time used to be taken after sampler.stop(),
-        # so up to one docker-stats call (~1-2 s) was counted as docking time.
+        # The wall time is taken before sampler.stop(), so no in-flight
+        # docker-stats call (~1-2 s) is counted as docking time.
         sampler = _SlowStopSampler(0.5)
         result, error, elapsed = bench.run_timed(lambda: {"successful": 1}, sampler)
         assert (result, error) == ({"successful": 1}, None)
@@ -178,7 +178,7 @@ class TestFormatting:
 
 
 class TestRunDockingArguments:
-    """--docking-algorithm (Stage 15.1) and --cpu (Stage 15.3) are sent."""
+    """--docking-algorithm and --cpu are sent."""
 
     @staticmethod
     def _sent(monkeypatch, **kwargs) -> dict:
@@ -192,13 +192,13 @@ class TestRunDockingArguments:
     @pytest.mark.parametrize("algorithm,cpu", [("moldina", 1), ("vina", 1), ("vina", 4)])
     def test_algorithm_and_cpu_are_sent(self, monkeypatch, algorithm, cpu):
         # population is sent in both modes: the server leaves it out of a
-        # Vina command itself (Review Stage R1, Phase 15).
+        # Vina command itself.
         sent = self._sent(monkeypatch, docking_algorithm=algorithm, cpu=cpu)
         assert (sent["docking_algorithm"], sent["cpu"], sent["population"]) == (algorithm, cpu, 500)
 
 
 class TestWorkersRan:
-    """Review Stage R1, Phase 15: rows record the workers the server ran."""
+    """Rows record the workers the server ran."""
 
     def test_reported_workers_win_and_are_noted(self, capsys):
         assert bench.workers_ran(8, {"workers": 2}) == 2
@@ -214,7 +214,7 @@ class TestWorkersRan:
 
 
 class TestTimeoutPerLigand:
-    """Review Stage R1, Phase 15: the default budget follows Vina's exhaustiveness."""
+    """The default budget follows Vina's exhaustiveness."""
 
     @staticmethod
     def _args(**kw):

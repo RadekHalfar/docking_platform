@@ -164,8 +164,7 @@ def start_services(compose_file: str) -> None:
     # The platform's own services use the images built by build_images()
     # above; the optional Ollama (profile local-llm) isn't started here.
     # --remove-orphans: a service dropped from docker-compose.yml is stopped
-    # too, e.g. Phase 16's ui-nice, which would otherwise keep serving an
-    # old GUI on port 3001 next to the new one (Review Stage R4).
+    # too, instead of being left running next to the current stack.
     resolved = str(Path(compose_file).resolve())
     subprocess.run(
         ["docker", "compose", "-f", resolved, "up", "-d", "--remove-orphans"],

@@ -479,7 +479,7 @@ def _dock_ready_session(tmp_path, job_id, ligands=("A", "B", "C"), **extra_param
 
 
 class TestDockingAlgorithmParameter:
-    """Phase 15, Stage 15.1: docking_algorithm defaults, aliases and validation."""
+    """docking_algorithm defaults, aliases and validation."""
 
     _DOCK_PARAMS = {
         "protein_id": "6lu7",
@@ -552,7 +552,7 @@ class TestDockingAlgorithmParameter:
 
 
 class TestCpuParameter:
-    """Review Stage R4: cpu is a whole number >= 1 once parsed, whatever the
+    """cpu is a whole number >= 1 once parsed, whatever the
     LLM returned, so neither the GUI form nor run_docking gets "all"."""
 
     def _validate(self, cpu):
@@ -577,7 +577,7 @@ class TestCpuParameter:
 
 
 class TestDockingTimeout:
-    """Review Stage R1, Phase 15, correctness #1: the run_docking HTTP
+    """The run_docking HTTP
     timeout assumed PSO's 120 s per ligand per worker, which Vina exceeds."""
 
     def _timeout_sent(self, tmp_path, n_ligands, **params_extra):
@@ -738,7 +738,7 @@ class TestWorkflowOrchestrator:
 
 
 class TestJobLog:
-    """Stage 11.1: job.log narration written by execute_workflow()."""
+    """job.log narration written by execute_workflow()."""
 
     def _job_log_text(self, tmp_path, job_id):
         log_path = tmp_path / job_id / "job.log"
@@ -795,7 +795,7 @@ class TestJobLog:
 
 
 class TestWorkflowResultsMerge:
-    """Stage 11.1: workflow_results.json accumulates across execute_workflow() calls."""
+    """workflow_results.json accumulates across execute_workflow() calls."""
 
     def test_second_call_with_different_services_preserves_first_calls_results(self, tmp_path):
         orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
@@ -884,7 +884,7 @@ class TestWorkflowResultsMerge:
 
 
 class TestWorkflowCancellation:
-    """Stage 11.3: cooperative cancellation via execute_workflow(cancel_event=...)."""
+    """Cooperative cancellation via execute_workflow(cancel_event=...)."""
 
     def test_no_cancel_event_behaves_exactly_as_before(self, tmp_path):
         orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
@@ -970,7 +970,7 @@ class TestWorkflowCancellation:
 
 
 class TestDockingStopFlag:
-    """Stage 13.1b: a stop mid-docking (moldina-runner returns "stopped")
+    """A stop mid-docking (moldina-runner returns "stopped")
     cancels the workflow, and a stale flag never leaks into a new dock step."""
 
     def test_stopped_dock_result_cancels_and_skips_visualize(self, tmp_path):
@@ -1003,7 +1003,7 @@ class TestDockingStopFlag:
         # A redock merges onto the earlier run's results on disk; the merge
         # rebuilt services_executed from the result keys, so a stopped dock
         # counted as executed next to the earlier run's (now stale)
-        # visualize (Review Stage R1, Phase 13).
+        # visualize.
         state_manager, params = _dock_ready_session(tmp_path, "stop_redock_test")
         (tmp_path / "stop_redock_test" / "workflow_results.json").write_text(json.dumps({
             "status": "completed",

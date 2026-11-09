@@ -1,10 +1,9 @@
-"""The chat: deterministic commands and the LLM parameter parse (Phase 16,
-Stage 16.2).
+"""The chat: deterministic commands and the LLM parameter parse.
 
 :func:`submit` posts the user's message and answers it if it is a command
 (geometry, algorithm, ``run`` / ``dock with ...``, ``show history`` /
 ``undo``, ``save ... as``); otherwise the LLM parses it. A run command does
-what a Run Docking click does (Stage 17.1), through the GUI's *run_docking*.
+what a Run Docking click does, through the GUI's *run_docking*.
 
 The LLM path is split so the GUI runs only the slow part off its event
 loop: :func:`parse_message` makes the LLM call and touches no state;
@@ -15,7 +14,7 @@ bridge class in ``run_control``, so tests can swap them.
 
 Two commands do slow file work: a geometry command reads the receptor, and
 ``save ... as`` copies the results into a bundle (tens of seconds for a
-real session on a Docker Desktop bind mount, Review Stage R2). The GUI
+real session on a Docker Desktop bind mount). The GUI
 passes *run_save* and *apply_geometry* to :func:`submit` to run those off
 its event loop (``apply_geometry`` defaults to the inline read).
 """
@@ -44,7 +43,7 @@ RunSave = Callable[[dict], None]
 # Does what a Run Docking click does: () -> None; it posts its own reply.
 RunDocking = Callable[[], None]
 
-# The reply when no LLM is set up (provider "none", the Phase 18 default):
+# The reply when no LLM is set up (provider "none", the default):
 # the commands above still work, only free text needs the LLM.
 NO_LLM_REPLY = (
     "Chat needs an LLM to read that. Open **Settings** (the gear icon, top "
@@ -231,10 +230,10 @@ def parse_context(state) -> tuple[Any, Any, Any]:
     A Load, ``undo``, Run Docking or New Session while the LLM call is in
     flight replaces one of these, and the result must not be applied then:
     it was merged onto the *old* prior, and validating it would overwrite
-    the new session's parser state and form (Review Stage R1, deferred #2).
+    the new session's parser state and form.
     The job id is compared by value: a Load re-activates the same session
     object, and keeps the parser's workflow when the loaded job has no
-    saved parameters (Review Stage R2).
+    saved parameters.
     """
     return state.parser.parsed_workflow, state.interactive_session, state.job_id
 
@@ -259,7 +258,7 @@ def apply_parsed_message(state, parsed: dict, named: set, *, context: Optional[t
     # fills every default (and the prior turn's values ride along in a
     # follow-up merge): applying those would reset the user's own
     # edits -- algorithm, CPUs per ligand, Exhaustiveness, pH -- on
-    # every message (Phase 15 finding 8; Review Stage R1).
+    # every message.
     p = validated["parameters"]
     missing = validated.get("missing_required", [])
     unknown_algorithm = None

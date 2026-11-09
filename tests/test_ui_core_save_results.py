@@ -1,4 +1,4 @@
-"""Tests for ui/core/save_results.py (Stage 16.2) -- hermetic, plain
+"""Tests for ui/core/save_results.py -- hermetic, plain
 GuiSession, a real WorkflowStateManager under tmp_path."""
 import json
 from pathlib import Path
@@ -160,7 +160,7 @@ def test_cancel_drops_the_conflict_and_resolving_none_does_nothing(state, tmp_pa
 
 
 def test_plan_conflict_save_plans_without_copying(state, tmp_path):
-    # Stage 16.6: NiceGUI plans on its event loop and copies elsewhere.
+    # NiceGUI plans on its event loop and copies elsewhere.
     _save(state, tmp_path, "trial_a", "all")
     _save(state, tmp_path, "trial_a", "docking")
     suggested = state.save_conflict["suggested"]

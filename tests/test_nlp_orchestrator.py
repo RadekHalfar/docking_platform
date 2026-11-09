@@ -471,7 +471,7 @@ def test_interactive_session_state_summary_reports_active_job(tmp_path):
 
 
 def test_show_history_reports_the_parameters_revision_like_the_gui(tmp_path, capsys):
-    # Phase 16 Review Stage R1: the CLI printed get_current_revision(), which
+    # The CLI printed get_current_revision(), which
     # also counts state_update events, so after a run it named revision 2
     # while the parameters (what undo restores) were at revision 1. The GUI
     # already said 1.
@@ -490,7 +490,7 @@ def test_show_history_reports_the_parameters_revision_like_the_gui(tmp_path, cap
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Partial rerun integration tests
+# Partial rerun integration tests
 # ---------------------------------------------------------------------------
 
 def test_handle_update_parameters_returns_changed_keys(monkeypatch, tmp_path, llm_client):
@@ -538,7 +538,7 @@ def test_handle_update_parameters_no_change_returns_empty(monkeypatch, tmp_path,
 
 
 # ---------------------------------------------------------------------------
-# Stage 12.3: _handle_set_protein_geometry (CLI wiring for "set up box
+# _handle_set_protein_geometry (CLI wiring for "set up box
 # center as protein center" / "look across all protein")
 # ---------------------------------------------------------------------------
 
@@ -654,7 +654,7 @@ def test_handle_set_protein_geometry_file_missing_on_disk(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Stage 15.2: docking_algorithm from the CLI ("use vina", "dock with vina")
+# Docking_algorithm from the CLI ("use vina", "dock with vina")
 # ---------------------------------------------------------------------------
 
 _ALGO_SERVICES = ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"]
@@ -683,7 +683,7 @@ def test_handle_set_docking_algorithm_persists(tmp_path):
 
 
 def test_handle_set_docking_algorithm_unchanged_is_noop(tmp_path, capsys):
-    """Old checkpoints without the key read as moldina (finding 9)."""
+    """Old checkpoints without the key read as moldina."""
     session, state_manager = _algo_session(tmp_path, "job_algo_same")
     revision = state_manager.get_current_revision()
     assert cli._handle_set_docking_algorithm("moldina", session) == set()
@@ -717,7 +717,7 @@ def _run_loop_after_job(monkeypatch, tmp_path, llm_client, commands, name):
 
 
 def test_interactive_loop_dock_with_vina_switches_and_redocks(monkeypatch, tmp_path, llm_client):
-    """Finding 6: "dock with vina" switches the algorithm and reruns only
+    """"dock with vina" switches the algorithm and reruns only
     dock + visualize -- not the plain full rerun the "dock" prefix gives."""
     orchestrator, state_manager = _run_loop_after_job(
         monkeypatch, tmp_path, llm_client, ["dock with vina", "y"], "job_loop_vina",
@@ -916,7 +916,7 @@ def test_interactive_loop_update_triggers_rerun(monkeypatch, tmp_path, capsys, l
 
 
 # ---------------------------------------------------------------------------
-# Phase 7: Session UX tests
+# Session UX tests
 # ---------------------------------------------------------------------------
 
 def test_interactive_loop_prompt_shows_job_id_when_active(monkeypatch, tmp_path, llm_client):
@@ -1107,7 +1107,7 @@ def test_format_comparison_table_shows_na_for_missing_values():
 
 
 # ---------------------------------------------------------------------------
-# Phase 10: Multi-intent command sequencing
+# Multi-intent command sequencing
 # ---------------------------------------------------------------------------
 
 def test_multi_intent_two_actions_run_in_order(monkeypatch, tmp_path, capsys, llm_client):
@@ -1460,7 +1460,7 @@ def test_multi_intent_end_session_mid_chain_stops_session(monkeypatch, tmp_path,
 
 def test_save_results_declined_overwrite_prints_final_suffixed_name(monkeypatch, tmp_path, capsys):
     """Declining the overwrite saves under name_HHMMSS -- and the success line
-    must name that bundle, not the original (Stage 13.3, Critical Finding 9)."""
+    must name that bundle, not the original."""
     job_dir = tmp_path / "job_save1"
     sm = WorkflowStateManager(job_dir)
     sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
@@ -1485,8 +1485,7 @@ def test_save_results_declined_overwrite_prints_final_suffixed_name(monkeypatch,
 def test_save_results_refused_when_latest_parameters_never_ran(tmp_path, capsys):
     """A restored revision that never ran (e.g. in another process, so this
     one's `pending` is empty) must not be saved over results it didn't
-    produce -- the CLI side of Stage 13.3's GUI guard (Review Stage R1,
-    Phase 13)."""
+    produce -- the CLI side of the GUI's save guard."""
     job_dir = tmp_path / "job_save2"
     sm = WorkflowStateManager(job_dir)
     sm.save_parameters_checkpoint({"protein_id": "6lu7", "ligand_ids": ["ATP"]}, source="initial_parse")
@@ -1503,7 +1502,7 @@ def test_save_results_refused_when_latest_parameters_never_ran(tmp_path, capsys)
 
 
 # ---------------------------------------------------------------------------
-# Review Stage R1, Phase 15 (docs/reviews/stage_15_r1.md)
+# Docking algorithm: LLM-classified intents, old sessions, cancelled first workflows
 # ---------------------------------------------------------------------------
 
 def _dispatch(intent_result, session, orchestrator=None):
@@ -1545,7 +1544,7 @@ def test_dock_with_current_algorithm_redocks_dock_and_visualize_only(tmp_path):
 
 
 def test_llm_update_restating_default_algorithm_on_old_session_is_no_change(monkeypatch, tmp_path, llm_client):
-    """Correctness #8: a checkpoint from before Phase 15 lacks
+    """A checkpoint written by an older version lacks
     docking_algorithm; restating the algorithm that ran is not a change."""
     session, _ = _algo_session(tmp_path, "job_old_session")
     monkeypatch.setattr(
@@ -1556,10 +1555,9 @@ def test_llm_update_restating_default_algorithm_on_old_session_is_no_change(monk
 
 
 def test_dock_with_vina_after_cancelled_first_workflow_runs_every_planned_step(monkeypatch, tmp_path, llm_client):
-    """Found by Review Stage R1, Phase 15's real-data run (bug since
-    2026-04-14): a workflow declined at "Execute this workflow?" recorded
-    its planned steps as executed, so "dock with vina" planned docking
-    alone and failed with "No prepared protein available for docking"."""
+    """A workflow declined at "Execute this workflow?" must not record its
+    planned steps as executed, or "dock with vina" plans docking alone and
+    fails with "No prepared protein available for docking"."""
     services = ["get_input_files", "prepare_ligands", "prepare_protein", "dock"]
     monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *_a, **_k: {
         "services": list(services),
@@ -1586,7 +1584,7 @@ def test_dock_with_vina_after_cancelled_first_workflow_runs_every_planned_step(m
 def test_search_ligand_rerun_after_cancelled_first_workflow_still_runs(monkeypatch, tmp_path):
     """The search-ligand "rerun now?" branch checked services_executed
     itself, which a cancelled first workflow leaves empty, so "y" silently
-    did nothing. It shares _rerun_pending now (Review Stage R1, Phase 15)."""
+    did nothing. It shares _rerun_pending now."""
     session, _ = _algo_session(tmp_path, "job_search_after_cancel")
     session.last_results = {"status": "cancelled", "services_executed": [],
                             "services_planned": list(_ALGO_SERVICES), "results": {}}
@@ -1599,7 +1597,7 @@ def test_search_ligand_rerun_after_cancelled_first_workflow_still_runs(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# No LLM configured (provider "none", the Phase 18 default)
+# No LLM configured (provider "none", the default)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -1657,8 +1655,8 @@ def test_check_health_prints_the_url_the_client_uses(monkeypatch, tmp_path, caps
 
 @pytest.mark.parametrize("argv", [["dock ATP into 6lu7"], ["--interactive"]])
 def test_a_provider_without_a_model_says_so(monkeypatch, tmp_path, capsys, argv):
-    # LLM_MODEL is empty by default since Stage 18.2, so the request went out
-    # with model "" and failed at the provider (Review Stage R5).
+    # LLM_MODEL is empty by default; without this check the request would
+    # go out with model "" and fail at the provider.
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=Mock()))

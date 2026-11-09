@@ -141,7 +141,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # Ollama LLM Service (Port 11434) -- opt-in (Phase 18)
+  # Ollama LLM Service (Port 11434) -- opt-in
   # Local LLM for the chat / natural-language commands. Not part of the
   # default `up -d`: the image (~4.8 GB) and a model (3-5 GB) download only
   # for users who want a local LLM. Start it with
@@ -227,7 +227,7 @@ services:
 
   # Web GUI (NiceGUI, port 3000). Runs as the non-root appuser
   # (Dockerfile.ui); see docs/DOCKER_DEPLOYMENT.md for the one-time chown
-  # Linux hosts need for sessions created by the old root Streamlit UI.
+  # Linux hosts need for session files owned by root.
   ui:
     build:
       context: .

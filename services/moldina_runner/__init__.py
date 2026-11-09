@@ -192,7 +192,7 @@ def _write_docking_progress(output_dir: str, payload: Dict[str, Any]) -> None:
 
 @dataclass
 class _ProcessResult:
-    """Outcome of one finished Moldina process (what subprocess.run used to return)."""
+    """Outcome of one finished Moldina process (the fields of subprocess.run's result)."""
 
     returncode: int
     stdout: str
@@ -614,8 +614,8 @@ class MoldinaRunner:
         (never batched into a single invocation). This keeps per-invocation
         memory usage flat regardless of batch size and stops one bad ligand
         from killing the whole run — batching all ligands into a single
-        process previously triggered the Linux OOM killer (SIGKILL / exit -9)
-        once the container's memory limit was exceeded. Running several
+        process can trigger the Linux OOM killer (SIGKILL / exit -9) once
+        the container's memory limit is exceeded. Running several
         single-ligand invocations concurrently (parallel=True) carries a
         similar-but-smaller memory risk, which is why the worker count is
         opt-in and capped rather than unbounded.

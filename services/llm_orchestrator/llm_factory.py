@@ -16,7 +16,7 @@ from .llm_base import BaseLLMClient
 
 KNOWN_PROVIDERS = ("ollama", "openai", "anthropic", "openai_compatible", "metacentrum")
 
-# The default provider (Phase 18): no LLM until the user picks one. The
+# The default provider: no LLM until the user picks one. The
 # forms, the run and the deterministic chat commands work without it; only
 # natural-language parsing needs an LLM, so a default install doesn't have
 # to download a local model or ask for an API key first.

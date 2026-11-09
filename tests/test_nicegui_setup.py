@@ -1,8 +1,6 @@
-"""The NiceGUI Setup tab (Phase 16, Stage 16.4): form, Advanced, actions,
+"""The NiceGUI Setup tab: form, Advanced, actions,
 redock dialog and live progress.
 
-Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
-each ported test keeps its old name.
 Runs in the GUI test tier only:
 
     docker compose run --rm --no-deps ui \
@@ -64,7 +62,7 @@ def _state_manager(page):
 
 
 # ---------------------------------------------------------------------------
-# Worker cap (Stage 14.1)
+# Worker cap
 # ---------------------------------------------------------------------------
 
 async def test_worker_cap_from_compose_shows_limit_caption(user: User, page):
@@ -75,7 +73,7 @@ async def test_worker_cap_from_compose_shows_limit_caption(user: User, page):
     assert "Docking service is limited to 10 CPUs (docker-compose.yml)" in caption
     assert f"Benchmarked best for Moldina (PSO): {MEASURED_BEST_WORKERS['moldina']} workers" in caption
     assert not element(user, "worker-cap-warning").visible
-    # Stage 14.3: a fresh session defaults to the measured best, not the cap.
+    # A fresh session defaults to the measured best, not the cap.
     assert element(user, "param_max_workers").value == min(MEASURED_BEST_WORKERS["moldina"], 10)
 
 
@@ -302,7 +300,7 @@ async def test_pso_mode_sends_one_cpu_whatever_the_cpu_field_holds(user: User, p
 
 
 # ---------------------------------------------------------------------------
-# Advanced: algorithm, CPUs per ligand, workers (Stage 15.3)
+# Advanced: algorithm, CPUs per ligand, workers
 # ---------------------------------------------------------------------------
 
 async def test_cpu_field_shows_only_for_vina_and_bounds_workers(user: User, page):
@@ -330,7 +328,7 @@ async def test_cpu_field_shows_only_for_vina_and_bounds_workers(user: User, page
 
 
 async def test_cleared_cpu_field_is_not_written(user: User, page):
-    # A number input (Phase 15 Future Work): a cleared field means the user
+    # A number input: a cleared field means the user
     # is typing a new number, not "1" by fallback.
     page.seed(lambda state: state.form.update(param_docking_algorithm="vina", param_cpu=3))
     await user.open("/")
@@ -392,7 +390,7 @@ async def test_protein_upload_is_saved_and_docked_against(user: User, page, outp
 
     await eventually(lambda: "protein_file" in page.state.params)
     saved = Path(page.state.params["protein_file"])
-    # In a directory of its own under uploads/ (Review Stage R2).
+    # In a directory of its own under uploads/.
     assert saved.name == "receptor.pdb" and saved.parent.parent == output_base / "uploads"
     assert saved.read_bytes() == b"ATOM\n"
     assert "protein_id" not in page.state.params
@@ -560,7 +558,7 @@ async def test_progress_shows_the_ligands_docked(user: User, page, output_base):
 
 
 # ---------------------------------------------------------------------------
-# Review Stage R2
+# Live progress, syncing and ligand drops
 # ---------------------------------------------------------------------------
 
 async def test_a_run_that_ends_before_the_first_tick_is_drawn(user: User, page, monkeypatch):
@@ -586,7 +584,7 @@ async def test_a_run_that_ends_before_the_first_tick_is_drawn(user: User, page, 
 
 async def test_progress_is_read_off_the_event_loop(user: User, page, monkeypatch):
     # All clients share one event loop; on a Docker Desktop bind mount this
-    # read takes ~10 ms, per client, every second (Review Stage R2).
+    # read takes ~10 ms, per client, every second.
     from ui.core import results_view
 
     where = []
@@ -632,8 +630,8 @@ async def test_a_sync_does_not_start_another_sync(user: User, page):
 
 
 async def test_a_second_ligand_drop_adds_to_the_list(user: User, page):
-    # The uploader resets after each drop, so a second drop used to
-    # replace the first (Review Stage R2).
+    # The uploader resets after each drop; a second drop must add to the
+    # list, not replace the first.
     page.seed(lambda state: state.form.update(input_mode="local_files"))
     await user.open("/")
     upload = element(user, "upload-ligands")
@@ -652,7 +650,7 @@ async def test_a_second_ligand_drop_adds_to_the_list(user: User, page):
 
 async def test_dropping_a_listed_ligand_again_replaces_it(user: User, page):
     # New Session keeps the inputs, so dropping the same file again listed
-    # it twice and the run failed (Stage 16.7's real-data check).
+    # it twice and the run failed.
     page.seed(lambda state: state.form.update(input_mode="local_files"))
     await user.open("/")
     upload = element(user, "upload-ligands")

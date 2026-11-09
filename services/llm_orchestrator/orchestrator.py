@@ -54,7 +54,7 @@ def docking_timeout_seconds(num_ligands: int, workers: int, algorithm: str, exha
     docs/BATCH_DOCKING.md). No credit is given for cpu > 1: Vina is
     CPU-bound, so splitting the quota into fewer, multi-CPU workers doesn't
     shorten the batch -- and the server may clamp workers to quota // cpu,
-    below the *workers* asked for (Phase 15 R1, docs/reviews/stage_15_r1.md).
+    below the *workers* asked for.
     """
     if algorithm == "vina":
         per_ligand = max(120, 30 * max(1, int(exhaustiveness)))
@@ -81,7 +81,7 @@ class WorkflowOrchestrator:
             on_message: Where step-level messages go (see ``_step_print``).
                 The CLI keeps ``print``; the GUI's ``OrchestratorBridge``
                 passes its run's own log queue, so concurrent runs in one
-                process never share a stream (Phase 16 finding 1).
+                process never share a stream.
         """
         self.output_base = Path(output_base).resolve()
         ensure_shared_directory(self.output_base)
@@ -131,11 +131,9 @@ class WorkflowOrchestrator:
         Returns:
             Tool result
 
-        Thin wrapper around common.mcp_client.call_mcp_tool -- this and
-        that module used to duplicate the same JSON-RPC envelope-building
-        and error-handling logic independently (and had already drifted:
-        this method generated a per-job request_id, the shared one defaulted
-        to a static "1"). This keeps the orchestrator-specific behavior
+        Thin wrapper around common.mcp_client.call_mcp_tool, so the
+        JSON-RPC envelope-building and error-handling logic exists once.
+        This keeps the orchestrator-specific behavior
         (per-job request IDs, MCP-demo verbosity printing) as hooks passed
         into the one real implementation.
         """
@@ -328,15 +326,12 @@ class WorkflowOrchestrator:
 
         cancelled = False
 
-        # NOTE (R2, Stage 11.2/11.3 review, docs/reviews/stage_11_2_11_3_r2.md
-        # finding #12): the "<step> in services and not _maybe_cancel()" guard
+        # NOTE (known design debt): the "<step> in services and not _maybe_cancel()" guard
         # below is pasted identically onto all 5 step conditions rather than
-        # checked once inside a shared loop/dispatch point -- the same
-        # duplication class R1 already collapsed once for the per-step
-        # append_job_log() calls (see _log_step_done above). Deferred here
-        # because fixing it properly means restructuring this whole method
-        # into a step-list-driven loop, a materially bigger change than a
-        # review pass should make. Revisit next time a 6th workflow step is
+        # checked once inside a shared loop/dispatch point (the per-step
+        # append_job_log() calls already share _log_step_done above).
+        # Fixing it properly means restructuring this whole method into a
+        # step-list-driven loop. Revisit next time a 6th workflow step is
         # added (the highest-risk moment: a new step guard copy-pasted
         # without the "and not _maybe_cancel()" clause would silently make
         # Stop not apply to it) or when this method is next restructured for
@@ -729,27 +724,25 @@ class WorkflowOrchestrator:
         # Merge with any existing on-disk results so a session spanning more
         # than one execute_workflow() call (e.g. a redock after a parameter
         # change) doesn't lose earlier steps' results from the persisted
-        # snapshot -- this used to clobber on every call. No-op for a fresh
+        # snapshot. No-op for a fresh
         # job_dir (nothing to merge with). Locked + atomic: two overlapping
         # execute_workflow() calls against the same job_dir (e.g. GUI and
         # CLI both redocking) must not race a read-modify-write here, the
         # same hazard _next_revision() guards against for the manifest.
         #
-        # NOTE (R1, Stage 11.1 review, docs/reviews/stage_11_1_r1.md finding
-        # #2): the merge only carries forward per-step results wholesale --
+        # NOTE (known limitation): the merge only carries forward per-step results wholesale --
         # it does not check whether a downstream step's persisted result is
         # still valid for the upstream inputs this call just produced (e.g.
         # a call that reruns get_input_files+dock but not visualize would
         # leave a stale visualize entry from an earlier protein/ligand set
-        # merged in as if current). Deferred: today every caller reaches
+        # merged in as if current). Every caller reaches
         # execute_workflow() via rerun_planner.compute_rerun_steps(), which
         # always includes every downstream step when an upstream one
-        # reruns, so the stale-merge case cannot occur in practice yet. (A
-        # run that stops or fails part-way did hit it; that case is handled
-        # below -- Review Stage R1, Phase 13.)
-        # Revisit if a caller ever invokes execute_workflow() with a
+        # reruns, so the stale-merge case cannot occur in practice. (A run
+        # that stops or fails part-way can hit it; that case is handled
+        # below.) Revisit if a caller ever invokes execute_workflow() with a
         # services list computed by something other than
-        # compute_rerun_steps() (see dev_plan.md Future Work).
+        # compute_rerun_steps().
         results_lock_file = job_dir / ".workflow_results.lock"
         results_file = job_dir / "workflow_results.json"
         try:
@@ -762,9 +755,9 @@ class WorkflowOrchestrator:
                     # (stopped, cancelled or failed part-way) is no longer
                     # executed, and an older result for it is stale: drop it
                     # unless this call recorded one of its own (a stopped
-                    # dock's partial result). Without this a stopped redock
-                    # counted dock as executed and kept the previous run's
-                    # visualize next to it (Review Stage R1, Phase 13).
+                    # dock's partial result). Otherwise a stopped redock
+                    # would count dock as executed and keep the previous
+                    # run's visualize next to it.
                     this_run = set(results["services_executed"])
                     for step in set(services) - this_run:
                         if step not in results.get("results", {}):

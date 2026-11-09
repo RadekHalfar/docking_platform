@@ -1,4 +1,4 @@
-"""Tests for ui/core/chat.py (Stage 16.2) -- hermetic, plain GuiSession,
+"""Tests for ui/core/chat.py -- hermetic, plain GuiSession,
 fake LLM parse functions (no LLM client is ever called).
 
 The NiceGUI page's own wiring over the same code is covered by
@@ -65,7 +65,7 @@ def test_plain_message_is_posted_and_left_for_the_llm(state, tmp_path):
 
 
 def test_no_llm_answers_free_text_with_the_setup_hint(state, tmp_path):
-    # Phase 18: provider "none" (the default) builds no client.
+    # Provider "none" (the default) builds no client.
     state.llm_client = None
 
     assert _submit(state, "dock ATP into 6lu7", tmp_path) is True
@@ -108,8 +108,8 @@ def test_geometry_command_without_a_receptor_starts_the_prep_and_waits(state, tm
 
 
 def test_geometry_command_during_a_running_prep_waits_for_it(state, tmp_path):
-    # Review Stage R1 (Phase 16): a second prep used to start and replace
-    # the running one, whose result was then never processed.
+    # A second prep must not start and replace the running one, whose
+    # result would then never be processed.
     class RunningBridge(FakeBridge):
         def is_running(self):
             return True
@@ -130,7 +130,7 @@ class _RunningBridge(FakeBridge):
 
 
 def test_geometry_commands_during_a_prep_are_all_queued(state, tmp_path):
-    # Review Stage R1 (Phase 16): one slot kept only the last command,
+    # One slot kept only the last command,
     # though each had been told "I'll set this".
     state.box_picker_bridge = _RunningBridge()
 
@@ -141,7 +141,7 @@ def test_geometry_commands_during_a_prep_are_all_queued(state, tmp_path):
 
 
 def test_geometry_command_during_a_prep_ignores_the_sessions_old_receptor(state, tmp_path):
-    # Review Stage R1 (Phase 16): starting the prep clears the picker's
+    # Starting the prep clears the picker's
     # receptor, so the command fell back to the active session's last
     # prepared protein -- possibly another protein than the one being
     # prepared -- and applied its geometry at once.
@@ -248,7 +248,7 @@ def test_follow_up_merges_onto_the_prior_workflow_without_touching_it():
 
 
 def test_only_named_parameters_reach_the_form(state):
-    # Finding 8: validate_workflow() fills the default "moldina" -- it must
+    # validate_workflow() fills the default "moldina" -- it must
     # not overwrite the selector's choice.
     state.form["param_docking_algorithm"] = "vina"
     state.form["param_ph"] = "6.0"
@@ -354,8 +354,8 @@ def test_a_missing_parser_is_the_reply(state):
 
 
 # ---------------------------------------------------------------------------
-# Stage 16.4: a parse that ran off the event loop is applied only to the
-# session it was built on (Review Stage R1, deferred #2)
+# A parse that ran off the event loop is applied only to the
+# session it was built on
 # ---------------------------------------------------------------------------
 
 _PARSED = {"services": ["dock"], "parameters": {"protein_id": "1abc"}}
@@ -383,7 +383,7 @@ def test_parse_dropped_when_the_parser_moved_on(state):
 def test_parse_dropped_after_loading_a_session_without_saved_parameters(state, tmp_path):
     # Load re-activates the same InteractiveSession and, with no draft or
     # checkpoint on disk, leaves the parser's workflow as it was: only the
-    # job id shows the change (Review Stage R2).
+    # job id shows the change.
     from ui.core.sessions import resume_session
 
     job_id = "job_20261012_000000_abcdef"

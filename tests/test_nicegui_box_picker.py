@@ -1,7 +1,5 @@
-"""The NiceGUI box picker and 3Dmol viewer element (Phase 16, Stage 16.5).
+"""The NiceGUI box picker and 3Dmol viewer element.
 
-Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
-each ported test keeps its old name.
 The viewer tests read what the :class:`~ui_nice.mol_viewer.MolViewer`
 element last sent to the browser. Runs in the GUI test tier only:
 
@@ -95,7 +93,7 @@ async def test_deferred_geometry_command_applies_and_shows_reply(user: User, pag
 
     assert page.state.box_picker_bridge is None
     assert page.state.pending_geometry_targets is None
-    # The receptor is read off the event loop (Review Stage R2).
+    # The receptor is read off the event loop.
     await eventually(lambda: page.chat_texts()[-1].startswith("Protein center set to"))
     assert float(_field(user, "param_center_x")) == expected_center[0]
     assert (await viewer(user)).center == expected_center
@@ -119,7 +117,7 @@ async def test_deferred_geometry_command_reports_failed_fetch(user: User, page):
 
 
 async def test_box_size_step_updates_summary_and_viewer(user: User, page):
-    # The picker's + button writes the Docking Box field (Stage 13.5); the
+    # The picker's + button writes the Docking Box field; the
     # summary and the viewer both follow it.
     shown = await _picker_with_box_set(user, page)
 
@@ -188,9 +186,8 @@ async def test_small_positive_box_size_is_drawn_as_typed(user: User, page):
 
 
 async def test_typed_center_survives_after_a_viewer_click(user: User, page):
-    # The former Streamlit viewer kept returning its last click, which once
-    # reverted a typed center to the clicked atom. A click here is an event,
-    # sent once; a typed center must still survive the next redraws.
+    # A viewer that kept returning its last click would revert a typed
+    # center to the clicked atom. A click here is an event, sent once; a typed center must still survive the next redraws.
     shown = await _picker_with_box_set(user, page)
     atom_click(user, [4.0, 5.0, 6.0])
     assert page.state.form["param_center_x"] == "4.000"
@@ -387,7 +384,7 @@ def test_unknown_viewer_mode_is_rejected():
 
 
 # ---------------------------------------------------------------------------
-# Review Stage R2
+# Unreadable receptors, Reset, and reading off the event loop
 # ---------------------------------------------------------------------------
 
 async def test_an_unreadable_receptor_is_read_once_and_reported(user: User, page, monkeypatch):
@@ -423,7 +420,7 @@ async def test_a_load_message_is_cleared_by_reset(user: User, page):
 
 async def test_a_geometry_command_reads_the_receptor_off_the_event_loop(user: User, page, monkeypatch):
     # 35-80 ms per command on a Docker Desktop bind mount, more for a large
-    # protein, with every client's page frozen meanwhile (Review Stage R2).
+    # protein, with every client's page frozen meanwhile.
     import ui.core.box_picker as core_box_picker
 
     where = []

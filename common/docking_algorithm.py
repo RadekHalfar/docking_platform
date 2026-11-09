@@ -1,4 +1,4 @@
-"""Selectable docking search algorithm (Phase 15, Stage 15.1).
+"""Selectable docking search algorithm.
 
 The committed ``moldina`` binary runs two searches: Moldina's Particle Swarm
 Optimization (``--search_alg_PSO --population N``) and, with both flags
@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional, Tuple
 DOCKING_ALGORITHMS: Tuple[str, ...] = ("moldina", "vina")
 DEFAULT_DOCKING_ALGORITHM = "moldina"
 
-# Human-readable names for replies and (Stage 15.3) the GUI selector.
+# Human-readable names for replies and the GUI selector.
 DOCKING_ALGORITHM_LABELS: Dict[str, str] = {
     "moldina": "Moldina (PSO)",
     "vina": "Vina (Monte Carlo)",
@@ -53,8 +53,8 @@ def docking_algorithm_label(value: Any) -> str:
 
 
 def docking_algorithm_of(dock_result: Optional[Dict[str, Any]]) -> str:
-    """Which algorithm produced a ``run_docking`` result. Results written
-    before Phase 15 have no ``docking_algorithm`` key; they were all
+    """Which algorithm produced a ``run_docking`` result. A result without
+    a ``docking_algorithm`` key (written by an older version) was
     Moldina (PSO), the default."""
     return (dock_result or {}).get("docking_algorithm") or DEFAULT_DOCKING_ALGORITHM
 
@@ -62,7 +62,7 @@ def docking_algorithm_of(dock_result: Optional[Dict[str, Any]]) -> str:
 def cpus_per_ligand(algorithm: str, cpu: int) -> int:
     """CPUs one docking process really uses: *cpu* for Vina, whose Monte
     Carlo search is multithreaded, and 1 for Moldina (PSO), which ignores
-    ``--cpu`` (measured in Stage 15.1, docs/MOLDINA_DOCKING.md). The one
+    ``--cpu`` (measured, see docs/MOLDINA_DOCKING.md). The one
     rule behind both the server's worker clamp (quota // this) and the
     GUI's worker maximum."""
     return max(1, int(cpu)) if algorithm == "vina" else 1

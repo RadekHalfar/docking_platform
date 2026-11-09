@@ -1,4 +1,4 @@
-"""Tests for the Phase 3 job-comparison table helper (ui/results.py)."""
+"""Tests for the job-comparison table helper (ui/results.py)."""
 import pytest
 
 pd = pytest.importorskip("pandas")
@@ -125,7 +125,7 @@ class TestBuildComparisonHtml:
         assert "<table" in out and "</table>" in out
 
     def test_algorithm_row_names_each_jobs_search(self):
-        # Stage 15.3: one algorithm per job column, so a row under the headers.
+        # One algorithm per job column, so a row under the headers.
         comparison = {
             "ligands": ["ATP"], "jobs": ["a", "b"], "algorithms": ["vina", "moldina"],
             "affinities": [[-5.8, -4.3]], "best_per_ligand": {"ATP": ("a", -5.8)},

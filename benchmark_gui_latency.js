@@ -1,10 +1,9 @@
 /*
- * GUI interaction latency, measured in the browser (Phase 16, Stage 16.0).
+ * GUI interaction latency, measured in the browser.
  *
  * Paste this whole file into the browser DevTools console on the GUI's page
- * (it uses nothing framework-specific, so the Stage 16.0 Streamlit and 16.8
- * NiceGUI numbers in docs/GUI_GUIDE.md "Performance" are measured the same
- * way). Then click the control being measured five or more times,
+ * (it uses nothing framework-specific; the numbers in docs/GUI_GUIDE.md
+ * "Performance" are measured with it). Then click the control being measured five or more times,
  * waiting for the page to settle between clicks, and run:
  *
  *     __lat.summary("box + click")   // prints median/min/max/n, then resets
@@ -14,7 +13,7 @@
  * command) to the last DOM change before QUIET_MS of
  * no changes (the page has finished reacting).
  *
- * Filtered latency (Stage 16.8): set __lat.ignore to a list of CSS
+ * Filtered latency: set __lat.ignore to a list of CSS
  * selectors, e.g. [".q-ripple", ".q-tooltip"] for NiceGUI's Quasar
  * animations. A sample still closes after QUIET_MS of no DOM changes at
  * all, but median_filtered_ms ends at the last change outside those
@@ -53,8 +52,7 @@
   }
 
   // A node inside (or being) one of the ignored elements -- not one that
-  // merely contains one: a button holding a ripple still does real work
-  // (Review Stage R4).
+  // merely contains one: a button holding a ripple still does real work.
   function ignoredNode(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentElement;
     if (!el) return false;

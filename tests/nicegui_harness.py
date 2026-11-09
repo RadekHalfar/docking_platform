@@ -1,4 +1,4 @@
-"""Isolation and helpers for the NiceGUI User-fixture tests (Phase 16).
+"""Isolation and helpers for the NiceGUI User-fixture tests.
 
 Loaded as a pytest plugin by ui_nice/pytest.ini, so it applies to every test
 of the GUI test tier: no network, no MCP services, no real orchestrator
@@ -15,17 +15,17 @@ threads, nothing written outside tmp_path.
 - :class:`Page` (the autouse ``page`` fixture) seeds each client's
   ``GuiSession`` before its page is drawn, and keeps every page built.
 
-The 3Dmol viewer needs no recorder (Stage 16.5): a
+The 3Dmol viewer needs no recorder: a
 :class:`~ui_nice.mol_viewer.MolViewer` keeps what it last sent to the
 browser (``receptor_pdb``, ``center``, ``box_size``, ...), and tests read
 that from the element (:func:`viewer`). :func:`atom_click` fires the event
 a click on a receptor atom sends.
 
-The Results tab (Stage 16.6) reads a result off the event loop: tests wait
+The Results tab reads a result off the event loop: tests wait
 for :func:`results_loaded`. :func:`completed_job_on_disk` writes a
 completed session with a receptor and multi-pose SDFs to view.
 
-The Sessions tab (Stage 16.7) reads its listing off the event loop too:
+The Sessions tab reads its listing off the event loop too:
 :func:`open_sessions` opens the tab as a user does, and tests wait for
 :func:`sessions_listed`.
 """
@@ -320,7 +320,7 @@ def completed_session_with_artifacts(state, output_base: Path) -> WorkflowStateM
 
 
 # ---------------------------------------------------------------------------
-# The Results tab (Stage 16.6)
+# The Results tab
 # ---------------------------------------------------------------------------
 
 async def results_loaded(page: Page) -> None:
@@ -386,7 +386,7 @@ def completed_job_on_disk(output_base: Path, job_id: str, **extra) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# The Sessions tab (Stage 16.7)
+# The Sessions tab
 # ---------------------------------------------------------------------------
 
 def open_sessions(user, page: Page) -> None:

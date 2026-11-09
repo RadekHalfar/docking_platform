@@ -1,4 +1,4 @@
-"""A real dock with the real Moldina binary, then its real poses converted (Stage 19.3).
+"""A real dock with the real Moldina binary, then its real poses converted.
 
 The hermetic tests mock the binary, so only this one proves it still runs with
 the flags the runner builds, and that its output parses. It needs no network or

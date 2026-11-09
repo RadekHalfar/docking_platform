@@ -1,4 +1,4 @@
-"""Tests for ui/core/state.py and ui/core/form.py (Stage 16.1).
+"""Tests for ui/core/state.py and ui/core/form.py.
 
 Framework-free: these run in the hermetic suite (no nicegui), against a
 plain GuiSession. The NiceGUI page's own behaviour over the same code is
@@ -82,7 +82,7 @@ def test_importing_ui_core_loads_no_gui_framework_indirectly():
     """The check above sees only ui/core's own imports. This one also
     catches a framework pulled in through a module ui/core imports (e.g.
     ui.job_history, ui.worker_cap), and works in the ui image, where
-    nicegui is installed (Review Stage R1, Phase 16)."""
+    nicegui is installed."""
     modules = ", ".join(f"ui.core.{p.stem}" for p in sorted(CORE_DIR.glob("*.py")) if p.stem != "__init__")
     code = (
         f"import sys, {modules}\n"
@@ -112,7 +112,7 @@ def test_effective_cpu(state, algorithm, cpu, expected):
 
 @pytest.mark.parametrize("cpu", [4.0, "all"])
 def test_a_chat_cpu_that_is_not_a_whole_number_does_not_break_the_form(state, cpu):
-    # Review Stage R4: the chat writes the LLM's cpu as a string, and once
+    # The chat writes the LLM's cpu as a string, and once
     # 16.8 dropped effective_cpu's fallback, "4.0" or "all" raised in every
     # redraw (max_workers) and in Run Docking (collect_form_params).
     state.form["param_docking_algorithm"] = "vina"
@@ -182,7 +182,7 @@ def test_apply_parsed_params_skips_a_box_field_group_without_three_values(state,
 
 
 def test_apply_parsed_params_without_algorithm_keeps_the_selector(state):
-    # Phase 15 finding 8: a chat parse that didn't name the algorithm must
+    # A chat parse that didn't name the algorithm must
     # not reset a chosen one.
     state.form["param_docking_algorithm"] = "vina"
     form.apply_parsed_params(state, {"protein_id": "6lu7", "center": [1, 2, 3]})
@@ -325,7 +325,7 @@ def test_start_new_session_detaches_but_keeps_the_form(state):
 
 
 # ---------------------------------------------------------------------------
-# Stage 16.4: form helpers
+# Form helpers
 # ---------------------------------------------------------------------------
 
 def test_reset_session_restores_a_fresh_session_but_keeps_llm_settings(state):

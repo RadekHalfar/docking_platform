@@ -1,4 +1,4 @@
-"""Tests for Phase 5: save_results named bundles."""
+"""Tests for save_results named bundles."""
 
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ def test_deterministic_save_no_name():
 
 
 # ---------------------------------------------------------------------------
-# Stage 13.3: overwrite replaces, I/O failures, suffixed fallback name
+# Overwrite replaces, I/O failures, suffixed fallback name
 # ---------------------------------------------------------------------------
 
 def test_save_bundle_overwrite_with_narrower_scope_drops_stale_artifacts(job_dir):
@@ -264,8 +264,8 @@ def test_save_bundle_os_error_is_a_failed_result_with_no_partial_bundle(job_dir,
 
 
 def test_save_bundle_failed_overwrite_keeps_the_old_bundle(job_dir, monkeypatch):
-    # The old bundle used to be deleted before the copy, so a failed
-    # overwrite lost it (Review Stage R1, Phase 13).
+    # The old bundle is only replaced once the new copy is complete, so a
+    # failed overwrite keeps it.
     save_results_bundle(job_dir, "trial_a", "all", 1, PARAMS)
 
     def _disk_full(src, dst, *args, **kwargs):
@@ -315,8 +315,8 @@ def test_timestamped_bundle_name_truncates_long_names_to_stay_valid(tmp_path):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_saved_results_dir_is_writable_by_every_uid(job_dir, umask_022):
-    # Phase 16, Stage 16.3: a bundle saved by one uid (e.g. the former
-    # root Streamlit GUI) must not stop another (the non-root GUI) saving
+    # A bundle saved by one uid (e.g. a root container) must not stop
+    # another (the non-root GUI) saving
     # the next one.
     result = save_results_bundle(job_dir, "trial_a", "all", 5, PARAMS)
     assert result["success"] is True
@@ -325,7 +325,7 @@ def test_saved_results_dir_is_writable_by_every_uid(job_dir, umask_022):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_bundle_directories_are_writable_by_every_uid(job_dir, umask_022):
-    # Review Stage R2: replacing a bundle deletes its files, so a bundle one
+    # Replacing a bundle deletes its files, so a bundle one
     # GUI's uid saved (0o755 copytree dirs) blocked the other's overwrite --
     # and the silently failed cleanup then blocked every later one.
     result = save_results_bundle(job_dir, "trial_a", "all", 5, PARAMS)

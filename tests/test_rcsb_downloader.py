@@ -345,7 +345,7 @@ def test_download_structures_resolves_name_when_enabled(downloader, tmp_path, sa
 
 
 # ---------------------------------------------------------------------------
-# search_ligands: RCSB answers "no hits" with 204 and an empty body (Stage 19.2)
+# search_ligands: RCSB answers "no hits" with 204 and an empty body
 # ---------------------------------------------------------------------------
 
 def _search_response(status_code, payload=None):

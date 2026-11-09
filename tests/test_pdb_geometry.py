@@ -75,8 +75,7 @@ def test_compute_protein_center_and_box_hetatm_only_raises():
 
 # ---------------------------------------------------------------------------
 # parse_pdb_atom_line -- the shared primitive both parse_atom_coordinates()
-# and protein_preparer's manual-rigid PDBQT fallback are built on (Review
-# Stage R1, Phase 12, finding #4: previously duplicated independently).
+# and protein_preparer's manual-rigid PDBQT fallback are built on.
 # ---------------------------------------------------------------------------
 
 def test_parse_pdb_atom_line_atom_record():

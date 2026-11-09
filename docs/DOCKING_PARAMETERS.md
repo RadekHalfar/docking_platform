@@ -265,8 +265,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
   PSO" in chat moves it too. Switching resets "Max parallel workers" to the
   new algorithm's benchmarked best. The Current parameters summary, the
   results panel ("Docked with …") and the Compare Sessions table (an
-  Algorithm row) show which algorithm applies; results written before
-  Phase 15 read as Moldina (PSO).
+  Algorithm row) show which algorithm applies; results saved without an
+  algorithm setting read as Moldina (PSO), the default they ran with.
 - **Choosing:** PSO is far faster per ligand (seconds vs. ~1.8 minutes, 106 s,
   for 6lu7/ATP at the defaults) but in that comparison scored worse
   (-4.3 vs. -5.8 kcal/mol); Vina's search is the more thorough one here.

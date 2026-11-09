@@ -1,4 +1,4 @@
-"""Tests for benchmark_gui.py (Stage 16.0) -- no docker needed."""
+"""Tests for benchmark_gui.py -- no docker needed."""
 
 import json
 
@@ -92,8 +92,8 @@ class TestSampleOnCue:
         assert not [t for t in threading.enumerate() if t.name == "container-stats"]
 
     def test_windows_finished_before_a_bad_cue_are_kept(self, monkeypatch):
-        # Review Stage R1 (Phase 16): a driver dying mid-window used to
-        # throw away every finished record, so --json-out wrote nothing.
+        # A driver dying mid-window must not throw away the finished
+        # records, or --json-out would write nothing.
         self._fake_stats(monkeypatch)
         lines = ["SAMPLE-START running-25\n", "SAMPLE-STOP running-25\n", "SAMPLE-START idle\n"]
         with pytest.raises(benchmark_gui.CueError, match="input ended") as err:

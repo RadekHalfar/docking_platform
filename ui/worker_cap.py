@@ -21,10 +21,10 @@ _CPUS_KEY_PATH = ("services", "moldina-runner", "deploy", "resources", "limits",
 # benchmarked with moldina-runner limits cpus '10' / memory 8G at 1 CPU per
 # ligand; tables in docs/BATCH_DOCKING.md ("Benchmark baseline"). Rule: the
 # smallest worker count within 5% of the fastest wall clock.
-# - moldina (Stage 14.3, 2026-10-05, 50 ligands):
+# - moldina (2026-10-05, 50 ligands):
 #   docs/benchmarks/2026-10-05_moldina_cpus10_mem8g.json (8 -> 24.3 s vs
 #   10 -> 23.4 s).
-# - vina (Stage 15.3, 2026-10-06, 10 ligands):
+# - vina (2026-10-06, 10 ligands):
 #   docs/benchmarks/2026-10-06_vina_cpus10_mem8g.json (6 -> 134.6 s; 8 ->
 #   141.5 s just misses the 141.3 s threshold). Only 10 ligands (~62 s each
 #   alone), so the 6/8/10 rows are shaped by how ligands fall into waves;
@@ -33,7 +33,7 @@ _CPUS_KEY_PATH = ("services", "moldina-runner", "deploy", "resources", "limits",
 # changing moldina-runner's resource limits; describe_worker_cap() says so in
 # the GUI when the detected cap no longer matches MEASURED_AT_CPUS.
 # tests/test_worker_cap.py re-derives the measurements from the JSONs (and
-# from Phase 14 Review Stage R1's re-run, ..._r1_rerun.json, which gave the same).
+# from the same-day moldina re-run, ..._r1_rerun.json, which gave the same).
 MEASURED_BEST_WORKERS: Dict[str, int] = {"moldina": 8, "vina": 6}
 # Worst idle-subtracted peak memory per worker seen across each run's
 # configurations, rounded up — a sampled lower bound, not a hard limit.
@@ -82,7 +82,7 @@ def detect_moldina_worker_cap(compose_path: Optional[Path] = None) -> WorkerCap:
     explicitly (``source="fallback"`` plus a ``reason``) rather than
     swallowed, so the GUI can tell the user the number may be too high.
 
-    NOTE (R1, Phase 14 review, docs/reviews/stage_14_r1.md): this reads the
+    NOTE: this reads the
     *configured* limit, a copy of what the server computes. It can only
     drift from the server's real ceiling if moldina-runner stops running on
     this host with this compose file (a remote/HPC runner, a renamed

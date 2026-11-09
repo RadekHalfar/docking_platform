@@ -1,6 +1,6 @@
-"""The NiceGUI settings dialog (Phase 16, Stage 16.7): the LLM provider,
+"""The NiceGUI settings dialog: the LLM provider,
 endpoint, model and API key; Ollama detection, model download and the
-remembered API key (Stage 18.3). Runs in the GUI test tier only (see
+remembered API key. Runs in the GUI test tier only (see
 tests/test_nicegui_setup.py).
 """
 import json
@@ -186,8 +186,8 @@ async def test_apply_saves_the_settings_and_rebuilds_the_client(user: User, page
 
 
 async def test_apply_refuses_a_provider_without_a_model(user: User, page, tmp_path):
-    # LLM_MODEL is empty by default since Stage 18.2, so a client with model
-    # "" was applied and every chat message then failed (Review Stage R5).
+    # LLM_MODEL is empty by default; a client with model "" must not be
+    # applied, or every chat message fails.
     await _open_dialog(user, page)
     before, client = dict(page.state.settings), page.state.llm_client
 
@@ -232,7 +232,7 @@ async def test_reopening_the_dialog_shows_the_session_settings(user: User, page)
 
 async def test_reopening_drops_a_model_picked_but_not_applied(user: User, page, ollama_lists):
     # The select kept its value while it was still listed, so a later Apply
-    # (say, of a new endpoint) saved the unapplied model (Review Stage R3).
+    # (say, of a new endpoint) saved the unapplied model.
     await _open_dialog(user, page)
     current = page.state.settings["model"]
     set_value(user, "settings-model-select", MODELS[1])
@@ -245,7 +245,7 @@ async def test_reopening_drops_a_model_picked_but_not_applied(user: User, page, 
 
 
 # ---------------------------------------------------------------------------
-# No LLM (provider "none", the Phase 18 default)
+# No LLM (provider "none", the default)
 # ---------------------------------------------------------------------------
 
 async def test_no_llm_default_shows_only_the_provider(user: User, page, monkeypatch):
@@ -273,7 +273,7 @@ async def test_applying_none_drops_the_client(user: User, page, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Model download (Stage 18.3)
+# Model download
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -404,7 +404,7 @@ async def test_a_download_survives_closing_the_dialog(user: User, page, slow_pul
 
 async def test_a_download_ending_after_a_provider_switch_keeps_the_new_model(user: User, page, slow_pull):
     # The finished download wrote its name into the model field of whatever
-    # provider was picked by then (Review Stage R5).
+    # provider was picked by then.
     _, _, release = slow_pull
     await _start_download(user, page)
     set_value(user, "settings-provider", "openai")
@@ -419,7 +419,7 @@ async def test_a_download_ending_after_a_provider_switch_keeps_the_new_model(use
 
 async def test_closing_the_page_cancels_its_download(user: User, page, slow_pull):
     # Otherwise it ran on with nothing able to cancel it, and every other
-    # page got PULL_BUSY until it ended (Review Stage R5).
+    # page got PULL_BUSY until it ended.
     models, _, _ = slow_pull
     await _start_download(user, page)
     view = _view(page)
@@ -432,7 +432,7 @@ async def test_closing_the_page_cancels_its_download(user: User, page, slow_pull
 
 
 # ---------------------------------------------------------------------------
-# Remembered API key (Stage 18.3)
+# Remembered API key
 # ---------------------------------------------------------------------------
 
 async def test_a_remembered_key_is_saved_with_mode_0600_and_reloaded(user: User, page, tmp_path):
@@ -466,7 +466,7 @@ async def test_a_remembered_key_is_saved_with_mode_0600_and_reloaded(user: User,
 
 async def test_a_remembered_key_is_dropped_for_a_provider_without_one(user: User, page, tmp_path):
     # The key and "Remember" fields are only hidden for Ollama and None, so
-    # Apply saved the old key again, with no way to untick it (Review Stage R5).
+    # Apply saved the old key again, with no way to untick it.
     await _open_dialog(user, page)
     set_value(user, "settings-provider", "openai")
     set_value(user, "settings-model", "gpt-x")

@@ -31,7 +31,7 @@ from services.llm_orchestrator.workflow_llm_parser import (
         ("undo rev 3", "undo_revision", "3"),
         ("Undo to revision #7", "undo_revision", "7"),
         ("undo", "undo_revision", None),
-        # A number elsewhere in the sentence is not a revision (R1, Phase 13).
+        # A number elsewhere in the sentence is not a revision.
         ("undo the box change and set exhaustiveness to 16", "undo_revision", None),
         ("new Download 6lu7 and dock ATP", "new_workflow", None),
         ("rerun", "rerun_steps", None),
@@ -134,7 +134,7 @@ def test_extract_updates_empty_on_bad_llm_output_or_exception(llm_client, user_c
 
 
 # ---------------------------------------------------------------------------
-# Multi-intent command sequencing (Phase 10) — deterministic splitter
+# Multi-intent command sequencing — deterministic splitter
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -170,7 +170,7 @@ def test_split_command_sequence_no_split_when_tail_unrecognized(text):
 
 
 # ---------------------------------------------------------------------------
-# Multi-intent command sequencing (Phase 10) — LLM-assisted second pass
+# Multi-intent command sequencing — LLM-assisted second pass
 # ---------------------------------------------------------------------------
 
 def test_llm_split_command_sequence_returns_validated_segments(llm_client):
@@ -218,7 +218,7 @@ def test_llm_split_command_sequence_falls_back_on_exception(llm_client):
 
 
 # ---------------------------------------------------------------------------
-# detect_protein_geometry_command -- Stage 12.2 ("set box center as protein
+# detect_protein_geometry_command ("set box center as protein
 # center" / "look across all protein" chat commands). Pure regex, no LLM.
 # ---------------------------------------------------------------------------
 
@@ -269,7 +269,7 @@ def test_detect_protein_geometry_command_box_size(command):
         "save results as trial_a",
         "set protein_id to 6lu7",
         "undo 5",
-        # Review Stage R1 (Phase 12): these mention "protein" near a box/
+        # These mention "protein" near a box/
         # cover/whole keyword but qualify it with a specific sub-region --
         # must NOT be silently routed to a full-protein blind-docking box.
         "cover the whole protein pocket",
@@ -290,7 +290,7 @@ def test_detect_protein_geometry_command_no_false_positives(command):
     ],
 )
 def test_geometry_phrases_classify_as_set_protein_geometry(llm_client, command, expected_target):
-    """Stage 12.3: _deterministic_intent() (via classify_session_intent())
+    """_deterministic_intent() (via classify_session_intent())
     now recognizes both example commands deterministically -- no LLM call,
     and the intent's "name" carries which field (center/box_size) to set,
     consumed by nlp_orchestrator.py::_handle_set_protein_geometry()."""
@@ -301,18 +301,17 @@ def test_geometry_phrases_classify_as_set_protein_geometry(llm_client, command, 
 
 
 def test_update_parameters_catchall_still_wins_for_non_geometry_set_commands(llm_client):
-    """Regression guard for Critical Finding #2: an ordinary 'set ...'
-    parameter command must still classify as update_parameters, not get
-    swallowed by the new geometry check placed just before it."""
+    """Regression guard: an ordinary 'set ...' parameter command must
+    still classify as update_parameters, not get swallowed by the geometry
+    check placed just before it."""
     result = classify_session_intent(llm_client, "set center to 10,20,30")
     assert result["intent"] == "update_parameters"
     llm_client.generate.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# detect_docking_algorithm_command -- Stage 15.2 ("use vina" / "dock with
-# vina" chat commands). Pure regex, no LLM; checked before the rerun prefix
-# (Phase 15 finding 6).
+# detect_docking_algorithm_command ("use vina" / "dock with
+# vina" chat commands). Pure regex, no LLM; checked before the rerun prefix.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -380,7 +379,7 @@ def test_detect_docking_algorithm_command_no_false_positives(command):
 
 
 # ---------------------------------------------------------------------------
-# detect_run_command -- Stage 17.1 (the GUI chat's Run Docking)
+# detect_run_command (the GUI chat's Run Docking)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(

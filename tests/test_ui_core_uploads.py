@@ -1,4 +1,4 @@
-"""Tests for ui/core/uploads.py (Stage 16.4) -- hermetic, plain GuiSession,
+"""Tests for ui/core/uploads.py -- hermetic, plain GuiSession,
 uploads written under tmp_path."""
 import os
 import stat
@@ -35,8 +35,7 @@ def test_save_upload_refuses_an_unusable_name(tmp_path, name):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
 def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_022):
-    # Other uids write there too: the services, and formerly the root
-    # Streamlit GUI (Stage 16.3).
+    # Other uids write there too: the services, and root containers.
     upload_dir = tmp_path / "uploads"
     dest = uploads.save_upload("a.sdf", b"x", upload_dir)
     assert stat.S_IMODE(upload_dir.stat().st_mode) == 0o777
@@ -45,8 +44,8 @@ def test_save_upload_creates_an_upload_dir_every_uid_can_write(tmp_path, umask_0
 
 def test_a_same_named_upload_leaves_the_earlier_file_alone(tmp_path):
     # Another tab (or the other GUI) uploading its own ligand.sdf must not
-    # change the molecule an earlier session's parameters point to
-    # (Review Stage R2). It also never writes over another uid's file, the
+    # change the molecule an earlier session's parameters point to.
+    # It also never writes over another uid's file, the
     # "[Errno 13] Permission denied" found 2026-10-12.
     upload_dir = tmp_path / "uploads"
     first = uploads.save_upload("ligand.sdf", b"first", upload_dir)
@@ -103,8 +102,7 @@ def test_ligand_uploads_replace_ligand_ids(state, tmp_path, folder_mode, folder_
 
 
 def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_path):
-    # The uploader hands over one drop at a time, so a second drop adds
-    # (Review Stage R2).
+    # The uploader hands over one drop at a time, so a second drop adds.
     uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf"])
     uploads.apply_ligand_uploads(state, [tmp_path / "2" / "b.mol2"])
 
@@ -113,8 +111,8 @@ def test_appended_ligand_uploads_add_to_the_list_and_name_them_all(state, tmp_pa
 
 
 def test_a_dropped_ligand_named_like_a_listed_one_replaces_it(state, tmp_path):
-    # Two files of one name failed the run's "Local ligand filename
-    # collision" check (found in Stage 16.7; owner: the newest replaces it).
+    # Two files of one name would fail the run's "Local ligand filename
+    # collision" check, so the newest replaces it.
     uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf"])
     uploads.apply_ligand_uploads(state, [tmp_path / "2" / "b.mol2"])
     uploads.apply_ligand_uploads(state, [tmp_path / "3" / "a.sdf"])
@@ -126,9 +124,9 @@ def test_a_dropped_ligand_named_like_a_listed_one_replaces_it(state, tmp_path):
 
 
 def test_two_files_of_one_name_in_one_drop_keep_only_the_last(state, tmp_path):
-    # Review Stage R4: e.g. set1/a.sdf and set2/a.sdf dropped together, each
-    # saved in its own upload dir, used to both stay listed and fail the
-    # run's filename-collision check.
+    # E.g. set1/a.sdf and set2/a.sdf dropped together, each saved in its
+    # own upload dir, must not both stay listed and fail the run's
+    # filename-collision check.
     uploads.apply_ligand_uploads(state, [tmp_path / "1" / "a.sdf", tmp_path / "2" / "b.sdf", tmp_path / "3" / "a.sdf"])
 
     assert state.params["ligand_files"] == [str(tmp_path / "2" / "b.sdf"), str(tmp_path / "3" / "a.sdf")]

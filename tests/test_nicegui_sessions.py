@@ -1,9 +1,7 @@
-"""The NiceGUI Sessions tab (Phase 16, Stage 16.7): Session History and
+"""The NiceGUI Sessions tab: Session History and
 Failed Sessions (Load, Rename, Delete, Compare) and the active session's
 revision history with Restore.
 
-Ported from the former Streamlit tier (mapping: docs/reviews/stage_16_8_parity.md);
-each ported test keeps its old name.
 Runs in the GUI test tier only (see tests/test_nicegui_setup.py).
 """
 import asyncio
@@ -116,7 +114,6 @@ async def test_sidebar_lists_completed_and_failed_sessions(user: User, page, out
 
 
 async def test_every_session_is_listed_not_only_the_newest_ten(user: User, page, output_base):
-    # Not only the 10 newest, as the former Streamlit GUI listed (owner, 2026-10-13).
     job_ids = [f"job_20260930_0000{i:02d}_aaaaaa" for i in range(12)]
     for job_id in job_ids:
         _write_job(output_base, job_id, completed_job_data(FIXTURE_PDB))
@@ -232,9 +229,9 @@ async def test_redock_after_load_of_never_run_restore_plans_full_rerun(user: Use
 async def test_restore_drops_box_picker_receptor_only_for_another_protein(
     user: User, page, output_base, protein_id, kept
 ):
-    # Phase 12 R1 cleared a stale picker receptor on New Session / a fresh
-    # job only; a Load or restore of another protein kept it, so geometry
-    # commands computed from the wrong protein.
+    # Not only New Session / a fresh job clear a stale picker receptor: a
+    # Load or restore of another protein must too, or geometry commands
+    # compute from the wrong protein.
     revisions = []
 
     def seed(state):
@@ -303,7 +300,7 @@ async def test_save_session_with_form_back_at_checkpoint_clears_stale_draft(user
     assert page.state.form["param_center_x"] == "5.0"
 
 
-async def test_loaded_pre_phase15_session_reads_as_moldina_with_nothing_to_redock(user: User, page, output_base):
+async def test_loaded_session_without_algorithm_reads_as_moldina_with_nothing_to_redock(user: User, page, output_base):
     # Its checkpoint has no docking_algorithm key while the form sends
     # "moldina": a key on one side only counted as changed, so every old
     # session planned a bogus dock/visualize redock (and Save Session always
@@ -349,9 +346,8 @@ async def test_load_shows_the_session_on_results_and_fills_the_form(user: User, 
 
 
 async def test_load_after_a_run_shows_the_loaded_session_not_the_run(user: User, page, output_base):
-    # Stage 16.7's real-data check: the previous run's finished bridge
-    # stayed after a Load, so Results drew its result under the loaded
-    # session's name.
+    # The previous run's finished bridge must not stay after a Load, or
+    # Results draws its result under the loaded session's name.
     completed_job_on_disk(output_base, JOB_A)
     previous = {"status": "completed", "job_name": "previous", "results": {
         "dock": {"results": [{"ligand_id": "GLO", "best_affinity": -5.0, "modes": [{"affinity": -5.0}]}]},
@@ -408,9 +404,9 @@ async def test_rename_saves_the_new_name_and_cancel_keeps_the_old(user: User, pa
 
 
 async def test_a_rename_keeps_the_rows_so_a_click_right_after_it_is_not_lost(user: User, page, output_base):
-    # Review Stage R4's real-data run: a Delete clicked right after a rename
-    # got no dialog -- the rename rebuilt every row, and the click landed on
-    # a button being deleted.
+    # A Delete clicked right after a rename must get its dialog: a rename
+    # that rebuilt every row would land the click on a button being
+    # deleted.
     _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
     await _open(user, page)
     delete_before = page.sessions._rows[JOB_A].delete
@@ -429,9 +425,9 @@ async def test_a_rename_keeps_the_rows_so_a_click_right_after_it_is_not_lost(use
 async def test_a_load_before_the_relist_after_a_rename_uses_the_new_name(
     user: User, page, output_base, monkeypatch
 ):
-    # Found in Review Stage R3's real-data check: the re-list after a rename
-    # takes seconds with many sessions, and a Load meanwhile resumed the
-    # session under its old name (the row's listing entry).
+    # The re-list after a rename takes seconds with many sessions; a Load
+    # meanwhile must not resume the session under its old name (the row's
+    # listing entry).
     _write_job(output_base, JOB_A, completed_job_data(FIXTURE_PDB))
     await _open(user, page)
     gate = threading.Event()
@@ -516,7 +512,7 @@ async def test_delete_is_off_for_the_running_session_only(user: User, page, outp
 
 
 async def test_load_delete_and_restore_wait_for_a_save(user: User, page, output_base, monkeypatch):
-    # Review Stage R2, Deferred #3: a Delete during a save removed the job
+    # A Delete during a save removed the job
     # dir under the copy, and a Load swapped the session it reports to.
     gate, started = threading.Event(), threading.Event()
     real = save_results.write_bundle
@@ -537,7 +533,7 @@ async def test_load_delete_and_restore_wait_for_a_save(user: User, page, output_
     await eventually(started.is_set)
     try:
         assert controller.busy == SAVING
-        # Rename too (Review Stage R3): during a delete it wrote into the
+        # Rename too: during a delete it wrote into the
         # directory the rmtree was removing.
         for marker in (
             f"load-{JOB_A}", f"load-{HISTORY_JOB_ID}", f"delete-{JOB_A}", f"rename-{JOB_A}",
@@ -619,7 +615,7 @@ async def test_a_finished_run_relists_but_a_chat_reply_rereads_only_the_revision
     user: User, page, output_base, monkeypatch
 ):
     # Listing parses every session's results file (4-6 s for ~170 sessions
-    # on a bind mount); it ran on every chat reply (Review Stage R3).
+    # on a bind mount); it ran on every chat reply.
     calls = _count_listings(monkeypatch)
     page.seed(lambda state: active_session_with_two_revisions(state, output_base))
     await _open(user, page)

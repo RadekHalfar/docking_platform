@@ -49,8 +49,7 @@ Vina release. The fork's exact source commit is unknown
 ([Moldina/README.md](../Moldina/README.md#provenance-of-the-committed-binary)).
 Vina-only options such as `--scoring` and `--seed` aren't exposed.
 
-**Which parameters apply** — measured on the committed binary (Stage 15.1,
-2026-10-05; 6lu7 receptor, ATP, center `[-10.8, 12.5, 68.9]`, box 22 Å,
+**Which parameters apply** — measured on the committed binary (2026-10-05; 6lu7 receptor, ATP, center `[-10.8, 12.5, 68.9]`, box 22 Å,
 `num_modes=15`, `energy_range=100`, one ligand at a time, `moldina-runner`
 limited to 10 CPUs):
 

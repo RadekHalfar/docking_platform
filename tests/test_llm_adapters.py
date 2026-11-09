@@ -108,8 +108,8 @@ class TestOllamaAdapter:
 
     @patch('services.llm_orchestrator.llm_adapters.requests.Session.post')
     def test_pull_model_raises_on_an_error_line_in_stream(self, mock_post):
-        """Ollama reports a failed pull as an {"error": ...} line; it was only
-        logged before Stage 18.3, so the retried generate failed with a 404."""
+        """Ollama reports a failed pull as an {"error": ...} line; it must
+        raise, or the retried generate fails with a bare 404."""
         pull_response = Mock()
         pull_response.iter_lines.return_value = [
             b'{"status": "pulling manifest"}',
@@ -139,8 +139,8 @@ class TestOllamaAdapter:
 
     @patch('services.llm_orchestrator.llm_adapters.requests.Session.get')
     def test_list_models_shares_the_listing_and_stays_a_list_when_unreachable(self, mock_get):
-        # The GUI's listing and this one are one function since Review
-        # Stage R5; the adapter keeps its [] for "can't be reached".
+        # The GUI's listing and this one are one function; the adapter
+        # keeps its [] for "can't be reached".
         mock_get.return_value.raise_for_status.return_value = None
         mock_get.return_value.json.return_value = {"models": [{"name": "b"}, {"digest": "x"}, {"name": "a"}]}
         assert OllamaAdapter().list_models() == ["a", "b"]
@@ -455,7 +455,7 @@ def test_llm_env_wiring_health_smoke():
 
 
 class TestPullOllamaModel:
-    """The shared /api/pull helper (Stage 18.3)."""
+    """The shared /api/pull helper."""
 
     @staticmethod
     def _response(lines, ok=True, status_code=200, body=None):

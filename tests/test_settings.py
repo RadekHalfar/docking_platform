@@ -21,7 +21,7 @@ def _isolated_settings_file(tmp_path, monkeypatch):
 class TestLoadSettings:
     def test_defaults_when_no_file_and_no_env(self):
         settings = load_settings()
-        # Phase 18: no LLM until the user picks one.
+        # No LLM until the user picks one.
         assert settings["provider"] == "none"
         assert settings["model"] == ""
         assert settings["endpoint"] == "http://localhost:11434"
@@ -68,7 +68,7 @@ class TestLoadSettings:
 class TestBuildLlmClient:
     def test_the_provider_env_var_is_read_as_the_factory_reads_it(self, monkeypatch):
         # The dialog showed "None" for LLM_PROVIDER=OpenAI while the factory
-        # built an OpenAI client from it (Review Stage R5).
+        # built an OpenAI client from it.
         monkeypatch.setenv("LLM_PROVIDER", " OpenAI ")
         assert load_settings()["provider"] == "openai"
 
@@ -139,9 +139,9 @@ class TestSaveSettings:
         assert nested.exists()
 
     def test_replaces_the_file_rather_than_rewriting_it(self, _isolated_settings_file):
-        # Phase 16, Stage 16.3: a new file swapped in needs write permission
-        # on the directory only, so the non-root GUI can update a file the
-        # former root Streamlit GUI created. Also: never a half-written file.
+        # A new file swapped in needs write permission
+        # on the directory only, so the non-root GUI can update a file
+        # another uid (e.g. root) created. Also: never a half-written file.
         _isolated_settings_file.write_text("{}")
         old_inode = _isolated_settings_file.stat().st_ino
 

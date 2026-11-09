@@ -140,7 +140,7 @@ downloaded doesn't: it is logged and left out of `ligand_paths`.
 Searches the names in RCSB's chemical component dictionary (`chem_comp.name`,
 usually the systematic name) and returns ranked component-ID candidates (used
 by the CLI's ligand search, see
-[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name-phase-9);
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name);
 the GUI doesn't call it).
 
 **Parameters:**
@@ -614,8 +614,7 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
   response has `"status": "stopped"`, `"stopped": true` and `skipped` =
   ligands never docked (see `docs/MOLDINA_DOCKING.md` → "Stopping a run")
 - `workers` is how many ligands were docked at a time after the server's
-  clamp (added in Review Stage R1, Phase 15); `benchmark_docking.py` labels
-  its rows with it. Older servers don't return it.
+  clamp; `benchmark_docking.py` labels its rows with it.
 - Population size should be ≥ 5; recommended: 100 × rotatable_bonds
 - Higher exhaustiveness and population = more thorough but slower
 - See `docs/MOLDINA_DOCKING.md` for the engine guide, and

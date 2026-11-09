@@ -300,7 +300,7 @@ class TestOrchestratorBridge:
 
     @patch("services.llm_orchestrator.orchestrator.WorkflowOrchestrator")
     def test_request_stop_writes_docking_stop_flag(self, MockOrchestrator, tmp_path):
-        # Stage 13.1b: the flag is what makes moldina-runner halt mid-dock.
+        # The flag is what makes moldina-runner halt mid-dock.
         MockOrchestrator.return_value.execute_workflow.return_value = {"status": "completed"}
         docking_dir = tmp_path / "job_x" / "docking_results"
         docking_dir.mkdir(parents=True)
@@ -365,11 +365,10 @@ class TestOrchestratorBridge:
 
 
 class TestConcurrentRuns:
-    """Phase 16 finding 1: each bridge captures only its own run's output.
-    redirect_stdout() swapped the process-wide sys.stdout, so two
-    concurrent runs captured each other's lines. Since Review Stage R1 the
-    orchestrator writes to the bridge's own sink and sys.stdout is never
-    touched."""
+    """Each bridge captures only its own run's output.
+    redirect_stdout() would swap the process-wide sys.stdout, so two
+    concurrent runs would capture each other's lines. The orchestrator
+    writes to the bridge's own sink and sys.stdout is never touched."""
 
     @staticmethod
     def _interleaved_runs(MockOrchestrator):

@@ -1,4 +1,4 @@
-"""Phase 4 tests: WorkflowStateManager revision history, load, and undo/restore."""
+"""Tests for WorkflowStateManager: revision history, load, and undo/restore."""
 
 from __future__ import annotations
 
@@ -322,7 +322,7 @@ def test_draft_parameters_do_not_bump_revision_or_appear_in_history(mgr):
 
 
 # ---------------------------------------------------------------------------
-# job.log (Stage 11.1)
+# job.log
 # ---------------------------------------------------------------------------
 
 def _job_log_text(mgr) -> str:
@@ -386,7 +386,7 @@ def test_job_log_lines_are_timestamped_and_ordered(mgr):
 
 
 # ---------------------------------------------------------------------------
-# get_parameters_revision (Phase 13, Stage 13.2)
+# get_parameters_revision
 # ---------------------------------------------------------------------------
 
 def test_get_parameters_revision_none_before_any_checkpoint(mgr):
@@ -419,7 +419,7 @@ def test_parameters_ran_false_until_a_step_runs(mgr):
 
 
 def test_parameters_ran_false_after_a_restore_and_survives_a_new_manager(mgr):
-    # The real case that motivated it (Stage 13.3): results from an earlier
+    # The real case that motivated it: results from an earlier
     # run, then a restore never redocked -- still detected after a Load,
     # which builds a fresh manager over the same job_dir.
     rev_a = mgr.save_parameters_checkpoint(PARAMS_A, source="test")
@@ -433,10 +433,10 @@ def test_parameters_ran_false_after_a_restore_and_survives_a_new_manager(mgr):
 
 
 # ---------------------------------------------------------------------------
-# Review Stage R1, Phase 15: parameters stored and read with defaults filled
+# Parameters stored and read with defaults filled
 # ---------------------------------------------------------------------------
 
-def _write_pre_phase15_checkpoint(mgr):
+def _write_checkpoint_without_algorithm(mgr):
     """What an old session has on disk: no docking_algorithm key."""
     import json
     payload = {"revision": 1, "timestamp": "2026-09-01T00:00:00+00:00", "source": "initial_parse",
@@ -446,7 +446,7 @@ def _write_pre_phase15_checkpoint(mgr):
 
 
 def test_old_checkpoint_reads_with_the_defaults_it_ran_with(mgr):
-    _write_pre_phase15_checkpoint(mgr)
+    _write_checkpoint_without_algorithm(mgr)
     assert mgr.load_latest_parameters()["docking_algorithm"] == "moldina"
     assert mgr.load_checkpoint(1)["parameters"]["docking_algorithm"] == "moldina"
 
@@ -454,7 +454,7 @@ def test_old_checkpoint_reads_with_the_defaults_it_ran_with(mgr):
 def test_restating_a_default_on_an_old_checkpoint_logs_no_change(mgr):
     """job.log said "docking_algorithm: None -> 'moldina'" on the first save
     of an old session, although nothing changed."""
-    _write_pre_phase15_checkpoint(mgr)
+    _write_checkpoint_without_algorithm(mgr)
     mgr.save_parameters_checkpoint({**PARAMS_A, "docking_algorithm": "moldina"}, source="interactive_update")
     log = (mgr.job_dir / "job.log").read_text()
     assert "no changes" in log
@@ -470,13 +470,13 @@ def test_saved_parameters_are_stored_full(mgr):
 
 
 # ---------------------------------------------------------------------------
-# Shared directories (Phase 16, Stage 16.3)
+# Shared directories
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_job_and_checkpoint_dirs_are_writable_by_every_uid(tmp_path, umask_022):
-    # Different uids (the non-root GUI, sessions the former root Streamlit
-    # GUI created) write the same session's checkpoints.
+    # Different uids (the non-root GUI and services, root containers)
+    # write the same session's checkpoints.
     mgr = WorkflowStateManager(tmp_path / "job_shared")
     assert mgr.job_dir.stat().st_mode & 0o777 == 0o777
     assert mgr.checkpoints_dir.stat().st_mode & 0o777 == 0o777
@@ -485,7 +485,7 @@ def test_job_and_checkpoint_dirs_are_writable_by_every_uid(tmp_path, umask_022):
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_job_log_is_writable_by_every_uid(mgr, umask_022):
     # job.log is appended to in place, so a directory's permissions alone
-    # don't let the other GUI's uid log to it (Phase 16, Stage 16.3).
+    # don't let the other GUI's uid log to it.
     mgr.save_parameters_checkpoint(PARAMS_A, source="initial_parse")
     log = mgr.job_dir / "job.log"
     assert log.stat().st_mode & 0o777 == 0o666

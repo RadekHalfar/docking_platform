@@ -36,8 +36,7 @@ _FAILED_STATUSES = {"failed", "cancelled"}
 
 # Parsed listing entries by results file, with the (mtime_ns, size) they
 # were parsed at. Parsing every session's file is the slow part of a
-# listing (4-6 s for ~190 sessions on a Docker Desktop bind mount, Review
-# Stages R3/R4), so a re-list re-reads only the files that changed. Shared
+# listing (4-6 s for ~190 sessions on a Docker Desktop bind mount), so a re-list re-reads only the files that changed. Shared
 # by every client; the scans run on worker threads, hence the lock.
 _entry_cache: Dict[str, Tuple[Tuple[int, int], Optional[Tuple[str, Dict[str, Any]]]]] = {}
 _entry_cache_lock = threading.Lock()

@@ -1,8 +1,8 @@
 """Shared HTTP retry/backoff policy for LLM and MCP calls.
 
 A single transient network blip (common with local Ollama warm-up, or a
-Docker service restarting) previously aborted the whole request instead of
-being retried. These sessions retry connection-level failures and (for the
+Docker service restarting) shouldn't abort the whole request. These sessions
+retry connection-level failures and (for the
 LLM session only) read timeouts / a small set of transient status codes,
 with exponential backoff between attempts.
 

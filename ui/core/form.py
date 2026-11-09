@@ -1,4 +1,4 @@
-"""The parameter form <-> workflow parameters (Phase 16, Stage 16.1).
+"""The parameter form <-> workflow parameters.
 
 ``state.form`` holds
 the form's field values under the ``param_*`` keys of
@@ -39,8 +39,8 @@ def form_cpu(state) -> int:
     """The "CPUs per ligand" field as a whole number >= 1 (1 if unset).
 
     The form holds an int (the field's own values, and what
-    :func:`apply_parsed_params` writes); the parse is a guard, since an
-    unparsable value used to raise on every redraw (Review Stage R4).
+    :func:`apply_parsed_params` writes); the parse is a guard, so an
+    unparsable value can't raise on every redraw.
     """
     return whole_number(state.form.get("param_cpu")) or 1
 
@@ -129,7 +129,7 @@ def apply_parsed_params(state, parsed_params: dict) -> None:
 
     # The chat callers pass only what the message named, never the
     # validator's defaults, so this moves the selector only on an explicit
-    # choice (Phase 15 finding 8). An unrecognised name is not applied: the
+    # choice. An unrecognised name is not applied: the
     # selector has no option to show it.
     algorithm = normalize_docking_algorithm(parsed_params.get("docking_algorithm"))
     if algorithm is not None:
@@ -148,7 +148,7 @@ def load_session_params(state, loaded_params: dict) -> None:
     parallel/max_workers are applied here rather than in
     apply_parsed_params(), whose chat-parse callers carry the validator's
     default ``parallel: False`` and would reset the checkbox every message.
-    A session without docking_algorithm (saved before Phase 15) reads as
+    A session without docking_algorithm (saved by an older version) reads as
     the default, Moldina; switching to its algorithm here doesn't reset the
     worker count -- the saved max_workers (or, without one, the default
     for that algorithm) applies.
@@ -238,8 +238,7 @@ def clear_box_picker_state(state) -> None:
 
     Used whenever that state might no longer correspond to the protein
     actually in play: starting a fresh box-picker load, the user
-    discarding it explicitly, and -- the case Review Stage R1 (Phase 12)
-    found missing -- detaching from or starting a new docking session,
+    discarding it explicitly, and detaching from or starting a new docking session,
     where a previously-loaded receptor could otherwise be silently reused
     for the wrong protein by a geometry chat command
     ("set up box center as protein center" / "look across all protein",
@@ -256,7 +255,7 @@ def clear_box_picker_state(state) -> None:
 def detach_run(state) -> None:
     """Drop the current session's run: its bridge, its log and a staged
     redock. Shared by New Session and a Load, which each switch the active
-    session (Review Stage R3: Load had missed the bridge)."""
+    session."""
     state.bridge = None
     state.run_log = []
     state.pending_rerun = None
@@ -339,8 +338,7 @@ def params_summary(state) -> Optional[str]:
     if params.get("ligand_ids"):
         ligands = ", ".join(params["ligand_ids"])
     elif params.get("ligand_files"):
-        # DEFERRED (Review Stage R4, docs/reviews/stage_16_r4.md, Deferred #2):
-        # every file is listed, and the summary is redrawn on each Docking Box
+        # NOTE (known limitation): every file is listed, and the summary is redrawn on each Docking Box
         # keystroke -- about 30 KB of markdown per keystroke with 1000 files.
         # Fix if a large Batch Processing drop makes typing in the box fields
         # lag: list the first few and "(+N more)".

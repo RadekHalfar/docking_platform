@@ -66,7 +66,7 @@ User: "Show results of docking"
   "ligand_ids": ["ATP", "HEM"],   // Ligand codes or names (optional)
   "enable_name_resolution": false, // Resolve names via RCSB search (optional)
   "formats": {                    // Optional
-    "protein": "pdb",            // or "cif" ("mmcif" is accepted)
+    "protein": "pdb",            // or "cif" ("mmcif" is accepted); prepare_protein reads both
     "ligand": "sdf"              // or "mol"
   },
   "save_dir": "/app/downloads"    // Output directory
@@ -218,7 +218,7 @@ User: "Show results of docking"
     {
       "ligand_id": "ATP",
       "output_path": "/app/docking_results/ATP_out.pdbqt",
-      "log_path": "/app/docking_results/ATP_out.log",
+      "log_path": null,              // Moldina's log is ATP_moldina_output.log
       "best_affinity": -8.5,
       "num_modes_found": 15,
       "modes": [
@@ -357,7 +357,7 @@ ligand_ids        files      molecules     results
 
 ## Part 4: Required Parameters and Clarification
 
-### Automatically Provided (from worflow parser)
+### Automatically Provided (from workflow parser)
 
 These come from parsing the user's natural language command:
 

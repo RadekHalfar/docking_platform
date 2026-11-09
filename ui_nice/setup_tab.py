@@ -124,8 +124,8 @@ class SetupView:
 
         with ui.column().classes("w-full") as self.local_panel:
             ui.upload(
-                label="Protein file (.pdb, .cif)", auto_upload=True, on_upload=self._on_protein_upload,
-            ).props('accept=".pdb,.cif"').classes("w-full").mark("upload-protein")
+                label="Protein file (.pdb, .cif, .mmcif)", auto_upload=True, on_upload=self._on_protein_upload,
+            ).props('accept=".pdb,.cif,.mmcif"').classes("w-full").mark("upload-protein")
             with ui.row().classes("items-center") as self.protein_row:
                 self.protein_caption = ui.label().classes("text-caption")
                 ui.button("Clear", on_click=self._on_clear_protein).props("flat dense size=sm")

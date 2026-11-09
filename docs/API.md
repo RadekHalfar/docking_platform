@@ -126,17 +126,22 @@ Downloads protein structures and ligand molecules from RCSB PDB.
   "jsonrpc": "2.0",
   "id": "job_001_step_1",
   "error": {
-    "code": -32602,
-    "message": "Invalid PDB ID: INVALID"
+    "code": -32000,
+    "message": "Tool execution failed: Invalid PDB ID: INVALID"
   }
 }
 ```
+
+An invalid protein ID fails the whole call. A ligand that can't be
+downloaded doesn't: it is logged and left out of `ligand_paths`.
 
 ### Tool: search_ligands
 
 Searches the names in RCSB's chemical component dictionary (`chem_comp.name`,
 usually the systematic name) and returns ranked component-ID candidates (used
-by the chat's "search ligand" flow).
+by the CLI's ligand search, see
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name-phase-9);
+the GUI doesn't call it).
 
 **Parameters:**
 
@@ -389,7 +394,8 @@ unconverted file `run_docking` wrote.
 Prepares protein structures for docking by cleaning, adding hydrogens, and converting to PDBQT format.
 
 **Preparation Steps:**
-1. Read protein from PDB/CIF file
+1. Read protein from a PDB or mmCIF file (`.cif`/`.mmcif` is converted to
+   PDB with gemmi; a multi-model file keeps its first model)
 2. Remove water molecules (optional)
 3. Remove non-protein heteroatoms (optional)
 4. Add explicit hydrogens at specified pH
@@ -400,7 +406,7 @@ Prepares protein structures for docking by cleaning, adding hydrogens, and conve
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `protein_paths` | array | Yes | List of paths to protein files (PDB, CIF) |
+| `protein_paths` | array | Yes | List of paths to protein files: `.pdb`, `.cif` or `.mmcif` |
 | `output_dir` | string | Yes | Directory to save prepared proteins |
 | `ph` | number | No | pH for protonation state (default: 7.4) |
 | `remove_waters` | boolean | No | Remove water molecules (default: true) |
@@ -545,15 +551,18 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
     "total": 2,
     "successful": 2,
     "failed": 0,
+    "errors": [],
     "config_file": "/data/jobs/job_001/docking/center.txt",
+    "parameters_file": "/data/jobs/job_001/docking/parameters.txt",
     "output_dir": "/data/jobs/job_001/docking",
     "results": [
       {
         "ligand_id": "ATP",
         "ligand_path": "/data/jobs/job_001/prepared/ATP.pdbqt",
         "output_path": "/data/jobs/job_001/docking/ATP_out.pdbqt",
-        "log_path": "/data/jobs/job_001/docking/ATP_out.log",
+        "log_path": null,
         "best_affinity": -8.5,
+        "num_modes_found": 2,
         "checksum": "m3n4o5p6q7r8...",
         "modes": [
           {
@@ -574,8 +583,9 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
         "ligand_id": "HEM",
         "ligand_path": "/data/jobs/job_001/prepared/HEM.pdbqt",
         "output_path": "/data/jobs/job_001/docking/HEM_out.pdbqt",
-        "log_path": "/data/jobs/job_001/docking/HEM_out.log",
+        "log_path": null,
         "best_affinity": -7.2,
+        "num_modes_found": 1,
         "checksum": "s9t0u1v2w3x4...",
         "modes": [
           {
@@ -595,6 +605,10 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
 - Moldina is a Linux binary. In Docker nothing more is needed; running the service natively on Windows needs WSL
 - `docking_algorithm` picks the search: Particle Swarm Optimization (`moldina`, default) or the classic Vina Monte Carlo search (`vina`), both in the same binary
 - Results are sorted by best_affinity (most negative = best binding)
+- Each ligand's Moldina stdout/stderr is in `<ligand_id>_moldina_output.log`
+  in `output_dir`. `log_path` names a `<ligand_id>_out.log` only if one
+  exists, and the runner doesn't ask Moldina to write one, so it is `null`
+- `errors` holds one message per ligand whose Moldina run failed
 - A run can be stopped mid-batch by creating `STOP_REQUESTED` in `output_dir`:
   no further ligands start, running Moldina processes are killed, and the
   response has `"status": "stopped"`, `"stopped": true` and `skipped` =
@@ -612,19 +626,20 @@ Performs molecular docking with the Moldina binary via WSL on Windows or nativel
 
 ## Error Codes
 
-Standard JSON-RPC 2.0 error codes:
+The codes `common/mcp_base.py` returns:
 
-| Code | Message | Description |
-|------|---------|-------------|
-| -32700 | Parse error | Invalid JSON |
-| -32600 | Invalid Request | Invalid JSON-RPC format |
-| -32601 | Method not found | Unknown method |
-| -32602 | Invalid params | Invalid parameters |
-| -32603 | Internal error | Server error |
-| -32000 | Tool execution error | Tool failed to execute |
-| -32001 | Validation error | Parameter validation failed |
-| -32002 | Resource not found | Requested resource not found |
-| -32003 | Timeout error | Operation timed out |
+| Code | Message | When |
+|------|---------|------|
+| -32700 | Parse error | The body isn't valid JSON |
+| -32600 | Invalid Request | `jsonrpc` isn't `"2.0"` |
+| -32601 | Method not found / Tool not found | Unknown method, or unknown tool name |
+| -32602 | Invalid params | No tool `name`, or a missing required argument |
+| -32603 | Internal error | Unexpected server error |
+| -32000 | Tool execution failed | The tool raised (e.g. an invalid PDB ID); the message carries the error |
+| -32003 | Timeout | The tool ran past `MAX_JOB_RUNTIME_SECONDS` (default 3600 s); it keeps running in the background |
+
+`JSONRPCErrorCodes` also defines -32001 (validation) and -32002 (resource
+not found), but no service returns them.
 
 ---
 

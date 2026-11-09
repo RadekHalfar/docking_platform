@@ -19,7 +19,6 @@ x-service-common: &service-common
     - ./orchestrator_output:/app/orchestrator_output
   environment:
     - PYTHONUNBUFFERED=1
-    - LOG_LEVEL=INFO
 
 services:
   # RCSB Downloader Service (Port 8001)
@@ -125,7 +124,6 @@ services:
       - "127.0.0.1:${MOLDINA_RUNNER_PORT:-8004}:8004"
     environment:
       - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=INFO
       - MOLDINA_PATH=/usr/local/bin/moldina
     # Resource limits for compute-intensive docking
     deploy:

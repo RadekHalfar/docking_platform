@@ -62,6 +62,9 @@ history.
 2. Overwrite `Moldina/moldina`.
 3. Verify it still speaks the expected CLI: `chmod +x Moldina/moldina && ./Moldina/moldina --help` should list `--receptor`, `--ligand`, `--config`, `--out`, `--cpu`, `--exhaustiveness`, `--num_modes`, `--energy_range` (the flags `services/moldina_runner/__init__.py::_build_docking_command()` passes it), and it must still accept `--population` and `--search_alg_PSO` (PSO mode) and run without them (Vina mode).
 4. Rebuild the image: `docker build -f docker/moldina_runner.Dockerfile -t mcp-moldina-runner:latest .`
+   Then run the real-docking test in it, which docks with both searches and
+   parses the output (see [docs/DOCKER_DEPLOYMENT.md](../docs/DOCKER_DEPLOYMENT.md#real-docking-tests)):
+   `docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py -p no:cacheprovider`
 5. Update the SHA-256, version, and (ideally) the exact source commit in the table above, and note it in your commit message — the previous two commits didn't, which is why this table has gaps.
 
 ## Why not Git LFS or a from-source Docker build

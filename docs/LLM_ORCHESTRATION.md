@@ -109,7 +109,9 @@ The GUI's Settings can download these too, with a progress bar (see
 CLI sees them.
 
 To avoid repeating flags, set `LLM_PROVIDER`, `LLM_MODEL` (and
-`LLM_API_KEY`) in `.env`; see `.env.example`.
+`LLM_API_KEY`) in `.env` (see `.env.example`). Docker Compose passes them to
+`script-runner` and `ui`; a `python nlp_orchestrator.py` run on the host
+doesn't read `.env`, so export them in your shell there.
 
 ### 3. Check Service Health
 
@@ -182,9 +184,11 @@ python nlp_orchestrator.py --protein-file /data/6lu7.pdb --ligand-files /data/AT
   "prepare and dock, center 10 20 30 box 25 30 35"
 ```
 
-Accepted protein extensions: `.pdb`, `.cif`. Accepted ligand extensions: `.sdf`, `.mol`,
-`.mol2`, `.pdbqt`. An invalid extension or a path that doesn't exist is reported as a
-missing/invalid parameter the same way an unresolvable PDB ID would be.
+Accepted protein extensions: `.pdb`, `.cif`, `.mmcif` (mmCIF is converted to PDB with
+gemmi during protein preparation). Accepted ligand extensions: `.sdf`, `.mol`, `.mol2`,
+`.pdbqt`. An invalid extension or a path that doesn't exist is reported as a
+missing/invalid parameter the same way an unresolvable PDB ID would be. A multi-model
+protein file (an NMR entry) is docked against its first model.
 
 A single `.sdf` path given to `--ligand-files` may itself contain multiple molecules
 (`$$$$`-delimited records) — all of them are docked, not just the first. See
@@ -321,12 +325,14 @@ When a job is active, every command is classified into one of these intents befo
 | `new_workflow` | `new <request>` | Start a fresh workflow |
 | `update_parameters` | `change ligand to HEM`, `set center to 10,20,30` | Extract updates via LLM, persist to disk, invalidate affected services |
 | `set_protein_geometry` | `set up box center as protein center`, `look across all protein` | Compute `center`/`box_size` from the loaded protein's own bounding box, persist to disk, invalidate affected services (Phase 12) |
+| `set_docking_algorithm` | `use vina`, `switch to PSO`, `dock with vina` | Switch the docking search; the "dock with …" forms rerun too (Phase 15, [below](#set-docking-algorithm-phase-15)) |
+| `search_ligand` | `search adenosine`, `find ligand heme` | Search RCSB ligands by name and pick one, which becomes the session's ligand (Phase 9, [below](#search-a-ligand-by-name-phase-9)) |
 | `save_results` | `save results as hem_box_a` | Save named result bundle from current docking/visualization outputs |
 | `undo_revision` | `undo 14` | Restore parameters/state to a prior revision |
 | `rerun_steps` | `rerun`, `dock`, `rerun docking` | Re-execute invalidated steps with pre-flight validation |
 | `help` | `help`, `?` | Print command reference |
 
-Common keywords (`state`, `history`, `end session`, `save results as <name>`, `undo N`, `new <request>`) are resolved deterministically without an LLM call.
+Common keywords (`state`, `history`, `end session`, `save results as <name>`, `undo N`, `new <request>`, `search <name>`) are resolved deterministically without an LLM call.
 Ambiguous free-text commands (e.g. "change ligand to HEM") are sent to the LLM for classification.
 
 #### Update parameters
@@ -364,6 +370,63 @@ The GUI's chat (`ui/core/chat.py`) uses the same `detect_protein_geometry_comman
 function ahead of its own chat-parsing call, so both commands work
 identically from the browser — see
 [GUI_GUIDE.md](GUI_GUIDE.md#auto-filling-the-docking-box-from-the-protein).
+
+#### Search a ligand by name (Phase 9)
+
+RCSB downloads a ligand by its component ID (`ATP`, `HEM`, `NAD`). When you
+only know a name, the CLI searches RCSB's chemical component dictionary
+(the `search_ligands` tool, [API.md](API.md#tool-search_ligands)) and lets
+you pick the ID. It does this in two places.
+
+**A name in a new request.** In the first request of a session, or a
+`new <request>`, a ligand that doesn't look like a component ID (more than
+four characters, or not only letters and digits) is searched before
+anything runs, and you must choose:
+
+```
+🧬 > Download 6lu7 and adenosine, prepare and dock with center 10,20,30 and box 25,25,25
+
+Detected ligand name 'adenosine' in workflow input. You must choose a specific RCSB ligand before execution.
+
+Found 10 ligand candidate(s) for 'adenosine':
+  1. A1II9 - A1II9 score=1.000
+  2. ADN - ADN score=0.959
+  3. AMP - AMP score=0.917
+  ...
+ 10. 5FA - 5FA score=0.879
+Choose ligand by index or component ID (blank to cancel workflow): 2
+```
+
+At most 10 candidates are listed, best first; RCSB returns only the IDs, so
+each one's "name" is its ID again. Answer with the number or a component ID
+typed directly. A blank answer, or
+a name with no match, cancels the workflow. The same name used twice is
+asked once. IDs in the same request (`ATP`) are used as they are. Newer
+five-character IDs (such as `A1II9`) count as names here, so they go
+through the list too; type the ID at the prompt to keep it.
+
+**A follow-up `search`.** In an active session, `search <name>`,
+`find <name>` or `lookup <name>` (optionally `search for ligand named …`)
+runs the same search and list. With no name it asks for one. The chosen ID
+**replaces all of the session's ligands**: it is saved as a new parameters
+revision (source `search_ligand`, so `history` and `undo` see it), `dock` and
+`visualize` are marked for rerun, and `rerun` then downloads and docks it.
+A blank answer cancels without changing anything. A follow-up
+`change ligand to <name>` is *not* searched, so use `search` instead (see
+below for what happens to a name used as an ID).
+
+**What a search finds.** It matches `chem_comp.name`, which is usually the
+systematic name: "adenosine" finds ADN and AMP, but "aspirin" finds nothing
+(its entry is named "2-(ACETYLOXY)BENZOIC ACID"; its ID is `AIN`). With no
+match the CLI prints "No ligands found for '…'". The `rcsb-downloader`
+service keeps each query's results in memory (case-insensitive) until it
+restarts.
+
+**The GUI has no ligand search.** Its chat and form take component IDs only.
+A name there is downloaded as if it were an ID; that download fails, the
+ligand is left out of the run, and if it was the only one the run fails with
+"No ligand files available for preparation". Search in the CLI, or on
+[rcsb.org](https://www.rcsb.org/), then enter the ID.
 
 #### Set docking algorithm (Phase 15)
 
@@ -488,12 +551,12 @@ python nlp_orchestrator.py --help
 Options:
   --interactive, -i         Run in interactive mode
   --llm-provider NAME       LLM provider name (default: LLM_PROVIDER, else none)
-  --llm-endpoint URL        LLM API endpoint URL (default: http://localhost:11434)
+  --llm-endpoint URL        LLM API endpoint URL (default: LLM_ENDPOINT, else http://localhost:11434)
   --llm-model MODEL         LLM model name (default: LLM_MODEL)
   --llm-api-key KEY         Optional API key for providers that require auth
   --llm-base-url URL        Base URL for openai_compatible servers (e.g. http://localhost:1234/v1 for LM Studio)
   --output-dir DIR          Output directory (default: ./orchestrator_output)
-  --protein-file PATH       Local protein .pdb/.cif file instead of downloading from RCSB
+  --protein-file PATH       Local protein .pdb/.cif/.mmcif file instead of downloading from RCSB
   --ligand-files PATH       Local ligand file; repeat the flag for multiple ligands
   --ligand-folder DIR       Directory of local ligand files, scanned recursively (overrides --ligand-files and any ligand IDs in the command)
   --check-health            Check all services and exit
@@ -652,19 +715,22 @@ Each workflow execution creates a job directory:
 orchestrator_output/
 └── job_20261029_070450_7a1a17/
     ├── downloads/
-    │   ├── 6lu7.pdb
+    │   ├── 6LU7.pdb
     │   ├── ATP.sdf
-    │   └── HEM.sdf
+    │   ├── HEM.sdf
+    │   └── 6lu7_download_meta.json
     ├── prepared/
-    │   ├── 6lu7.pdbqt
-    │   ├── ATP.pdbqt
-    │   └── HEM.pdbqt
+    │   ├── 6LU7.pdbqt, 6LU7_prepared.pdb
+    │   ├── ATP.pdbqt, ATP_prepared.pdb
+    │   ├── HEM.pdbqt, HEM_prepared.pdb
+    │   └── preparation_meta.json
     ├── docking_results/
     │   ├── ATP_out.pdbqt
     │   ├── HEM_out.pdbqt
-    │   ├── ATP_out.log, ATP_moldina_output.log, ...
+    │   ├── ATP_moldina_output.log, HEM_moldina_output.log
     │   ├── center.txt
-    │   └── parameters.txt
+    │   ├── parameters.txt
+    │   └── docking_progress.json
     ├── visualization/
     │   ├── ATP_poses.sdf
     │   ├── ATP_poses.pdb
@@ -678,9 +744,14 @@ orchestrator_output/
     │   └── hem_trial_b/
     │       ├── metadata.json
     │       └── docking_results/
+    ├── checkpoints/            (rev_XXXXXX_parameters.json / _state.json)
+    ├── workflow_parameters.json, workflow_state.json, workflow_manifest.json
     ├── workflow_results.json
     └── job.log
 ```
+
+The session files and `checkpoints/` back `state`, `history` and `undo`; see
+[STATE_PERSISTENCE_STRATEGY.md](STATE_PERSISTENCE_STRATEGY.md).
 
 **workflow_results.json** contains:
 ```json
@@ -1028,7 +1099,7 @@ them side by side, tick **Parallel ligand docking** in the GUI (see
 python nlp_orchestrator.py "Download 6lu7 and ATP, prepare with optimization, dock with vina, center 10,20,30 and box 25,30,35, exhaustiveness 16 and 4 CPUs"
 ```
 
-**Output:** Classic Vina search: about 1.5 min per ligand at exhaustiveness 8
+**Output:** Classic Vina search: about 1.8 min (106 s) per ligand at exhaustiveness 8
 with 1 CPU, scaling with exhaustiveness and dropping with CPUs (measured in
 [MOLDINA_DOCKING.md](MOLDINA_DOCKING.md))
 
@@ -1058,13 +1129,11 @@ python nlp_orchestrator.py --output-dir /path/to/results "..."
 ### Logging Configuration
 
 ```bash
-# Debug mode (with an LLM configured in .env, or pass --llm-provider/--llm-model)
+# Debug mode (with an LLM configured, or pass --llm-provider/--llm-model)
 python nlp_orchestrator.py --debug "..."
-
-# Or set environment variable
-export LOG_LEVEL=DEBUG
-python nlp_orchestrator.py "..."
 ```
+
+`--debug` is the only switch; no environment variable sets the log level.
 
 ---
 
@@ -1095,8 +1164,8 @@ python nlp_orchestrator.py --check-health
 # List models
 python nlp_orchestrator.py --llm-provider ollama --list-models
 
-# Test parsing (without execution)
-python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b --debug "Download 6lu7"  # Stop before execution
+# Test parsing (without execution): answer "n" at "Execute this workflow? [Y/n]"
+python nlp_orchestrator.py --llm-provider ollama --llm-model gemma3:4b --debug "Download 6lu7"
 ```
 
 ---
@@ -1145,7 +1214,9 @@ A: Yes, in interactive mode you can provide missing parameters. For programmatic
 ## Supported LLM Providers
 
 The platform works with any of the providers below — no code changes required. Set the
-provider in your `.env` file (copy `.env.example`) or via CLI flags.
+provider in the GUI's Settings, in your `.env` file (copy `.env.example`; read by Docker
+Compose for `ui` and `script-runner`), as exported variables for a run on the host, or via
+CLI flags.
 
 All providers share the same generic `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`/
 `LLM_BASE_URL` environment variables rather than vendor-prefixed ones (e.g. there's no

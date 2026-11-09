@@ -65,7 +65,7 @@ class WorkflowParser:
         if param == "protein_id":
             if params.get("protein_file"):
                 return self._validate_local_file_param(
-                    params["protein_file"], allowed_extensions={".pdb", ".cif"}
+                    params["protein_file"], allowed_extensions={".pdb", ".cif", ".mmcif"}
                 )
             if value is None or not isinstance(value, str) or not value.strip():
                 return "missing"
@@ -194,7 +194,7 @@ class WorkflowParser:
                 if params.get("protein_file"):
                     lines.append(
                         f"  - The local protein file '{params['protein_file']}' is invalid or not found "
-                        "(expected an existing .pdb or .cif file)."
+                        "(expected an existing .pdb, .cif or .mmcif file)."
                     )
                 elif issue == "invalid":
                     lines.append("  - The protein PDB ID is invalid. Please provide a 4-character ID (e.g., '6lu7').")

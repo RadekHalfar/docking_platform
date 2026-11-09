@@ -4,7 +4,7 @@ Protein Preparer Service
 This service prepares protein structures for AutoDock Vina docking.
 
 Preparation steps (following AutoDock Vina best practices):
-1. Read protein from PDB file
+1. Read protein from a PDB or mmCIF file (mmCIF is converted with gemmi)
 2. Remove water molecules and heteroatoms (optional)
 3. Add hydrogens at specified pH
 4. Assign partial charges (Gasteiger)
@@ -36,6 +36,31 @@ from common.pdb_geometry import parse_pdb_atom_line
 from common.utils import ensure_directory, compute_file_checksum
 
 logger = logging.getLogger(__name__)
+
+CIF_EXTENSIONS = ('.cif', '.mmcif')
+
+
+def cif_to_pdb_text(file_path: str) -> str:
+    """PDB-format text for the mmCIF file at *file_path* (via gemmi).
+
+    Keeps the first model only (an NMR entry has several), and shortens
+    chain names longer than the one character PDB allows, which large
+    complexes in mmCIF use. Raises ValueError if gemmi can't read it.
+    """
+    import gemmi  # a requirement (Meeko needs it); imported here to keep startup light
+
+    try:
+        structure = gemmi.read_structure(file_path)
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError(f"Failed to read mmCIF {file_path}: {exc}") from exc
+    if len(structure) == 0:
+        raise ValueError(f"Failed to read protein from {file_path}: no models")
+    while len(structure) > 1:
+        del structure[len(structure) - 1]
+    structure.setup_entities()
+    if any(len(chain.name) > 1 for chain in structure[0]):
+        structure.shorten_chain_names()
+    return structure.make_pdb_string(gemmi.PdbWriteOptions(minimal=True))
 
 
 class ProteinPreparer:
@@ -69,28 +94,45 @@ class ProteinPreparer:
     
     def read_protein(self, file_path: str) -> Any:
         """
-        Read protein from PDB file.
-        
+        Read protein from a PDB or mmCIF file.
+
+        An mmCIF file (``.cif``/``.mmcif``) is converted to PDB text with
+        gemmi first, so both formats go through the same RDKit PDB reader
+        and keep the same residue and HETATM information the cleaning step
+        relies on. Only the first model of a multi-model file is kept.
+
         Args:
-            file_path: Path to protein PDB file
-            
+            file_path: Path to a protein ``.pdb``, ``.cif`` or ``.mmcif`` file
+
         Returns:
             RDKit molecule object (Chem.Mol)
-            
+
         Raises:
             ValueError: If file cannot be read or format unsupported
         """
         file_ext = Path(file_path).suffix.lower()
-        
-        if file_ext != '.pdb':
-            raise ValueError(f"Unsupported file format: {file_ext}. Only PDB format is supported.")
-        
-        # Read PDB file
-        mol = Chem.MolFromPDBFile(file_path, removeHs=False, sanitize=False)
-        
+
+        if file_ext == '.pdb':
+            mol = Chem.MolFromPDBFile(file_path, removeHs=False, sanitize=False)
+        elif file_ext in CIF_EXTENSIONS:
+            mol = Chem.MolFromPDBBlock(cif_to_pdb_text(file_path), removeHs=False, sanitize=False)
+        else:
+            raise ValueError(
+                f"Unsupported file format: {file_ext}. Supported: .pdb, .cif, .mmcif."
+            )
+
         if mol is None:
             raise ValueError(f"Failed to read protein from {file_path}")
-        
+
+        # A multi-model file (an NMR entry) reads as one conformer per
+        # model, and every one of them would be written out, stacking all
+        # models' atoms in the receptor PDBQT. Dock the first model only.
+        extra_models = [conf.GetId() for conf in mol.GetConformers()][1:]
+        if extra_models:
+            logger.info(f"{file_path}: {len(extra_models) + 1} models, using the first")
+            for conf_id in extra_models:
+                mol.RemoveConformer(conf_id)
+
         # Try to sanitize
         try:
             Chem.SanitizeMol(mol)
@@ -314,7 +356,7 @@ class ProteinPreparer:
         Prepare a single protein file for docking.
         
         Args:
-            protein_path: Path to input protein PDB file
+            protein_path: Path to input protein .pdb or .cif/.mmcif file
             output_path: Path for output PDBQT file
             ph: pH for protonation state
             add_hydrogens: Add explicit hydrogens
@@ -391,7 +433,7 @@ class ProteinPreparer:
         Prepare multiple proteins for docking.
         
         Args:
-            protein_paths: List of paths to protein PDB files
+            protein_paths: List of paths to protein .pdb or .cif/.mmcif files
             output_dir: Directory for output PDBQT files
             ph: pH for protonation state
             add_hydrogens: Add explicit hydrogens

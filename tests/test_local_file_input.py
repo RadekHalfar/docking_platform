@@ -34,6 +34,21 @@ def test_protein_file_validates_when_set(tmp_path):
     assert parser.get_parameter_issue("protein_id") is None
 
 
+@pytest.mark.parametrize("name", ["6lu7.cif", "6lu7.mmcif", "6LU7.CIF"])
+def test_mmcif_protein_file_validates(tmp_path, name):
+    """The protein preparer reads mmCIF, so the parser lets it through."""
+    protein_path = tmp_path / name
+    protein_path.write_text("data_6LU7\n")
+
+    parser = WorkflowParser()
+    parser.parsed_workflow = {
+        "services": ["get_input_files"],
+        "parameters": {"protein_file": str(protein_path)},
+    }
+
+    assert parser.get_parameter_issue("protein_id") is None
+
+
 def test_invalid_protein_file_extension_raises_invalid(tmp_path):
     bad_file = tmp_path / "6lu7.xyz"
     bad_file.write_text("not a structure")

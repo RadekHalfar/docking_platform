@@ -54,7 +54,7 @@ class ProteinPreparerServer(MCPServer):
             description="Prepare protein structures for AutoDock Vina docking",
             handler=prepare_proteins_handler,
             parameters=build_tool_parameters([
-                ("protein_paths", "array", "List of paths to protein PDB files to prepare", True),
+                ("protein_paths", "array", "List of paths to protein files to prepare (.pdb, or .cif/.mmcif, converted with gemmi)", True),
                 ("output_dir", "string", "Directory where prepared PDBQT files will be saved", True),
                 ("ph", "number", "pH for protonation state (default: 7.4)"),
                 ("add_hydrogens", "boolean", "Add explicit hydrogens (default: true)"),

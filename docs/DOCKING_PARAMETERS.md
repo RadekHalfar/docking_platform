@@ -34,7 +34,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 **Protein formats:**
 - `pdb` - Protein Data Bank format (recommended)
-- `cif` - Crystallographic Information File
+- `cif` - Crystallographic Information File (mmCIF); protein preparation
+  reads it as well (converted to PDB with gemmi)
 
 **Ligand formats:**
 - `sdf` - Structure Data File (recommended)
@@ -71,7 +72,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `ligand_paths` | array | **Yes** | - | List of paths to ligand files (SDF, MOL, MOL2) |
+| `ligand_paths` | array | **Yes** | - | List of paths to ligand files (SDF, MOL, MOL2, or an already-prepared PDBQT, used as-is — see [LIGAND_PREPARATION.md](LIGAND_PREPARATION.md#already-prepared-pdbqt-ligands)) |
 | `output_dir` | string | No | `"./data/prepared"` | Directory to save prepared PDBQT files |
 | `ph` | number | No | `7.4` | pH for protonation state (physiological pH) |
 | `add_hydrogens` | boolean | No | `true` | Add explicit hydrogen atoms |
@@ -137,7 +138,7 @@ Complete overview of all parameters used in the molecular docking workflow acros
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `protein_paths` | array | **Yes** | - | List of paths to protein PDB files |
+| `protein_paths` | array | **Yes** | - | List of paths to protein `.pdb`, `.cif` or `.mmcif` files |
 | `output_dir` | string | **Yes** | - | Directory to save prepared PDBQT files |
 | `ph` | number | No | `7.4` | pH for protonation state |
 | `add_hydrogens` | boolean | No | `true` | Add explicit hydrogen atoms |
@@ -266,8 +267,8 @@ Complete overview of all parameters used in the molecular docking workflow acros
   results panel ("Docked with …") and the Compare Sessions table (an
   Algorithm row) show which algorithm applies; results written before
   Phase 15 read as Moldina (PSO).
-- **Choosing:** PSO is far faster per ligand (seconds vs. ~1.5 minutes for
-  6lu7/ATP at the defaults) but in that comparison scored worse
+- **Choosing:** PSO is far faster per ligand (seconds vs. ~1.8 minutes, 106 s,
+  for 6lu7/ATP at the defaults) but in that comparison scored worse
   (-4.3 vs. -5.8 kcal/mol); Vina's search is the more thorough one here.
 
 ### Performance Parameters
@@ -597,7 +598,7 @@ get_extent binding_site
 
 # 5. Calculate center:
 # center_x = (x_min + x_max) / 2
-# center_y = (y_min + y_min) / 2
+# center_y = (y_min + y_max) / 2
 # center_z = (z_min + z_max) / 2
 
 # 6. Calculate box size:
@@ -739,4 +740,4 @@ Before running docking, verify:
 
 ---
 
-*Last updated: November 2, 2026*
+*Last updated: November 9, 2026*

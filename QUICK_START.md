@@ -101,9 +101,14 @@ Typical contents:
 
 ## 8. Run Tests
 
+The hermetic suite (no network or live services; what CI runs):
+
 ```powershell
-docker compose --profile dev run --rm script-runner python -m pytest tests/ --tb=short
+docker compose --profile dev run --rm script-runner python -m pytest -m "not integration"
 ```
+
+The GUI tier, the real-docking test and the live-service tests each need
+their own command; see the README's "Running Tests".
 
 Targeted tests for this flow:
 

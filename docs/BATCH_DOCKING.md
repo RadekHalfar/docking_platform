@@ -73,7 +73,7 @@ python nlp_orchestrator.py \
 
 The LLM recognizes phrasing like "all ligands in `<path>`" or "every ligand file in `<path>`"
 and sets `ligand_folder` instead of `ligand_ids`. As with the CLI flag, the path must be
-container-side when running in Docker (see "Why the path appears twice" above). If the LLM
+container-side when running in Docker (see "Why the path appears twice" below). If the LLM
 fails to extract the folder (uncommon phrasing, unusual path format), fall back to the
 `--ligand-folder` flag: the folder then comes from the flag, not from the LLM's reading of
 the command (the rest of the command is still parsed by the LLM).

@@ -119,7 +119,7 @@ def _print_interactive_help() -> None:
     print("  - look across all protein    # Size box to cover the whole protein (+10%)")
     print("  - use vina / use moldina     # Switch docking algorithm (Vina Monte Carlo | Moldina PSO)")
     print("  - dock with vina             # Switch algorithm and redock (dock + visualize only)")
-    print("  - search ligand aspirin       # Search RCSB ligands by name and choose one")
+    print("  - search ligand adenosine     # Search RCSB ligands by name and choose one")
     print("  - state / show state         # Show active job state from disk")
     print("  - end / quit / exit          # End session")
     print("  - help                       # Show this help")
@@ -1204,7 +1204,7 @@ Examples:
     parser.add_argument(
         "--protein-file",
         default=None,
-        help="Path to a local protein .pdb/.cif file to use instead of downloading from RCSB"
+        help="Path to a local protein .pdb/.cif/.mmcif file to use instead of downloading from RCSB"
     )
     parser.add_argument(
         "--ligand-files",

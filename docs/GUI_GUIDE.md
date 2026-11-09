@@ -16,8 +16,10 @@ Until Phase 16 (Stage 16.8, 2026-10-26) the GUI was a Streamlit app; the
 NiceGUI GUI replaced it with the same features (the parity check is in
 [reviews/stage_16_8_parity.md](reviews/stage_16_8_parity.md)).
 
-Uploaded files are each saved in a folder of their own under
-`orchestrator_output/uploads/`, so uploading another file with the same
+The Setup tab takes its inputs as **RCSB IDs**, **Local Files** (a protein
+`.pdb`, `.cif` or `.mmcif`, plus `.sdf`/`.mol`/`.mol2`/`.pdbqt` ligands) or
+**Batch Processing** (a drop of many ligand files). Uploaded files are each
+saved in a folder of their own under `orchestrator_output/uploads/`, so uploading another file with the same
 name, from another browser tab, never changes the file an earlier session
 docked. Each drop of ligand files adds to the list ("N ligand file(s)
 ready"); **Clear** empties it. A multi-molecule `.sdf` counts as one file
@@ -97,7 +99,7 @@ restarting the container.
   settings file, so it survives a refresh and a restart (and wins over
   `LLM_API_KEY` from `.env`). It is stored **in plain text**, in a file
   readable only by the GUI's own user (mode 0600) — see
-  [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#security-model). Unticking it
+  [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md#security-model-single-machine-deployment-only). Unticking it
   and applying removes the key from the file, and so does applying a
   provider that takes no key (Ollama, None).
 
@@ -155,6 +157,14 @@ one. This follow-up parsing only kicks in once something has already
 been extracted in the current chat — the very first message in a chat is
 always parsed as a complete, standalone request.
 
+**Ligands are component IDs** (`ATP`, `HEM`, `AIN` for aspirin). The GUI
+can't search for a ligand by name: `search adenosine` isn't a GUI chat
+command (it goes to the LLM like any other request), and a name that
+reaches the form is downloaded as if it were an ID, so it fails and is left
+out of the run. The CLI can search, list the matching IDs and let you pick
+one; see
+[LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md#search-a-ligand-by-name-phase-9).
+
 While a session runs, its step-by-step log streams into a **Run log**
 expander under the chat, not into the chat messages themselves, so a
 message you send mid-run stays as you typed it. The chat input is disabled
@@ -210,7 +220,7 @@ algorithm** selector:
 - **Moldina (PSO)** (default) — Particle Swarm Optimization. Fast (seconds per
   ligand), always 1 CPU per ligand, and ignores **Exhaustiveness**.
 - **Vina (Monte Carlo)** — AutoDock Vina's own search in the same binary.
-  Much slower per ligand (about 1.5 minutes for 6lu7/ATP at the defaults),
+  Much slower per ligand (about 1.8 minutes, 106 s, for 6lu7/ATP at the defaults),
   but its search is more thorough. A **CPUs per ligand** field appears (whole
   numbers from 1 up), and both it and Exhaustiveness change how long each
   ligand takes.

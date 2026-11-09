@@ -170,7 +170,7 @@ results = runner.run_moldina_docking(
             "ligand_id": "ligand1",
             "ligand_path": "ligand1.pdbqt",
             "output_path": "docking_results/ligand1_out.pdbqt",
-            "log_path": "docking_results/ligand1_out.log",
+            "log_path": None,       # no <ligand>_out.log is written; see Output Files
             "best_affinity": -8.5,  # kcal/mol
             "num_modes_found": 15,
             "checksum": "a1b2c3...",
@@ -307,33 +307,52 @@ runner.run_moldina_docking(
 
 ### Generated Files
 
-For each ligand, Moldina creates:
+For each ligand:
 
-1. **{ligand}_out.pdbqt** - Docked poses in PDBQT format
-2. **{ligand}_out.log** - Docking log with affinities and statistics
-3. **{ligand}_moldina_output.log** - Moldina's raw stdout/stderr for that ligand
+1. **{ligand}_out.pdbqt** - Docked poses in PDBQT format (one `MODEL` per pose)
+2. **{ligand}_moldina_output.log** - Moldina's stdout and stderr for that
+   ligand, with the affinity table the runner parses
+
+The runner doesn't pass Moldina a `--log` file, so there is no
+`{ligand}_out.log`, and each result's `log_path` is `None`.
 
 Once per run, in the output directory:
 
-4. **center.txt** - The box center and size passed to Moldina
-5. **parameters.txt** - The search parameters used (algorithm, population,
+3. **center.txt** - The box center and size passed to Moldina
+4. **parameters.txt** - The search parameters used (algorithm, population,
    exhaustiveness, cpu, modes, energy range)
-6. **docking_progress.json** - Live per-ligand progress (read by the GUI)
+5. **docking_progress.json** - Live per-ligand progress (read by the GUI)
 
 ### Log File Format
 
+`{ligand}_moldina_output.log` from a PSO run (6lu7 + ATP, abridged):
+
 ```
+=== STDOUT ===
+AutoDock Vina aea4fd5-mod
 Scoring function : vina
-Rigid receptor: protein.pdbqt
-Grid center: X 10.500 Y 20.300 Z -5.200
+Rigid receptor: /app/orchestrator_output/job_.../prepared/6LU7.pdbqt
+Ligand: /app/orchestrator_output/job_.../prepared/ATP.pdbqt
+Grid center: X -27.49 Y 19.848 Z 56.642
 Grid size  : X 25 Y 30 Z 35
+Grid space : 0.375
+Search Algorithm: Particle Swarm Optimization (Moldina)
+PSO Population: 500
+CPU: 1
+Verbosity: 1
+
+Computing Vina grid ... done.
+Performing search ...
 
 mode |   affinity | dist from best mode
      | (kcal/mol) | rmsd l.b.| rmsd u.b.
 -----+------------+----------+----------
-   1       -8.5      0.000      0.000
-   2       -8.2      1.234      3.456
-   3       -7.9      2.345      4.567
+   1         -4.5      0.000      0.000
+   2         -4.1      4.944      7.141
+   3         -4.0     18.804     20.638
+...
+
+=== STDERR ===
 ```
 
 ## Performance Tuning

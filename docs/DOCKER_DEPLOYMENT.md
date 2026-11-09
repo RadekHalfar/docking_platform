@@ -290,28 +290,27 @@ docker compose down -v  # Removes volumes too
 
 ### Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (`cp .env.example .env`). Compose
+substitutes only these into `docker-compose.yml`:
 
 ```bash
-# Logging
-LOG_LEVEL=INFO
+# Host-side ports (the containers keep their own 8001-8004)
+RCSB_DOWNLOADER_PORT=8001
+LIGAND_PREPARER_PORT=8002
+PROTEIN_PREPARER_PORT=8003
+MOLDINA_RUNNER_PORT=8004
 
-# Moldina Configuration
-MOLDINA_PATH=/usr/local/bin/moldina
-
-# Service URLs for container-based script execution
-MCP_RCSB_DOWNLOADER_URL=http://rcsb-downloader:8001
-MCP_LIGAND_PREPARER_URL=http://ligand-preparer:8002
-MCP_PROTEIN_PREPARER_URL=http://protein-preparer:8003
-MCP_MOLDINA_RUNNER_URL=http://moldina-runner:8004
-
-# LLM configuration (GUI and nlp_orchestrator.py). Default: none -- the GUI's
-# forms work without one. For the opt-in local Ollama:
+# LLM configuration, passed to ui and script-runner. Default: none -- the
+# GUI's forms work without one. For the opt-in local Ollama:
 # LLM_PROVIDER=ollama
 # LLM_ENDPOINT=http://ollama:11434
 # LLM_MODEL=gemma3:4b
+# LLM_API_KEY / LLM_BASE_URL for cloud and OpenAI-compatible providers
 LLM_PROVIDER=none
 ```
+
+Everything else is set in `docker-compose.yml` itself: `MOLDINA_PATH` and
+the `MCP_*_URL` service addresses. Putting them in `.env` changes nothing.
 
 Moldina's CPU and memory limits are not environment variables: they are set
 under `services.moldina-runner.deploy.resources.limits` in
@@ -382,6 +381,11 @@ docker compose --profile dev run --rm \
 ```
 
 `SERVICE_HOST=host.docker.internal` allows containerized tests to reach host-published service ports.
+
+`script-runner` has neither the GUI packages nor the Moldina binary, so the
+GUI tier and the real-docking test skip here; run them with their own
+commands ([GUI Tests](#gui-tests), [Real Docking Tests](#real-docking-tests)).
+The hermetic suite alone is `python -m pytest -m "not integration"`.
 
 ### GUI Tests
 
@@ -597,11 +601,14 @@ flags the runner builds and that its output parses:
 
 ```bash
 docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace \
-  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py
+  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py -p no:cacheprovider
 ```
 
-It self-skips where no binary is available, so the default suite stays
-hermetic. CI runs it in its own `real-docking` job.
+(`-p no:cacheprovider` because the repo is mounted read-only.) It carries
+the `integration` marker, so `-m "not integration"` leaves it out, and it
+self-skips where no binary is available. In this image `MOLDINA_PATH` is
+set, so a missing binary there fails instead of skipping. CI runs it in its
+own `real-docking` job.
 
 ---
 
@@ -692,34 +699,19 @@ the host itself is reachable at `http://host.docker.internal:11434`
 
 ### CI/CD Integration
 
-GitHub Actions example:
+`.github/workflows/tests.yml` runs three jobs on every push and pull request:
 
-```yaml
-name: Build and Test Docker Images
+- **`test`**: the hermetic suite, `python -m pytest -m "not integration"`,
+  on Python 3.12 with `requirements.txt`;
+- **`gui-tier`**: builds the base and `ui` images and runs the
+  [GUI tests](#gui-tests) in the `ui` image;
+- **`real-docking`**: builds the base and `moldina-runner` images and runs
+  [`tests/test_real_docking.py`](#real-docking-tests) there.
 
-on: [push, pull_request]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Build images
-        run: docker compose build
-      
-      - name: Start services
-        run: docker compose up -d
-      
-      - name: Wait for health
-        run: sleep 30
-      
-      - name: Run tests
-        run: pytest tests/test_docker_integration.py
-      
-      - name: Stop services
-        run: docker compose down
-```
+No job starts the stack, so the live-service tests
+(`tests/test_docker_integration.py`) run only locally, as in
+[Integration Tests Cannot Reach Services](#integration-tests-cannot-reach-services).
+`.github/workflows/build-installer.yml` builds the standalone installer.
 
 ---
 

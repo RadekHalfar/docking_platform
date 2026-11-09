@@ -539,3 +539,37 @@ moved from Streamlit to NiceGUI.
     the sort instead of the real one, `_parse_moldina_stdout` had no test at
     all, a PDBQT format assert sat behind a condition that could skip it, and
     the path tests imported from a demo script rather than `common/`.
+- **Docs re-audit (2026-11-09), checked against the code and real job output.**
+  - **`.env` is read only by Docker Compose**, which passes on just the host
+    ports and the `LLM_*` variables. `.env.example`, INSTALLATION and
+    DOCKER_DEPLOYMENT no longer list variables nothing reads (`DATA_DIR`,
+    `RCSB_API_URL`, `DEFAULT_EXHAUSTIVENESS`, `DEFAULT_TOP_N`, `LOG_LEVEL`) or
+    ones only Compose itself sets (`MOLDINA_PATH`, `MCP_*_URL`). Docs for a
+    run on the host say to export the variables instead.
+  - **Docking output:** no `<ligand>_out.log` is written (`log_path` is
+    always `null`); Moldina's log is `<ligand>_moldina_output.log`, now shown
+    as it really looks. The `run_docking` response example gained `errors`,
+    `parameters_file` and `num_modes_found`.
+  - **API.md:** an invalid PDB ID returns -32000 "Tool execution failed: …",
+    not -32602, and the error table lists only the codes a service returns.
+  - **The CLI's search for a ligand by name is documented** (a name in a new
+    request, and `search <name>`), and the GUI's lack of one. The CLI's
+    `help` example `search ligand aspirin` always found nothing; it now
+    says `adenosine`.
+  - **Tests:** QUICK_START and INSTALLATION run the hermetic suite
+    (`-m "not integration"`); DOCKER_DEPLOYMENT describes the real CI jobs;
+    the real-docking command has `-p no:cacheprovider`.
+  - Smaller fixes: `.pdbqt` in DOCKING_PARAMETERS' `ligand_paths`, the
+    `mcp_demo` sample's real format, a stale 2025 log line, Vina's 106 s
+    (not 1.5 min), `--debug` doesn't stop before execution, a PyMOL recipe
+    typo, the README's doc list.
+- **mmCIF proteins (2026-11-09).** A `.cif` or `.mmcif` protein (GUI upload,
+  `--protein-file`, or an RCSB download with `formats: {"protein": "cif"}`)
+  is now prepared and docked. Before, the CLI and GUI accepted it but
+  protein preparation refused it. gemmi converts it to PDB, so a CIF and a
+  PDB of the same entry give the same receptor (6LU7: identical protein
+  atoms).
+  - **Fixed:** a multi-model protein (an NMR entry, `.pdb` too) stacked
+    every model's atoms in the receptor. Only the first model is docked now.
+  - **Removed:** `LOG_LEVEL` from `docker-compose.yml` and `python-dotenv`
+    from `requirements.txt`; nothing read either.

@@ -12,7 +12,7 @@ originally defined it.
 
 The service performs several key steps to prepare proteins:
 
-1. **Read Protein Structure**: Loads protein from PDB file format
+1. **Read Protein Structure**: Loads protein from a PDB or mmCIF file (the first model only)
 2. **Clean Structure**: Removes water molecules and unwanted heteroatoms
 3. **Add Hydrogens**: Adds missing hydrogen atoms at specified pH
 4. **Convert to PDBQT**: Writes a rigid-receptor PDBQT with AutoDock atom types (charges as 0.000), compatible with both Moldina and AutoDock Vina
@@ -39,6 +39,18 @@ Docking (Moldina/Vina) requires:
   - Standard format from RCSB PDB database
   - Contains 3D coordinates of protein atoms
   - May include waters, ligands, and other heteroatoms
+- **mmCIF**: `.cif` or `.mmcif` files (RCSB's primary format, and the only
+  one for structures too large for PDB)
+  - Converted to PDB text with gemmi (`cif_to_pdb_text()`), then read the
+    same way as a `.pdb`, so waters, heteroatoms and `keep_residues` work
+    identically. On 6LU7 the two formats give the same molecule (2,500
+    atoms, 113 heteroatoms, 84 waters).
+  - Chain names longer than one character (large complexes) are shortened
+    to fit PDB.
+
+**Multi-model files** (NMR entries, either format): only the first model is
+docked. Each model reads as a separate conformer, and all of them used to
+be written out, stacking every model's atoms in the receptor PDBQT.
 
 ### File Types
 **Proteins** (receptors):
@@ -310,8 +322,12 @@ print(f"Prepared {result['successful']} proteins")
 ## Troubleshooting
 
 ### Issue: "Unsupported file format"
-**Problem**: File is not a PDB file
-**Solution**: Only PDB format supported for proteins. Download from RCSB PDB or convert to PDB format.
+**Problem**: File is neither PDB nor mmCIF
+**Solution**: Use a `.pdb`, `.cif` or `.mmcif` file. Download from RCSB PDB, or convert other formats (e.g. with OpenBabel).
+
+### Issue: "Failed to read mmCIF"
+**Problem**: gemmi couldn't parse the `.cif` file
+**Solution**: Check it is a coordinate mmCIF (an `_atom_site` table), not a ligand definition or a truncated download.
 
 ### Issue: "No molecule found"
 **Problem**: PDB file is empty or invalid
@@ -369,6 +385,7 @@ print(f"Prepared {result['successful']} proteins")
 
 Required:
 - `rdkit` (2023.9.1+) - Core chemistry operations for structure manipulation
+- `gemmi` (0.6.0+) - Reads mmCIF input (already required by Meeko)
 
 Optional:
 - `openbabel-wheel` (3.1.1+) - Alternative conversion (not recommended for rigid receptors)

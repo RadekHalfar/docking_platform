@@ -2,8 +2,9 @@
 
 `nlp_orchestrator.py` supports three verbosity levels that control output detail during workflow execution.
 
-The examples assume an LLM is configured (`LLM_PROVIDER`/`LLM_MODEL` in `.env`,
-or `--llm-provider`/`--llm-model`); see [LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md).
+The examples assume an LLM is configured (`LLM_PROVIDER`/`LLM_MODEL` in `.env`
+for a `script-runner` run, exported in the shell for a run on the host, or
+`--llm-provider`/`--llm-model`); see [LLM_ORCHESTRATION.md](LLM_ORCHESTRATION.md).
 
 ## Overview
 
@@ -70,7 +71,7 @@ STEP 1: Getting input files
 ================================================================================
 STEP 2: Preparing ligands
 ================================================================================
-2025-10-31 15:40:25,124 - services.llm_orchestrator.orchestrator - INFO - Calling prepare_ligands on http://localhost:8002
+2026-10-29 07:04:52,124 - services.llm_orchestrator.orchestrator - INFO - Calling prepare_ligands on http://ligand-preparer:8002
 ...
 ```
 
@@ -92,10 +93,11 @@ python nlp_orchestrator.py --verbose mcp_demo "Download 6lu7 and ATP, prepare an
 ```
 📥 STEP 1: Getting input files...
 
-────────────────────────────────────────────────────────────────────────────────
-📡 MCP Client → Server: http://localhost:8001
-────────────────────────────────────────────────────────────────────────────────
-JSON-RPC Request:
+................................................................................
+📡 MCP Client → Server (http://rcsb-downloader:8001)
+................................................................................
+
+JSON-RPC:
 {
   "jsonrpc": "2.0",
   "id": "orchestrator_job_20261029_070450_7a1a17_3f9c2a1b",
@@ -113,8 +115,11 @@ JSON-RPC Request:
     }
   }
 }
-────────────────────────────────────────────────────────────────────────────────
-📡 MCP Server → Client Response:
+................................................................................
+📡 MCP Server (http://rcsb-downloader:8001) → Client
+................................................................................
+
+JSON-RPC:
 {
   "jsonrpc": "2.0",
   "id": "orchestrator_job_20261029_070450_7a1a17_3f9c2a1b",
@@ -220,9 +225,9 @@ entry points (`nlp_orchestrator.py`, `*/server.py`). This prevents service libra
 overriding the logging configuration set by the caller.
 
 ### Environment Variables
-All verbosity levels respect standard Python logging environment variables:
-- `PYTHONUNBUFFERED=1` for real-time output
-- Standard logging configuration
+No variable sets the verbosity or the log level; use `--verbose` and
+`--debug`. `PYTHONUNBUFFERED=1` (set in every container) keeps the output
+unbuffered, so lines appear as they happen.
 
 ### Service Port Configuration
 Each MCP service reads its port from an environment variable defined in `common/config.py`

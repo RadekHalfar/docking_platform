@@ -185,8 +185,10 @@ All five images share one ~2 GB base layer, so together they take about
 
 ### Using Natural Language
 
-These need an LLM (see [Choose an LLM](#choose-an-llm-optional)); set it in `.env`
-or add `--llm-provider`/`--llm-model`.
+These need an LLM (see [Choose an LLM](#choose-an-llm-optional)): add
+`--llm-provider`/`--llm-model`, or export `LLM_PROVIDER`/`LLM_MODEL` in your
+shell. `.env` is read only by Docker Compose, so it covers the
+`script-runner` commands above, not a `python` run on the host.
 
 ```powershell
 # Simple command-line mode
@@ -202,6 +204,7 @@ python nlp_orchestrator.py --interactive
 #   history                        -> show revision history table
 #   change ligand to HEM           -> update parameters (LLM-extracted)
 #   set center to 10,20,30         -> update docking box center
+#   search adenosine               -> find RCSB ligand IDs by name, pick one (CLI only)
 #   rerun / dock                   -> re-execute invalidated steps only
 #   save results as <name>         -> save named result bundle (docking + visualization)
 #   save docking as <name>         -> save docking-only bundle
@@ -418,7 +421,7 @@ docker compose run --rm --no-deps ui python -m pytest -c ui_nice/pytest.ini test
 
 # A real dock with the real Moldina binary (no network or services needed)
 docker run --rm -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace \
-  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py
+  mcp-moldina-runner:latest python -m pytest tests/test_real_docking.py -p no:cacheprovider
 
 # The live-service tests (requires the stack running)
 docker compose up -d
@@ -482,6 +485,12 @@ python nlp_orchestrator.py cleanup-jobs --keep-last 20 --yes
 - **[docs/API.md](docs/API.md)** - Complete MCP tool specifications and JSON-RPC examples
 - **[docs/INSTALLATION.md](docs/INSTALLATION.md)** - Installation instructions (Docker and local)
 - **[docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md)** - Docker deployment guide
+- **[docs/MOLDINA_DOCKING.md](docs/MOLDINA_DOCKING.md)** - The docking engine: PSO vs. Vina mode, output files, stopping a run
+- **[docs/BATCH_DOCKING.md](docs/BATCH_DOCKING.md)** - Docking a folder of ligands, parallel docking and its benchmarks
+- **[docs/LIGAND_PREPARATION.md](docs/LIGAND_PREPARATION.md)** / **[docs/PROTEIN_PREPARATION.md](docs/PROTEIN_PREPARATION.md)** - The preparation pipelines
+- **[docs/SERVICE_SELECTION_AND_DEPENDENCIES.md](docs/SERVICE_SELECTION_AND_DEPENDENCIES.md)** - Workflow steps, their inputs/outputs and rerun rules
+- **[docs/STATE_PERSISTENCE_STRATEGY.md](docs/STATE_PERSISTENCE_STRATEGY.md)** - Checkpoints, history/undo and saved bundles
+- **[CHANGELOG.md](CHANGELOG.md)** - What changed, by phase
 
 ## License
 

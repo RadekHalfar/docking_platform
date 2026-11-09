@@ -376,6 +376,171 @@ class TestProteinPreparer:
             assert len(atom_type_part) > 0
 
 
+# The protein_with_ligand fixture's atoms as mmCIF rows:
+# (group, id, element, atom, residue, chain, seq, x, y, z)
+_LIGAND_COMPLEX_ATOMS = [
+    ("ATOM", 1, "N", "N", "ALA", "A", 1, 10.0, 20.0, 30.0),
+    ("ATOM", 2, "C", "CA", "ALA", "A", 1, 11.0, 20.0, 30.0),
+    ("ATOM", 3, "C", "C", "ALA", "A", 1, 11.5, 21.0, 30.0),
+    ("ATOM", 4, "O", "O", "ALA", "A", 1, 11.0, 22.0, 30.0),
+    ("HETATM", 5, "C", "C1", "LIG", "A", 301, 20.0, 25.0, 35.0),
+    ("HETATM", 6, "C", "C2", "LIG", "A", 301, 21.0, 25.0, 35.0),
+    ("HETATM", 7, "O", "O", "LIG", "A", 301, 21.5, 26.0, 35.0),
+    ("HETATM", 8, "O", "O", "HOH", "A", 401, 30.0, 30.0, 40.0),
+    ("HETATM", 9, "O", "O", "HOH", "A", 402, 31.0, 31.0, 41.0),
+]
+
+
+def _mmcif_text(atoms, models=(1,), chain=None):
+    """A minimal hand-written mmCIF (not produced by gemmi) for *atoms*,
+    repeated once per model number, the second model shifted by 5 Å."""
+    lines = [
+        "data_TEST",
+        "loop_",
+        "_atom_site.group_PDB",
+        "_atom_site.id",
+        "_atom_site.type_symbol",
+        "_atom_site.label_atom_id",
+        "_atom_site.label_alt_id",
+        "_atom_site.label_comp_id",
+        "_atom_site.label_asym_id",
+        "_atom_site.label_entity_id",
+        "_atom_site.label_seq_id",
+        "_atom_site.pdbx_PDB_ins_code",
+        "_atom_site.Cartn_x",
+        "_atom_site.Cartn_y",
+        "_atom_site.Cartn_z",
+        "_atom_site.occupancy",
+        "_atom_site.B_iso_or_equiv",
+        "_atom_site.auth_seq_id",
+        "_atom_site.auth_comp_id",
+        "_atom_site.auth_asym_id",
+        "_atom_site.auth_atom_id",
+        "_atom_site.pdbx_PDB_model_num",
+    ]
+    # The columns of a real RCSB file (gemmi needs the auth_* ones). One
+    # label_asym_id/entity per residue type, as RCSB assigns them.
+    entities = {"ALA": ("A", 1), "LIG": ("B", 2), "HOH": ("C", 3)}
+    serial = 0
+    for model in models:
+        shift = 5.0 * (model - 1)
+        for group, _id, element, name, resname, auth_chain, seq, x, y, z in atoms:
+            serial += 1
+            label_asym, entity = entities[resname]
+            label_seq = seq if group == "ATOM" else "."
+            lines.append(
+                f"{group} {serial} {element} {name} . {resname} {label_asym} {entity} {label_seq} ? "
+                f"{x + shift:.3f} {y:.3f} {z:.3f} 1.00 0.00 {seq} {resname} "
+                f"{chain or auth_chain} {name} {model}"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _write(temp_dir, name, text):
+    path = os.path.join(temp_dir, name)
+    with open(path, "w") as f:
+        f.write(text)
+    return path
+
+
+def _assert_first_model_only(path, temp_dir):
+    """*path* holds two models of the 9-atom complex, the second shifted by
+    5 Å: only the first may reach the molecule and the receptor PDBQT."""
+    preparer = ProteinPreparer()
+    mol = preparer.read_protein(path)
+    assert mol.GetNumConformers() == 1
+    assert mol.GetConformer().GetAtomPosition(0).x == pytest.approx(10.0)
+
+    result = preparer.prepare_proteins([path], os.path.join(temp_dir, "out"), add_hydrogens=False)
+    assert result["successful"] == 1, result["errors"]
+    with open(result["prepared_proteins"][0]["pdbqt_path"]) as f:
+        # 7 atoms (waters removed), not 14 stacked from both models.
+        assert sum(1 for line in f if line.startswith("ATOM")) == 7
+
+
+def test_multi_model_pdb_keeps_the_first_model(temp_dir):
+    """An NMR-style .pdb with two MODEL blocks: before the mmCIF change,
+    both models' atoms ended up in the receptor PDBQT."""
+    def model(number, shift):
+        return [f"MODEL     {number:4d}"] + [
+            f"{group:<6}{serial:5d} {name:<4} {resname} {chain}{seq:4d}    "
+            f"{x + shift:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2}"
+            for group, serial, element, name, resname, chain, seq, x, y, z in _LIGAND_COMPLEX_ATOMS
+        ] + ["ENDMDL"]
+
+    path = _write(temp_dir, "nmr.pdb", "\n".join(model(1, 0.0) + model(2, 5.0) + ["END"]) + "\n")
+    _assert_first_model_only(path, temp_dir)
+
+
+try:
+    import gemmi  # noqa: F401
+    GEMMI_AVAILABLE = True
+except ImportError:
+    GEMMI_AVAILABLE = False
+
+
+@pytest.mark.skipif(not GEMMI_AVAILABLE, reason="gemmi not installed")
+class TestMmcifInput:
+    """mmCIF proteins are read through gemmi into the same RDKit PDB path."""
+
+    def test_mmcif_reads_like_the_same_pdb(self, protein_with_ligand, temp_dir):
+        cif = _write(temp_dir, "protein_ligand.cif", _mmcif_text(_LIGAND_COMPLEX_ATOMS))
+        preparer = ProteinPreparer()
+
+        def residues(mol):
+            return [
+                (a.GetSymbol(), a.GetPDBResidueInfo().GetResidueName().strip(),
+                 a.GetPDBResidueInfo().GetIsHeteroAtom())
+                for a in mol.GetAtoms()
+            ]
+
+        from_cif = preparer.read_protein(cif)
+        from_pdb = preparer.read_protein(protein_with_ligand)
+        assert residues(from_cif) == residues(from_pdb)
+        # The cleaning step reads those residue names and HETATM flags.
+        assert preparer.clean_protein(from_cif, remove_heteroatoms=True).GetNumAtoms() == 4
+        assert preparer.clean_protein(
+            from_cif, remove_heteroatoms=True, keep_residues=["LIG"]
+        ).GetNumAtoms() == 7
+
+    @pytest.mark.parametrize("name", ["complex.mmcif", "COMPLEX.CIF"])
+    def test_mmcif_extensions_accepted(self, temp_dir, name):
+        path = _write(temp_dir, name, _mmcif_text(_LIGAND_COMPLEX_ATOMS))
+        assert ProteinPreparer().read_protein(path).GetNumAtoms() == 9
+
+    def test_prepare_proteins_from_mmcif(self, temp_dir):
+        cif = _write(temp_dir, "6ABC.cif", _mmcif_text(_LIGAND_COMPLEX_ATOMS))
+        output_dir = os.path.join(temp_dir, "prepared")
+
+        result = ProteinPreparer().prepare_proteins([cif], output_dir, add_hydrogens=False)
+
+        assert result["successful"] == 1, result["errors"]
+        prepared = result["prepared_proteins"][0]
+        assert prepared["id"] == "6ABC"
+        assert prepared["pdbqt_path"] == os.path.join(output_dir, "6ABC.pdbqt")
+        assert prepared["conversion_method"] == "manual_rigid"
+        assert prepared["final_atoms"] == 7  # waters removed by default
+        # The intermediate is a real PDB, which the GUI's viewer and box
+        # picker read.
+        with open(prepared["pdb_path"]) as f:
+            assert sum(1 for line in f if line.startswith(("ATOM", "HETATM"))) == 7
+
+    def test_multi_model_mmcif_keeps_the_first_model(self, temp_dir):
+        path = _write(temp_dir, "nmr.cif", _mmcif_text(_LIGAND_COMPLEX_ATOMS, models=(1, 2)))
+        _assert_first_model_only(path, temp_dir)
+
+    def test_long_chain_names_are_shortened(self, temp_dir):
+        path = _write(temp_dir, "big.cif", _mmcif_text(_LIGAND_COMPLEX_ATOMS, chain="AAA"))
+        mol = ProteinPreparer().read_protein(path)
+        assert mol.GetNumAtoms() == 9
+        assert len(mol.GetAtomWithIdx(0).GetPDBResidueInfo().GetChainId().strip()) == 1
+
+    def test_unreadable_mmcif_raises_value_error(self, temp_dir):
+        path = _write(temp_dir, "broken.cif", "this is not mmCIF\n")
+        with pytest.raises(ValueError):
+            ProteinPreparer().read_protein(path)
+
+
 class TestProteinPreparerEdgeCases:
     """Test edge cases and error handling."""
     

@@ -161,7 +161,7 @@ Install only core dependencies without chemistry packages.
 cd docking_platform
 
 # 2. Install core dependencies
-pip install requests flask waitress python-dotenv pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
+pip install requests flask waitress pytest pytest-cov pytest-mock pydantic jsonschema pyyaml
 ```
 
 **Note:** Ligand Preparer service will not work without RDKit.
@@ -199,10 +199,16 @@ obabel --version
 
 ## Running Tests
 
-### All Tests
+### The Hermetic Suite (what CI runs)
 ```bash
-pytest tests/ -v
+pytest -m "not integration"
 ```
+
+Tests that need running services, the network or the Moldina binary carry
+the `integration` marker. A plain `pytest tests/` includes them, so without
+the stack running it waits 60 s for the services and then skips the live
+ones. The GUI tier, the real-docking test and the live-service tests run in
+Docker; see the README's "Running Tests".
 
 ### Specific Test Files
 ```bash
@@ -224,10 +230,7 @@ pytest tests/ --cov=. --cov-report=html
 
 ### Tests Requiring Optional Dependencies
 Tests that need RDKit (or Meeko) skip themselves when it isn't installed, so
-no marker is needed. To skip the tests that need running services:
-```bash
-pytest tests/ -v -m "not integration"
-```
+no marker is needed.
 
 ## Starting Services
 
@@ -320,7 +323,7 @@ conda install -c conda-forge meeko
 ```bash
 cd docking_platform
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"  # Linux/Mac
-set PYTHONPATH=%PYTHONPATH%;%CD%  # Windows
+$env:PYTHONPATH = "$env:PYTHONPATH;$PWD"  # Windows PowerShell
 ```
 
 ### Issue: "Address already in use"
@@ -356,19 +359,25 @@ cp .env.example .env
 nano .env  # or your preferred editor
 ```
 
-Key settings:
+Docker Compose reads `.env` and passes on only two kinds of setting: the
+host-side service ports and the `LLM_*` variables (to the `ui` and
+`script-runner` containers):
 ```bash
-# Service ports
+# Host-side service ports
 RCSB_DOWNLOADER_PORT=8001
 LIGAND_PREPARER_PORT=8002
+PROTEIN_PREPARER_PORT=8003
+MOLDINA_RUNNER_PORT=8004
 
-# Data directories
-DATA_DIR=./data
-CACHE_DIR=./cache
-
-# Logging
-LOG_LEVEL=INFO
+# LLM for the GUI chat and the CLI (default: none)
+LLM_PROVIDER=ollama
+LLM_MODEL=gemma3:4b
 ```
+
+No Python code loads `.env`. For a local (non-Docker) run, export the
+variables in your shell instead, e.g. `export LLM_PROVIDER=ollama`.
+`CACHE_DIR`, `RCSB_SEARCH_URL` and `MAX_JOB_RUNTIME_SECONDS` are read only
+this way; `.env.example` describes each one.
 
 ## Development Setup
 
@@ -399,7 +408,7 @@ After installation:
 1. **Read the documentation**: [../QUICK_START.md](../QUICK_START.md) for the
    fastest path to a working workflow, then `docs/API.md` for the wire-level
    reference and `docs/LLM_ORCHESTRATION.md` for the natural-language CLI
-2. **Run the tests**: `pytest tests/ -v`
+2. **Run the tests**: `pytest -m "not integration"`
 3. **Start services**: Try the RCSB Downloader first
 4. **Explore examples**: Check `example_complete_workflow.py` and the test
    files for direct-API usage examples

@@ -398,3 +398,64 @@ def test_search_ligands_tool_answers_an_empty_candidate_list(tmp_path):
         result = server.tools["search_ligands"].handler(name="aspirin")
 
     assert result == {"query": "aspirin", "candidates": []}
+
+
+def _http_error_response(status):
+    response = requests.Response()
+    response.status_code = status
+    response._content = b"Not Found"
+    response.url = "https://files.rcsb.org/ligands/download/ATP_ideal.sdf"
+    return response
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        pytest.param({"return_value": _http_error_response(404)}, id="404"),
+        pytest.param({"return_value": _http_error_response(503)}, id="503"),
+        pytest.param({"side_effect": requests.ConnectionError("no route")}, id="connection"),
+        pytest.param({"side_effect": requests.Timeout("read timed out")}, id="timeout"),
+    ],
+)
+def test_download_ligand_failure_raises_and_writes_nothing(downloader, tmp_path, outcome):
+    save_dir = tmp_path / "ligands"
+    with patch("services.rcsb_downloader.requests.get", **outcome) as mock_get:
+        with pytest.raises(RuntimeError, match="Failed to download ligand ATP"):
+            downloader.download_ligand("ATP", str(save_dir), "sdf")
+
+    assert mock_get.call_args.args[0].endswith("/ATP_ideal.sdf")
+    assert mock_get.call_args.kwargs["timeout"] == 30
+    assert list(save_dir.iterdir()) == []
+    cache = tmp_path / "cache"
+    assert not cache.exists() or not any(p.name.startswith("ATP") for p in cache.rglob("*"))
+
+
+def test_a_failed_ligand_download_is_retried_not_served_from_cache(downloader, tmp_path, sample_sdf_content):
+    save_dir = str(tmp_path / "ligands")
+    ok = Mock(content=sample_sdf_content, raise_for_status=Mock())
+    with patch(
+        "services.rcsb_downloader.requests.get",
+        side_effect=[requests.ConnectionError("flaky"), ok],
+    ) as mock_get:
+        with pytest.raises(RuntimeError):
+            downloader.download_ligand("ATP", save_dir, "sdf")
+        result = downloader.download_ligand("ATP", save_dir, "sdf")
+
+    assert mock_get.call_count == 2
+    assert result["cached"] is False
+    assert open(result["file_path"], "rb").read() == sample_sdf_content
+
+
+def test_download_structures_with_every_ligand_failing_returns_no_ligands(downloader, tmp_path):
+    save_dir = tmp_path / "all_fail"
+    with patch(
+        "services.rcsb_downloader.requests.get", return_value=_http_error_response(404)
+    ):
+        result = downloader.download_structures(
+            protein_id=None, ligand_ids=["ATP", "HEM"], save_dir=str(save_dir)
+        )
+
+    assert result["status"] == "ok"
+    assert result["ligand_paths"] == []
+    assert result["protein_path"] is None
+    assert sorted(p.name for p in save_dir.iterdir()) == ["ligands_download_meta.json"]

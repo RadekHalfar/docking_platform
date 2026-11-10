@@ -236,7 +236,7 @@ Then type commands interactively:
 2. After completion the CLI blocks and waits for a follow-up command.
 3. Use `state` to inspect the active job (disk-backed parameters).
 4. Use `new <request>` to explicitly start a fresh workflow in the same session.
-5. Use `end`/`quit`/`exit` or "end session" to stop.
+5. Use `end`/`quit`/`exit` or "end session" to stop. Ctrl+C, Ctrl+D, or the end of piped input (`printf '<request>\n' | python nlp_orchestrator.py -i`) also ends the session, with exit code 0.
 
 #### Multi-intent command sequencing
 

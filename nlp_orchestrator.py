@@ -1018,7 +1018,9 @@ def _run_interactive_loop(
             if not session.session_active:
                 break
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl+C, Ctrl+D, or the end of piped input: every later
+            # input() would fail the same way, so leave instead of re-prompting.
             print("\nGoodbye!")
             break
         except Exception as e:

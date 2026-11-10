@@ -1678,3 +1678,479 @@ def test_list_models_needs_no_model(monkeypatch, tmp_path, capsys):
 @pytest.mark.parametrize("provider, configured", [("none", False), ("", False), (None, False), (" None ", False), ("openai", True)])
 def test_is_llm_configured(provider, configured):
     assert cli.is_llm_configured(provider) is configured
+
+
+# ---------------------------------------------------------------------------
+# Scripted input: an exhausted script fails the test instead of hanging it.
+# (StopIteration is an Exception, which the interactive loop catches and
+# re-prompts on; a BaseException it doesn't catch.)
+# ---------------------------------------------------------------------------
+
+class _OutOfAnswers(BaseException):
+    pass
+
+
+def _script(monkeypatch, *answers):
+    """Feed *answers* to input(); exceptions in the list are raised. Returns the prompts seen."""
+    pending = list(answers)
+    prompts = []
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        if not pending:
+            raise _OutOfAnswers(f"input() called again after {len(prompts) - 1} answers: {prompt!r}")
+        answer = pending.pop(0)
+        if isinstance(answer, BaseException) or (isinstance(answer, type) and issubclass(answer, BaseException)):
+            raise answer
+        return answer
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    return prompts
+
+
+# ---------------------------------------------------------------------------
+# undo
+# ---------------------------------------------------------------------------
+
+def test_undo_without_a_job_is_refused(capsys):
+    assert cli._handle_undo_revision("1", InteractiveSession()) is False
+    assert "No active job — cannot undo." in capsys.readouterr().out
+
+
+def test_undo_as_a_command_without_a_job_asks_for_a_workflow_first(capsys):
+    assert _dispatch({"intent": "undo_revision", "name": "1"}, InteractiveSession()) is False
+    assert "No active job yet. Start a workflow first." in capsys.readouterr().out
+
+
+def test_undo_restores_the_parameters_of_an_earlier_revision(tmp_path, capsys):
+    session, sm = _algo_session(tmp_path, "job_undo")
+    sm.save_parameters_checkpoint(
+        {"protein_id": "1abc", "ligand_ids": ["HEM"], "center": [1, 2, 3], "box_size": [20, 20, 20]},
+        source="update",
+    )
+    session.pending_changed_params = set()
+
+    assert _dispatch({"intent": "undo_revision", "name": "1"}, session) is True
+
+    out = capsys.readouterr().out
+    assert "✅ Revision 1 restored." in out
+    assert "protein_id: 6lu7" in out
+    assert "ligand_ids: ['ATP']" in out
+    assert "No state checkpoint at that revision — runtime state unchanged." in out
+    assert "Type 'rerun' to re-execute affected steps." in out
+    assert session.pending_changed_params == set(cli.CORE_PARAMS)
+    restored = sm.load_latest_parameters()
+    assert (restored["protein_id"], restored["ligand_ids"]) == ("6lu7", ["ATP"])
+
+
+def test_undo_of_a_state_only_revision_leaves_the_parameters_alone(tmp_path, capsys):
+    session, sm = _algo_session(tmp_path, "job_undo_state")
+    revision = sm.save_execution_state_checkpoint(
+        {"prepared_protein": "/app/6lu7.pdbqt", "ligand_files": ["/app/ATP.sdf"]}, step="prepare_protein"
+    )
+    session.pending_changed_params = set()
+
+    assert cli._handle_undo_revision(str(revision), session) is True
+
+    out = capsys.readouterr().out
+    assert "No parameter checkpoint at that revision — parameters unchanged." in out
+    assert "Runtime state restored (ligand_files, prepared_protein)." in out
+    assert "rerun" not in out
+    assert session.pending_changed_params == set()
+
+
+def test_undo_without_a_number_asks_for_one(monkeypatch, tmp_path, capsys):
+    session, sm = _algo_session(tmp_path, "job_undo_ask")
+    prompts = _script(monkeypatch, "1")
+
+    assert cli._handle_undo_revision(None, session) is True
+
+    assert prompts == ["Revision number to restore: "]
+    assert "✅ Revision 1 restored." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("answer", ["two", "", EOFError, KeyboardInterrupt])
+def test_undo_with_no_usable_number_is_cancelled(monkeypatch, tmp_path, capsys, answer):
+    session, sm = _algo_session(tmp_path, "job_undo_bad")
+    revision = sm.get_current_revision()
+    _script(monkeypatch, answer)
+
+    assert cli._handle_undo_revision("abc", session) is False
+
+    assert "Invalid or no revision number provided. Undo cancelled." in capsys.readouterr().out
+    assert sm.get_current_revision() == revision
+
+
+def test_undo_of_an_unknown_revision_names_the_available_ones(tmp_path, capsys):
+    session, sm = _algo_session(tmp_path, "job_undo_unknown")
+    revision = sm.get_current_revision()
+
+    assert cli._handle_undo_revision("99", session) is False
+
+    out = capsys.readouterr().out
+    assert "❌ No checkpoint files found for revision 99. Available revisions: [1]" in out
+    assert sm.get_current_revision() == revision
+
+
+# ---------------------------------------------------------------------------
+# Legacy (deterministic) clarification prompts
+# ---------------------------------------------------------------------------
+
+def _parser_for(services, **params):
+    parser = WorkflowParser()
+    parser.validate_workflow({"services": services, "parameters": params})
+    return parser
+
+
+def test_legacy_prompt_for_an_invalid_protein_id_repeats_until_valid(monkeypatch, capsys):
+    parser = _parser_for(["get_input_files"], protein_id="toolong", ligand_ids=["ATP"])
+    prompts = _script(monkeypatch, "abcde", "6lu7")
+
+    cli._collect_missing_parameters(parser)
+
+    assert prompts[0].startswith("The protein PDB ID looks invalid.")
+    assert len(prompts) == 2
+    assert "That protein ID looks invalid." in capsys.readouterr().out
+    assert parser.parsed_workflow["parameters"]["protein_id"] == "6lu7"
+    assert not parser.has_missing_parameters()
+
+
+def test_legacy_prompt_for_a_missing_protein_id(monkeypatch):
+    parser = _parser_for(["get_input_files"], ligand_ids=["ATP"])
+    prompts = _script(monkeypatch, "6lu7")
+
+    cli._collect_missing_parameters(parser)
+
+    assert prompts == ["I am missing the protein PDB ID. Please enter it (e.g., 6lu7): "]
+    assert parser.parsed_workflow["parameters"]["protein_id"] == "6lu7"
+
+
+def test_legacy_prompt_for_ligands_rejects_an_empty_answer(monkeypatch, capsys):
+    parser = _parser_for(["dock"], protein_id="6lu7", center=[1, 2, 3], box_size=[20, 20, 20])
+    prompts = _script(monkeypatch, "", " , ", "ATP, HEM")
+
+    cli._collect_missing_parameters(parser)
+
+    assert len(prompts) == 3
+    assert capsys.readouterr().out.count("I need at least one ligand ID.") == 2
+    assert parser.parsed_workflow["parameters"]["ligand_ids"] == ["ATP", "HEM"]
+
+
+def test_legacy_box_prompts_take_typed_coordinates(monkeypatch, capsys):
+    parser = _parser_for(["dock"], protein_id="6lu7", ligand_ids=["ATP"])
+    _script(
+        monkeypatch,
+        "maybe", "n",                    # center: re-asked, then declines the default
+        "1,2", "a,b,c", "[1, 2, 3]",     # two bad triplets, then a good one
+        "no",                            # box size: declines the default
+        "(30, 30, 30)",
+    )
+
+    cli._collect_missing_parameters(parser)
+
+    out = capsys.readouterr().out
+    assert "Please answer with 'y' or 'n'." in out
+    assert out.count("Center format is invalid.") == 2
+    params = parser.parsed_workflow["parameters"]
+    assert params["center"] == [1.0, 2.0, 3.0]
+    assert params["box_size"] == [30.0, 30.0, 30.0]
+    assert not parser.has_missing_parameters()
+
+
+def test_legacy_box_size_prompt_rejects_a_bad_triplet(monkeypatch, capsys):
+    parser = _parser_for(["dock"], protein_id="6lu7", ligand_ids=["ATP"], center=[1, 2, 3])
+    _script(monkeypatch, "n", "25,25", "25,25,25")
+
+    cli._collect_missing_parameters(parser)
+
+    assert capsys.readouterr().out.count("Box size format is invalid.") == 1
+    assert parser.parsed_workflow["parameters"]["box_size"] == [25.0, 25.0, 25.0]
+
+
+def test_legacy_prompt_for_an_unknown_docking_algorithm(monkeypatch, capsys):
+    parser = _parser_for(
+        ["dock"], protein_id="6lu7", ligand_ids=["ATP"], center=[1, 2, 3], box_size=[20, 20, 20],
+        docking_algorithm="gnina",
+    )
+    prompts = _script(monkeypatch, "gnina", "AutoDock Vina")
+
+    cli._collect_missing_parameters(parser)
+
+    assert len(prompts) == 2 and "'moldina' (PSO) or 'vina'" in prompts[0]
+    assert "Please answer 'moldina' or 'vina'." in capsys.readouterr().out
+    assert parser.parsed_workflow["parameters"]["docking_algorithm"] == "vina"
+
+
+def test_hybrid_prompt_says_so_when_nothing_could_be_extracted(monkeypatch, capsys, llm_client):
+    parser = _parser_for(["get_input_files"], ligand_ids=["ATP"])
+    llm_client.generate.side_effect = [
+        "Which protein should I use?",
+        '{"parameter_updates": {}}',
+        "Which protein should I use?",
+        '{"parameter_updates": {"protein_id": "6lu7"}}',
+    ]
+    _script(monkeypatch, "not sure", "6lu7")
+
+    cli._collect_missing_parameters_hybrid(parser, llm_client=llm_client)
+
+    assert capsys.readouterr().out.count("I could not extract a valid value from that answer.") == 1
+    assert parser.parsed_workflow["parameters"]["protein_id"] == "6lu7"
+
+
+# ---------------------------------------------------------------------------
+# process_workflow: local files and failure exits
+# ---------------------------------------------------------------------------
+
+_BOX = {"center": [10.0, 20.0, 30.0], "box_size": [25.0, 25.0, 25.0]}
+
+
+def _orchestrator(tmp_path, **result):
+    orchestrator = Mock()
+    orchestrator.output_base = Path(tmp_path)
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_1", "status": "completed", "services_executed": ["dock"], "errors": [], **result,
+    }
+    return orchestrator
+
+
+def _local_inputs(tmp_path):
+    protein = tmp_path / "receptor.pdb"
+    protein.write_text("ATOM\n")
+    ligands = [tmp_path / "a.sdf", tmp_path / "b.sdf"]
+    for lig in ligands:
+        lig.write_text("x\n$$$$\n")
+    folder = tmp_path / "ligand_dir"
+    folder.mkdir()
+    (folder / "c.sdf").write_text("x\n$$$$\n")
+    return str(protein), [str(l) for l in ligands], str(folder)
+
+
+def test_process_workflow_with_local_files_adds_the_input_step(monkeypatch, tmp_path, capsys, llm_client):
+    protein, ligands, _ = _local_inputs(tmp_path)
+    parsed = {"services": ["prepare_ligands", "prepare_protein", "dock"], "parameters": dict(_BOX)}
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *a, **k: parsed)
+    _script(monkeypatch, "")  # Execute this workflow? [Y/n]
+    orchestrator = _orchestrator(tmp_path)
+
+    assert cli.process_workflow(
+        "dock these", llm_client, orchestrator, WorkflowParser(), protein_file=protein, ligand_files=ligands
+    ) == 0
+
+    out = capsys.readouterr().out
+    assert f"📁 Using local protein file: {protein}" in out
+    assert f"📁 Using local ligand file(s): {', '.join(ligands)}" in out
+    workflow = orchestrator.execute_workflow.call_args.args[0]
+    assert "get_input_files" in workflow["services"]
+    assert workflow["parameters"]["protein_file"] == protein
+    assert workflow["parameters"]["ligand_files"] == ligands
+
+
+def test_process_workflow_ligand_folder_supersedes_ligand_files(monkeypatch, tmp_path, capsys, llm_client):
+    protein, ligands, folder = _local_inputs(tmp_path)
+    parsed = {"services": ["get_input_files", "dock"], "parameters": dict(_BOX)}
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *a, **k: parsed)
+    _script(monkeypatch, "y")
+    orchestrator = _orchestrator(tmp_path)
+
+    assert cli.process_workflow(
+        "dock these", llm_client, orchestrator, WorkflowParser(),
+        protein_file=protein, ligand_files=ligands, ligand_folder=folder,
+    ) == 0
+
+    out = capsys.readouterr().out
+    assert f"📁 Using local ligand folder: {folder}" in out
+    assert "Using local ligand file(s)" not in out
+    workflow = orchestrator.execute_workflow.call_args.args[0]
+    assert workflow["services"].count("get_input_files") == 1
+    assert workflow["parameters"]["ligand_folder"] == folder
+    assert workflow["parameters"]["ligand_files"] is None  # the default; the CLI files were not added
+
+
+def test_process_workflow_with_a_missing_local_file_exits_1(monkeypatch, tmp_path, capsys, llm_client):
+    missing = str(tmp_path / "nope.pdb")
+    parsed = {"services": ["get_input_files", "dock"], "parameters": {"ligand_ids": ["ATP"], **_BOX}}
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *a, **k: parsed)
+    monkeypatch.setattr(cli, "_collect_missing_parameters_hybrid", lambda *a, **k: None)
+    orchestrator = _orchestrator(tmp_path)
+
+    assert cli.process_workflow(
+        "dock ATP", llm_client, orchestrator, WorkflowParser(), protein_file=missing
+    ) == 1
+
+    out = capsys.readouterr().out
+    assert "❌ Could not resolve all required parameters." in out
+    assert f"The local protein file '{missing}' is invalid or not found" in out
+    orchestrator.execute_workflow.assert_not_called()
+
+
+def test_process_workflow_exits_1_when_the_job_reports_errors(monkeypatch, tmp_path, capsys, llm_client):
+    parsed = {"services": ["dock"], "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP"], **_BOX}}
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *a, **k: parsed)
+    _script(monkeypatch, "")
+    orchestrator = _orchestrator(tmp_path, status="failed", errors=["No prepared protein available for docking"])
+    session = InteractiveSession()
+
+    assert cli.process_workflow("dock", llm_client, orchestrator, WorkflowParser(), session=session) == 1
+
+    out = capsys.readouterr().out
+    assert "Status: failed" in out
+    assert "❌ No prepared protein available for docking" in out
+    assert "Workflow completed successfully" not in out
+    assert not session.has_active_job()
+
+
+def test_process_workflow_exits_1_on_an_unexpected_error(monkeypatch, tmp_path, capsys, llm_client):
+    parser_obj = WorkflowParser()
+    monkeypatch.setattr(
+        cli, "parse_workflow_with_llm", Mock(side_effect=RuntimeError("Failed to generate response: 503"))
+    )
+
+    assert cli.process_workflow("dock", llm_client, _orchestrator(tmp_path), parser_obj) == 1
+
+    assert "❌ Failed to process workflow: Failed to generate response: 503" in capsys.readouterr().out
+    assert parser_obj.state_manager is None  # released in the finally
+
+
+# ---------------------------------------------------------------------------
+# main(): sub-commands, modes and flags
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def an_llm(monkeypatch):
+    client = Mock(list_models=Mock(return_value=["m-1"]))
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setattr(cli, "create_llm_client", Mock(return_value=client))
+    return client
+
+
+@pytest.mark.parametrize("sub, handler", [("compare", "_run_compare_command"), ("cleanup-jobs", "_run_cleanup_jobs_command")])
+def test_main_dispatches_the_sub_commands(monkeypatch, sub, handler):
+    seen = []
+    monkeypatch.setattr(cli, handler, lambda argv: seen.append(argv) or 7)
+    monkeypatch.setattr("sys.argv", ["nlp_orchestrator.py", sub, "job_a", "--flag"])
+
+    assert cli.main() == 7
+    assert seen == [["job_a", "--flag"]]
+
+
+def test_main_interactive_forwards_the_local_files(monkeypatch, tmp_path, an_llm):
+    seen = {}
+    monkeypatch.setattr(cli, "_run_interactive_loop", lambda **kw: seen.update(kw) or 0)
+
+    assert _main(
+        monkeypatch, tmp_path, "--interactive", "--protein-file", "r.pdb",
+        "--ligand-files", "a.sdf", "--ligand-files", "b.sdf", "--ligand-folder", "ligs",
+        "--clarification-mode", "legacy",
+    ) == 0
+
+    assert seen["llm_client"] is an_llm
+    assert (seen["protein_file"], seen["ligand_files"], seen["ligand_folder"]) == ("r.pdb", ["a.sdf", "b.sdf"], "ligs")
+    assert seen["clarification_mode"] == "legacy"
+
+
+def test_main_runs_a_single_command_and_returns_its_code(monkeypatch, tmp_path, an_llm):
+    seen = {}
+
+    def fake_process(command, llm_client, orchestrator, parser_obj, **kwargs):
+        seen.update(command=command, llm_client=llm_client, output_base=orchestrator.output_base, **kwargs)
+        return 3
+
+    monkeypatch.setattr(cli, "process_workflow", fake_process)
+
+    assert _main(monkeypatch, tmp_path, "dock ATP into 6lu7", "--protein-file", "r.pdb") == 3
+    assert seen["command"] == "dock ATP into 6lu7"
+    assert seen["llm_client"] is an_llm
+    assert Path(seen["output_base"]) == tmp_path
+    assert seen["protein_file"] == "r.pdb"
+    assert seen["clarification_mode"] == "hybrid"
+
+
+def test_main_without_a_command_prints_the_help_and_exits_1(monkeypatch, tmp_path, capsys, no_llm):
+    assert _main(monkeypatch, tmp_path) == 1
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_main_list_models_with_none_found(monkeypatch, tmp_path, capsys, an_llm):
+    an_llm.list_models.return_value = []
+
+    assert _main(monkeypatch, tmp_path, "--list-models") == 0
+
+    out = capsys.readouterr().out
+    assert "Available models for provider 'openai':" in out
+    assert "No models found or provider endpoint not accessible" in out
+
+
+@pytest.mark.parametrize(
+    "flag, verbosity",
+    [("normal", cli.VERBOSITY_NORMAL), ("mcp_demo", cli.VERBOSITY_MCP_DEMO), ("low", cli.VERBOSITY_LOW)],
+)
+def test_main_verbose_sets_the_verbosity_the_orchestrator_gets(monkeypatch, tmp_path, an_llm, flag, verbosity):
+    monkeypatch.setattr(cli, "current_verbosity", cli.current_verbosity)  # restored after the test
+    seen = {}
+    monkeypatch.setattr(
+        cli, "process_workflow",
+        lambda _c, _l, orchestrator, *_a, **_k: seen.update(v=orchestrator.verbosity) or 0,
+    )
+
+    assert _main(monkeypatch, tmp_path, "dock", "--verbose", flag) == 0
+    assert cli.current_verbosity == verbosity
+    assert seen["v"] == verbosity
+
+
+def test_main_debug_turns_on_debug_logging(monkeypatch, tmp_path, an_llm):
+    import logging
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", root.level)  # restored after the test
+    monkeypatch.setattr(cli, "process_workflow", lambda *a, **k: 0)
+
+    assert _main(monkeypatch, tmp_path, "dock", "--debug") == 0
+    assert root.level == logging.DEBUG
+
+
+# ---------------------------------------------------------------------------
+# The interactive loop: leaving it, and surviving a failing command
+# ---------------------------------------------------------------------------
+
+def _loop(llm_client):
+    return cli._run_interactive_loop(llm_client, Mock(), WorkflowParser(), cli.CLARIFICATION_MODE_HYBRID)
+
+
+@pytest.mark.parametrize("ending", [KeyboardInterrupt, EOFError])
+def test_ctrl_c_or_end_of_input_leaves_the_loop(monkeypatch, capsys, llm_client, ending):
+    process = Mock(return_value=0)
+    monkeypatch.setattr(cli, "process_workflow", process)
+    prompts = _script(monkeypatch, ending)
+
+    assert _loop(llm_client) == 0
+
+    assert len(prompts) == 1  # not asked again
+    assert "Goodbye!" in capsys.readouterr().out
+    process.assert_not_called()
+
+
+def test_piped_input_that_ends_without_end_exits(monkeypatch, capsys, llm_client):
+    """`printf '<request>\\n' | nlp_orchestrator.py -i`: the loop runs
+    the command, then stops at end of input instead of re-prompting forever."""
+    process = Mock(return_value=0)
+    monkeypatch.setattr(cli, "process_workflow", process)
+    prompts = _script(monkeypatch, "Download 6lu7 and ATP, prepare and dock", EOFError)
+
+    assert _loop(llm_client) == 0
+
+    assert len(prompts) == 2
+    process.assert_called_once()
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_a_failing_command_is_reported_and_the_loop_goes_on(monkeypatch, capsys, llm_client):
+    process = Mock(side_effect=[RuntimeError("orchestrator exploded"), 0])
+    monkeypatch.setattr(cli, "process_workflow", process)
+    _script(monkeypatch, "", "   ", "Download 6lu7 and ATP, prepare and dock", "Download 6lu7 and HEM, prepare and dock", "end")
+
+    assert _loop(llm_client) == 0
+
+    assert "❌ Error: orchestrator exploded" in capsys.readouterr().out
+    assert [c.args[0] for c in process.call_args_list] == [
+        "Download 6lu7 and ATP, prepare and dock", "Download 6lu7 and HEM, prepare and dock",
+    ]

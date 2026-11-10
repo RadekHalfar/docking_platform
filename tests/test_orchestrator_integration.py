@@ -206,3 +206,127 @@ def test_execute_workflow_records_error_without_crashing(tmp_path):
     results_file = tmp_path / "error_test" / "workflow_results.json"
     saved = json.loads(results_file.read_text())
     assert saved["job_name"] == "Bad run"
+
+
+# ---------------------------------------------------------------------------
+# Step preconditions: a step whose input is missing fails the job with a
+# message naming what is missing, and no later service is called.
+# ---------------------------------------------------------------------------
+
+def _chain_with(overrides):
+    """A full-chain fake whose per-tool results can be replaced."""
+    tools = {**_TOOL_RESULTS, **overrides}
+
+    def fake(service_url, tool_name, arguments, **kwargs):
+        return tools[tool_name]()
+
+    return fake
+
+
+def _run(tmp_path, services, parameters=None, overrides=None, job_id="pre"):
+    orchestrator = WorkflowOrchestrator(output_base=str(tmp_path))
+    orchestrator.call_mcp_tool = Mock(side_effect=_chain_with(overrides or {}))
+    params = dict(_FULL_CHAIN_WORKFLOW["parameters"])
+    if parameters is not None:
+        params = parameters
+    results = orchestrator.execute_workflow(
+        {"services": services, "parameters": params}, job_id=job_id
+    )
+    called = [c.args[1] for c in orchestrator.call_mcp_tool.call_args_list]
+    return results, called
+
+
+@pytest.mark.parametrize(
+    "services, message",
+    [
+        (["prepare_ligands"], "No ligand files available for preparation"),
+        (["prepare_protein"], "No protein file available for preparation"),
+        (["dock"], "No prepared protein available for docking"),
+        (["visualize"], "No prepared protein available for visualization"),
+    ],
+)
+def test_a_step_without_its_input_fails_the_job_with_a_clear_message(
+    tmp_path, services, message
+):
+    results, called = _run(tmp_path, services)
+
+    assert results["status"] == "failed"
+    assert results["errors"] == [message]
+    assert called == []
+    log = (tmp_path / "pre" / "job.log").read_text(encoding="utf-8")
+    assert message in log
+
+
+def test_docking_without_prepared_ligands_fails_before_the_runner_is_called(tmp_path):
+    results, called = _run(
+        tmp_path,
+        ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+        overrides={"prepare_ligands": lambda: {"prepared_ligands": [{"pdbqt_path": None}]}},
+    )
+
+    assert results["status"] == "failed"
+    assert results["errors"] == ["No prepared ligands available for docking"]
+    assert "run_docking" not in called
+
+
+@pytest.mark.parametrize("missing", ["center", "box_size"])
+def test_docking_without_a_box_names_the_box_not_a_key(tmp_path, missing):
+    params = {k: v for k, v in _FULL_CHAIN_WORKFLOW["parameters"].items() if k != missing}
+
+    results, called = _run(
+        tmp_path,
+        ["get_input_files", "prepare_ligands", "prepare_protein", "dock"],
+        parameters=params,
+    )
+
+    assert results["status"] == "failed"
+    assert results["errors"] == ["No docking box (center and box_size) set for docking"]
+    assert "run_docking" not in called
+
+
+@pytest.mark.parametrize(
+    "prepared, message",
+    [
+        (
+            {"prepared_proteins": [], "status": "failed",
+             "errors": [{"protein": "/app/6lu7.pdb", "error": "No atoms read from 6lu7.pdb"}]},
+            "Protein preparation returned no prepared receptor: No atoms read from 6lu7.pdb",
+        ),
+        (
+            {"prepared_proteins": [{"pdbqt_path": None, "pdb_path": None}], "status": "ok"},
+            "Protein preparation returned no prepared receptor",
+        ),
+    ],
+)
+def test_protein_preparation_with_no_receptor_fails_at_that_step(tmp_path, prepared, message):
+    results, called = _run(
+        tmp_path,
+        ["get_input_files", "prepare_ligands", "prepare_protein", "dock", "visualize"],
+        overrides={"prepare_proteins": lambda: prepared},
+    )
+
+    assert results["status"] == "failed"
+    assert results["errors"] == [message]
+    assert "prepare_protein" not in results["services_executed"]
+    assert "run_docking" not in called
+
+
+def test_visualize_with_no_docked_poses_is_skipped_and_the_job_completes(tmp_path):
+    no_poses = lambda: {
+        "results": [{"ligand_id": "ATP", "output_path": None, "error": "docking failed"}],
+        "successful": 0,
+    }
+
+    results, called = _run(
+        tmp_path, _FULL_CHAIN_WORKFLOW["services"], overrides={"run_docking": no_poses}
+    )
+
+    assert results["status"] == "completed"
+    assert "convert_docked_poses" not in called
+    viz = results["results"]["visualize"]
+    assert viz["status"] == "skipped"
+    assert viz["converted"] == []
+    assert viz["receptor_pdb"] == "/app/prepared/6lu7_prepared.pdb"
+    assert "visualize" in results["services_executed"]
+    log = (tmp_path / "pre" / "job.log").read_text(encoding="utf-8")
+    assert "visualize completed" in log and "0 ligand(s)" in log

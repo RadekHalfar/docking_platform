@@ -506,3 +506,101 @@ class TestPullOllamaModel:
         mock_post.side_effect = requests.ConnectionError("refused")
         with pytest.raises(RuntimeError, match="refused"):
             pull_ollama_model("http://ollama:11434", "m")
+
+
+def _http_response(status: int, body: bytes) -> requests.Response:
+    """A real requests.Response, so raise_for_status() and json() behave as in production."""
+    response = requests.Response()
+    response.status_code = status
+    response._content = body
+    response.url = "https://example.invalid/models"
+    response.encoding = "utf-8"
+    return response
+
+
+# OpenAI, Anthropic and OpenAI-compatible servers share the model-listing contract: GET <models URL> with the
+# provider's auth headers and a 10s timeout; True/ids on success, False/[] otherwise.
+_HOSTED = [
+    pytest.param(
+        lambda: OpenAIAdapter(api_key="sk-test"),
+        "https://api.openai.com/v1/models",
+        {"Authorization": "Bearer sk-test"},
+        id="openai",
+    ),
+    pytest.param(
+        lambda: AnthropicAdapter(api_key="sk-ant-test"),
+        "https://api.anthropic.com/v1/models",
+        {"x-api-key": "sk-ant-test", "anthropic-version": "2023-06-01"},
+        id="anthropic",
+    ),
+    pytest.param(
+        lambda: OpenAICompatibleAdapter(base_url="http://llm.example:8000/v1/", model="m", api_key="k"),
+        "http://llm.example:8000/v1/models",
+        {"Authorization": "Bearer k"},
+        id="openai-compatible",
+    ),
+]
+
+
+@pytest.mark.parametrize("make, url, auth", _HOSTED)
+class TestHostedProviderModelListing:
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_health_is_true_on_200_and_sends_the_auth_headers(self, mock_get, make, url, auth):
+        mock_get.return_value = _http_response(200, b'{"data": []}')
+
+        assert make().check_health() is True
+
+        args, kwargs = mock_get.call_args
+        assert args[0] == url
+        assert kwargs["timeout"] == 10
+        assert auth.items() <= kwargs["headers"].items()
+
+    @pytest.mark.parametrize("status", [401, 403, 500])
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_health_is_false_on_an_error_status(self, mock_get, status, make, url, auth):
+        mock_get.return_value = _http_response(status, b'{"error": "nope"}')
+        assert make().check_health() is False
+
+    @pytest.mark.parametrize("error", [requests.ConnectionError, requests.Timeout])
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_health_is_false_when_unreachable(self, mock_get, error, make, url, auth):
+        mock_get.side_effect = error("down")
+        assert make().check_health() is False
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_list_models_returns_the_ids(self, mock_get, make, url, auth):
+        mock_get.return_value = _http_response(200, b'{"data": [{"id": "m-1"}, {"id": "m-2"}]}')
+
+        assert make().list_models() == ["m-1", "m-2"]
+
+        args, kwargs = mock_get.call_args
+        assert args[0] == url
+        assert kwargs["timeout"] == 10
+        assert auth.items() <= kwargs["headers"].items()
+
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_list_models_is_empty_on_an_auth_error(self, mock_get, make, url, auth):
+        mock_get.return_value = _http_response(401, b'{"error": "invalid api key"}')
+        assert make().list_models() == []
+
+    @pytest.mark.parametrize("error", [requests.ConnectionError, requests.Timeout])
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_list_models_is_empty_when_unreachable(self, mock_get, error, make, url, auth):
+        mock_get.side_effect = error("down")
+        assert make().list_models() == []
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b"<html>gateway error</html>",          # not JSON at all
+            b'["m-1", "m-2"]',                       # a list, not an object
+            b'{"data": [{"name": "m-1"}]}',          # entries without an id
+            b'{"data": "m-1"}',                      # data is not a list
+            b'{"data": null}',
+        ],
+    )
+    @patch("services.llm_orchestrator.llm_adapters.requests.Session.get")
+    def test_list_models_is_empty_on_an_unexpected_body(self, mock_get, body, make, url, auth):
+        mock_get.return_value = _http_response(200, body)
+        assert make().list_models() == []

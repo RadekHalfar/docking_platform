@@ -1,11 +1,13 @@
 """Tests for shared file and path utility helpers."""
 
+import os
 import platform
+import time
 from pathlib import Path
 
 import pytest
 
-from common.file_io import atomic_write_json, load_json_dict
+from common.file_io import FileLock, atomic_write_json, load_json_dict
 from common.path_utils import from_container_path, normalize_path_for_docker, to_container_path
 
 
@@ -131,3 +133,68 @@ def test_from_container_path_is_inverse_of_to_container_path(tmp_path):
 
     assert recovered == target_file
     assert recovered.read_text(encoding="utf-8") == "ATOM"
+
+
+# --- FileLock: a crashed holder's lock is broken once stale; a live one times out ---
+
+def _leftover_lock(path: Path, age_seconds: float) -> Path:
+    path.write_text("")
+    then = time.time() - age_seconds
+    os.utime(path, (then, then))
+    return path
+
+
+def test_a_stale_lock_left_by_a_crashed_holder_is_broken_and_acquired(tmp_path):
+    lock_path = _leftover_lock(tmp_path / "manifest.lock", age_seconds=120)
+    lock = FileLock(lock_path, timeout=0.5, stale_after=30)
+
+    started = time.monotonic()
+    lock.acquire()
+    try:
+        assert time.monotonic() - started < 0.5  # broken at once, not after the timeout
+        assert lock._fd is not None
+        assert time.time() - lock_path.stat().st_mtime < 30  # our own, freshly created file
+    finally:
+        lock.release()
+    assert not lock_path.exists()
+
+
+def test_a_live_lock_is_not_broken_and_the_wait_times_out(tmp_path):
+    lock_path = _leftover_lock(tmp_path / "manifest.lock", age_seconds=1)
+    lock = FileLock(lock_path, timeout=0.2, stale_after=30)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="Could not acquire lock .*manifest.lock within 0.2s"):
+        lock.acquire()
+
+    assert time.monotonic() - started >= 0.2
+    assert lock._fd is None
+    assert lock_path.exists()  # the live holder's lock is left alone
+
+
+def test_a_lock_released_between_the_failed_open_and_the_age_check_is_acquired(tmp_path, monkeypatch):
+    lock_path = _leftover_lock(tmp_path / "manifest.lock", age_seconds=1)
+    real_stat = Path.stat
+    calls = []
+
+    def stat_after_the_holder_released(self, *args, **kwargs):
+        if self == lock_path and not calls:
+            calls.append(self)
+            os.remove(self)  # the holder releases right after our open() failed
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_after_the_holder_released)
+
+    with FileLock(lock_path, timeout=1.0, stale_after=30) as lock:
+        assert lock._fd is not None
+        assert calls == [lock_path]
+    assert not lock_path.exists()
+
+
+def test_the_context_manager_creates_and_removes_the_lock(tmp_path):
+    lock_path = tmp_path / "manifest.lock"
+    with FileLock(lock_path):
+        assert lock_path.exists()
+        with pytest.raises(TimeoutError):
+            FileLock(lock_path, timeout=0.1).acquire()  # a second caller waits
+    assert not lock_path.exists()

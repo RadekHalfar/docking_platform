@@ -581,3 +581,26 @@ moved from Streamlit to NiceGUI.
     every model's atoms in the receptor. Only the first model is docked now.
   - **Removed:** `LOG_LEVEL` from `docker-compose.yml` and `python-dotenv`
     from `requirements.txt`; nothing read either.
+- **Stage 19.4 (2026-11-10): the remaining test gaps, and four fixes they
+  found.**
+  - **Fixed: the interactive CLI no longer spins at the end of input.**
+    Ctrl+D, or piped input that ends without `end`, re-prompted forever,
+    printing `❌ Error:` each time. It now says "Goodbye!" and exits 0, like
+    Ctrl+C.
+  - **Fixed: a missing docking box says so.** The job failed with just
+    `'center'`; it now fails with "No docking box (center and box_size) set
+    for docking", before the runner is called.
+  - **Fixed: protein preparation that returns no receptor fails at that
+    step**, with the service's reason ("Protein preparation returned no
+    prepared receptor: …"). Before, the step counted as done, and the job
+    failed one step later with "No prepared protein available for docking".
+  - **Fixed: listing OpenAI, Anthropic or OpenAI-compatible models** returns
+    no models, instead of raising, when the server answers with JSON of
+    another shape (a list, or entries without an `id`).
+  - **Newly tested:** the CLI's `undo`, its prompts for missing parameters,
+    its local-file arguments and exit codes; breaking a stale lock and the
+    lock timeout; the OpenBabel pose-conversion fallback with the real
+    `obabel`; a ligand docking past its timeout; every orchestrator step
+    precondition, and skipping pose conversion when nothing docked; RCSB
+    ligand download failures; the hosted LLM providers' health checks and
+    model listing.

@@ -213,7 +213,7 @@ python nlp_orchestrator.py --interactive
 #   save visualization as <name>   -> save visualization-only bundle
 #   undo <revision>                -> restore parameters/state to a prior revision
 #   new <request>                  -> start a fresh workflow in current session
-#   end / quit / exit              -> stop session
+#   end / quit / exit              -> stop session (so do Ctrl+C, Ctrl+D, end of piped input)
 #
 # Chained commands: join multiple follow-up commands with "and"/"then" to run
 # them in order after one confirmation, e.g.:

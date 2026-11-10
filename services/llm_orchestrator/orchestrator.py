@@ -522,17 +522,23 @@ class WorkflowOrchestrator:
                 )
                 
                 results["results"]["prepare_protein"] = prepare_protein_result
-                results["services_executed"].append("prepare_protein")
-                
-                # Store prepared protein path
+
                 protein_results = prepare_protein_result.get("prepared_proteins", [])
-                if protein_results and protein_results[0].get("pdbqt_path"):
-                    self.workflow_state["prepared_protein"] = protein_results[0].get("pdbqt_path")
-                    self.workflow_state["prepared_protein_pdb"] = protein_results[0].get("pdb_path")
-                    self._step_print("   \u2705 Protein prepared successfully")
-                    if self.verbosity == VERBOSITY_NORMAL:
-                        logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
-                    _log_step_done("prepare_protein", step_t0, f"{self.workflow_state['prepared_protein']}")
+                if not (protein_results and protein_results[0].get("pdbqt_path")):
+                    reasons = [
+                        e.get("error") for e in prepare_protein_result.get("errors", [])
+                        if isinstance(e, dict) and e.get("error")
+                    ]
+                    message = "Protein preparation returned no prepared receptor"
+                    raise RuntimeError(f"{message}: {'; '.join(reasons)}" if reasons else message)
+
+                results["services_executed"].append("prepare_protein")
+                self.workflow_state["prepared_protein"] = protein_results[0].get("pdbqt_path")
+                self.workflow_state["prepared_protein_pdb"] = protein_results[0].get("pdb_path")
+                self._step_print("   \u2705 Protein prepared successfully")
+                if self.verbosity == VERBOSITY_NORMAL:
+                    logger.info(f"\u2705 Prepared protein: {self.workflow_state['prepared_protein']}")
+                _log_step_done("prepare_protein", step_t0, f"{self.workflow_state['prepared_protein']}")
 
                 _save_step_checkpoint("prepare_protein")
             
@@ -560,7 +566,9 @@ class WorkflowOrchestrator:
                     raise RuntimeError("No prepared protein available for docking")
                 if not self.workflow_state.get("prepared_ligands"):
                     raise RuntimeError("No prepared ligands available for docking")
-                
+                if params.get("center") is None or params.get("box_size") is None:
+                    raise RuntimeError("No docking box (center and box_size) set for docking")
+
                 if self.verbosity != VERBOSITY_LOW:
                     logger.info(f"Docking parameters:")
                     logger.info(f"  Algorithm: {params.get('docking_algorithm', DEFAULT_DOCKING_ALGORITHM)}")

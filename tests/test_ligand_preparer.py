@@ -4,6 +4,7 @@ Unit tests for Ligand Preparer service.
 import sys
 import pytest
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import patch, Mock, MagicMock
@@ -683,6 +684,71 @@ def test_convert_docked_poses_skips_missing_or_absent_pose_files(preparer, tmp_p
     assert result["converted"] == []
     assert result["errors"] == []
     assert result["status"] == "failed"
+
+
+def _pose_without_meeko_smiles(tmp_path: Path, n_poses: int = 2) -> Path:
+    """A real docked-pose PDBQT whose REMARK SMILES lines are gone, as from a
+    ligand not prepared by Meeko: Meeko's round trip really fails on it."""
+    pose_path = _make_docked_pose_pdbqt(tmp_path, n_poses=n_poses)
+    lines = [l for l in pose_path.read_text().splitlines() if not l.startswith("REMARK SMILES")]
+    pose_path.write_text("\n".join(lines) + "\n")
+    return pose_path
+
+
+def test_convert_docked_poses_openbabel_fallback_writes_every_format(preparer, tmp_path):
+    """No mocks: Meeko refuses the pose, and the real obabel writes all three
+    formats, one file per format, every pose in each."""
+    pytest.importorskip("meeko")
+    if shutil.which("obabel") is None:
+        pytest.skip("OpenBabel (obabel) is not installed")
+    pose_path = _pose_without_meeko_smiles(tmp_path, n_poses=2)
+    pose_results = [{"ligand_id": "ethanol", "output_path": str(pose_path), "modes": []}]
+
+    real_run = subprocess.run
+    obabel_calls = []
+
+    def spy_run(cmd, *args, **kwargs):
+        if cmd[0] == "obabel":
+            obabel_calls.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    with patch("services.ligand_preparer.subprocess.run", side_effect=spy_run):
+        result = preparer.convert_docked_poses(pose_results, str(tmp_path / "viz"))
+
+    assert result["status"] == "ok", result
+    assert result["errors"] == []
+    entry = result["converted"][0]
+    assert entry["conversion_method"] == "openbabel"
+    assert entry["num_poses"] is None  # no per-pose scores were passed
+    # Each format converted straight from the docked PDBQT.
+    assert [c[1] for c in obabel_calls] == [str(pose_path)] * 3
+    viz = tmp_path / "viz"
+    assert entry["sdf_path"] == str(viz / "ethanol_poses.sdf")
+    assert entry["pdb_path"] == str(viz / "ethanol_poses.pdb")
+    assert entry["mol2_path"] == str(viz / "ethanol_poses.mol2")
+    assert Path(entry["sdf_path"]).read_text().count("$$$$") == 2
+    assert Path(entry["mol2_path"]).read_text().count("@<TRIPOS>MOLECULE") == 2
+    assert Path(entry["pdb_path"]).read_text().count("MODEL") >= 2
+
+
+def test_convert_docked_poses_openbabel_exit_zero_without_a_file_is_a_failure(preparer, tmp_path):
+    """obabel can exit 0 having written nothing (e.g. 0 molecules converted):
+    that ligand is reported as failed, not as converted."""
+    pose_path = tmp_path / "bad_out.pdbqt"
+    pose_path.write_text("MODEL 1\nENDMDL\n")
+    pose_results = [{"ligand_id": "bad", "output_path": str(pose_path), "modes": []}]
+
+    silent = Mock(returncode=0, stdout="", stderr="0 molecules converted\n")
+    with patch.object(preparer, "_write_poses_meeko", side_effect=ValueError("no SMILES")):
+        with patch("services.ligand_preparer.subprocess.run", return_value=silent):
+            result = preparer.convert_docked_poses(pose_results, str(tmp_path / "viz"))
+
+    assert result["status"] == "failed"
+    assert result["converted"] == []
+    assert result["errors"] == [{
+        "ligand_id": "bad",
+        "error": "OpenBabel pose conversion to sdf failed (exit 0): 0 molecules converted\n",
+    }]
 
 
 # ---------------------------------------------------------------------------

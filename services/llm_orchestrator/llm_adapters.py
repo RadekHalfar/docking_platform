@@ -172,6 +172,20 @@ def _ollama_error(response) -> str:
     return data.get("error", "") if isinstance(data, dict) else ""
 
 
+def _model_ids(data) -> list:
+    """The model ids of an OpenAI-style ``{"data": [{"id": ...}, ...]}`` listing.
+
+    Raises ValueError for any other shape, so callers treat a proxy's or
+    gateway's unexpected body like an unreachable server.
+    """
+    entries = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(entries, list) or not all(
+        isinstance(m, dict) and isinstance(m.get("id"), str) for m in entries
+    ):
+        raise ValueError(f"unexpected model listing: {str(data)[:200]}")
+    return [m["id"] for m in entries]
+
+
 class OpenAIAdapter(BaseLLMClient):
     """LLM adapter for the OpenAI API (https://api.openai.com/v1)."""
 
@@ -216,8 +230,8 @@ class OpenAIAdapter(BaseLLMClient):
         try:
             response = self._session.get(f"{self.endpoint}/models", headers=self._headers(), timeout=10)
             response.raise_for_status()
-            return [m["id"] for m in response.json().get("data", [])]
-        except requests.RequestException as e:
+            return _model_ids(response.json())
+        except (requests.RequestException, ValueError) as e:
             logger.error(f"Failed to list OpenAI models: {e}")
             return []
 
@@ -283,8 +297,8 @@ class AnthropicAdapter(BaseLLMClient):
                 f"{self.endpoint}/v1/models", headers=self._headers(), timeout=10
             )
             response.raise_for_status()
-            return [m["id"] for m in response.json().get("data", [])]
-        except requests.RequestException as e:
+            return _model_ids(response.json())
+        except (requests.RequestException, ValueError) as e:
             logger.error(f"Failed to list Anthropic models: {e}")
             return []
 
@@ -350,8 +364,8 @@ class OpenAICompatibleAdapter(BaseLLMClient):
                 f"{self.endpoint}/models", headers=self._headers(), timeout=10
             )
             response.raise_for_status()
-            return [m["id"] for m in response.json().get("data", [])]
-        except requests.RequestException as e:
+            return _model_ids(response.json())
+        except (requests.RequestException, ValueError) as e:
             logger.error(f"Failed to list models from {self.endpoint}: {e}")
             return []
 

@@ -1210,6 +1210,86 @@ class TestDockingStop:
         assert not os.path.exists(os.path.join(output_dir, STOP_FLAG_NAME))
 
 
+class TestDockingTimeout:
+    """A ligand whose Moldina run outlives the timeout is killed and reported
+    as failed; the other ligands still dock."""
+
+    runner = TestDockingStop.runner
+    _inputs = staticmethod(TestDockingStop._inputs)
+    _dock = staticmethod(TestDockingStop._dock)
+    _progress = staticmethod(TestDockingStop._progress)
+
+    @staticmethod
+    def _hang_for(*hanging_ligands):
+        """Popen: a never-ending process for the named ligands, a finished one
+        for the rest; plus the real _run_cancellable with a zero timeout."""
+        procs = {}
+
+        def popen(cmd, **kwargs):
+            ligand = next((l for l in hanging_ligands if any(f"{l}.pdbqt" in a for a in cmd)), None)
+            proc = _HangingProc() if ligand else _DoneProc()
+            procs[ligand or f"done{len(procs)}"] = proc
+            return proc
+
+        def no_time_to_finish(cmd, stop_check, timeout=3600):
+            return _run_cancellable(cmd, stop_check, timeout=0)
+
+        return procs, popen, no_time_to_finish
+
+    def test_a_timed_out_ligand_is_killed_and_reported_and_the_rest_dock(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 2)
+        procs, popen, run = self._hang_for("ligand1")
+
+        with patch('services.moldina_runner.subprocess.Popen', side_effect=popen), \
+                patch('services.moldina_runner._run_cancellable', side_effect=run):
+            result = self._dock(runner, receptor, ligands, output_dir)
+
+        assert procs["ligand1"].killed is True
+        assert result["status"] == "ok"
+        assert result["stopped"] is False
+        assert result["successful"] == 1
+        assert result["failed"] == 1
+        assert result["errors"] == ["ligand1: docking timed out (>1 hour)"]
+        assert [r["ligand_id"] for r in result["results"]] == ["ligand2"]
+        # No log for the killed run; the finished one has its log.
+        assert not os.path.exists(os.path.join(output_dir, "ligand1_moldina_output.log"))
+        assert os.path.exists(os.path.join(output_dir, "ligand2_moldina_output.log"))
+        progress = self._progress(output_dir)
+        assert progress["status"] == "done"
+        assert progress["completed"] == 2
+        assert progress["in_progress"] == []
+
+    def test_every_ligand_timing_out_fails_the_docking(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 2)
+        procs, popen, run = self._hang_for("ligand1", "ligand2")
+
+        with patch('services.moldina_runner.subprocess.Popen', side_effect=popen), \
+                patch('services.moldina_runner._run_cancellable', side_effect=run):
+            with pytest.raises(RuntimeError, match=r"failed for all ligands: "
+                               r"ligand1: docking timed out \(>1 hour\); "
+                               r"ligand2: docking timed out \(>1 hour\)"):
+                self._dock(runner, receptor, ligands, output_dir)
+
+        assert procs["ligand1"].killed and procs["ligand2"].killed
+        progress = self._progress(output_dir)
+        assert progress["status"] == "done"
+        assert progress["in_progress"] == []
+
+    def test_a_timed_out_ligand_in_parallel_mode_is_reported(self, runner, temp_dir):
+        receptor, ligands, output_dir = self._inputs(temp_dir, 3)
+        procs, popen, run = self._hang_for("ligand2")
+
+        with patch('services.moldina_runner._detect_effective_cpu_count', return_value=4), \
+                patch('services.moldina_runner.subprocess.Popen', side_effect=popen), \
+                patch('services.moldina_runner._run_cancellable', side_effect=run):
+            result = self._dock(runner, receptor, ligands, output_dir, parallel=True, max_workers=2)
+
+        assert procs["ligand2"].killed is True
+        assert result["successful"] == 2
+        assert result["errors"] == ["ligand2: docking timed out (>1 hour)"]
+        assert sorted(r["ligand_id"] for r in result["results"]) == ["ligand1", "ligand3"]
+
+
 class TestRunCancellable:
 
     def test_timeout_kills_and_raises(self):

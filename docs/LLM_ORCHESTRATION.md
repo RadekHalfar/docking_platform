@@ -421,8 +421,9 @@ restarts.
 
 **The GUI has no ligand search.** Its chat and form take component IDs only.
 A name there is downloaded as if it were an ID; that download fails, the
-ligand is left out of the run, and if it was the only one the run fails with
-"No ligand files available for preparation". Search in the CLI, or on
+ligand is left out of the run and named as "Not docked (could not be
+downloaded)", and if it was the only one the run fails with "No ligand could
+be downloaded from RCSB: …". Search in the CLI, or on
 [rcsb.org](https://www.rcsb.org/), then enter the ID.
 
 #### Set docking algorithm

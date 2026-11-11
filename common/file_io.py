@@ -91,6 +91,15 @@ class FileLock:
                 age = None  # lock file vanished between the open() failing and this stat()
 
             if age is not None and age > self.stale_after:
+                # NOTE (known gap): two waiters can both see the same lock as
+                # stale. The first unlinks it and creates its own; the second
+                # then unlinks *that* one and creates another, so both hold
+                # it. release() also unlinks whatever lock file is there. It
+                # needs a crashed holder plus two writers waiting at once.
+                # Fix if a lost update to a shared manifest is seen after a
+                # crash: break a stale lock by renaming it to a unique name
+                # (atomic, so only one waiter succeeds), and write a token
+                # into the lock file for release() to check before unlinking.
                 try:
                     self.lock_path.unlink()
                 except OSError:

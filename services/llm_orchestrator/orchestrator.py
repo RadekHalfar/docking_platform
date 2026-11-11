@@ -63,6 +63,26 @@ def docking_timeout_seconds(num_ligands: int, workers: int, algorithm: str, exha
     return max(300, math.ceil(per_ligand * num_ligands / max(1, workers)))
 
 
+def _skipped_ligand_lines(failed_ligands: List[Dict[str, Any]]) -> List[str]:
+    """One "ID: reason" line per entry of a download's failed_ligands."""
+    return [
+        f"{entry.get('ligand_id', '?')}: {entry.get('error') or 'unknown error'}"
+        for entry in failed_ligands
+        if isinstance(entry, dict)
+    ]
+
+
+def skipped_ligand_notes(results: Optional[Dict[str, Any]]) -> List[str]:
+    """The ligands a run's get_input_files step could not download, as
+    "ID: reason" lines (empty when none were skipped).
+
+    Read from the step's own result, which the on-disk merge carries
+    forward, so a redock that doesn't download again still reports them.
+    """
+    step = ((results or {}).get("results") or {}).get("get_input_files") or {}
+    return _skipped_ligand_lines(step.get("failed_ligands") or [])
+
+
 class WorkflowOrchestrator:
     """Orchestrates workflow execution across MCP services."""
     
@@ -407,12 +427,19 @@ class WorkflowOrchestrator:
                         protein_path = download_result.get("protein_path")
                     if needs_remote_ligands:
                         downloaded_ligand_paths = download_result.get("ligand_paths", [])
+                skipped = _skipped_ligand_lines(download_result.get("failed_ligands") or []) if needs_remote_ligands else []
 
                 if local_protein_file:
                     protein_path = self._copy_local_input(local_protein_file, download_dir)
 
                 local_ligand_paths = self._copy_local_inputs(local_ligand_files, download_dir)
                 ligand_paths = downloaded_ligand_paths + local_ligand_paths
+                if skipped and not ligand_paths:
+                    raise RuntimeError("No ligand could be downloaded from RCSB: " + "; ".join(skipped))
+                if skipped:
+                    note = f"{len(skipped)} ligand(s) could not be downloaded and will not be docked: " + "; ".join(skipped)
+                    self._step_print(f"   ⚠️ {note}")
+                    append_job_log(job_dir, "WARNING", note)
 
                 results["results"]["get_input_files"] = {
                     **download_result,

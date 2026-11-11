@@ -302,6 +302,8 @@ class RCSBDownloader:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
         except requests.RequestException as e:
+            if getattr(getattr(e, "response", None), "status_code", None) == 404:
+                raise RuntimeError(f"Ligand {ligand_id_upper} not found on RCSB")
             raise RuntimeError(f"Failed to download ligand {ligand_id}: {str(e)}")
 
         with open(file_path, 'wb') as f:
@@ -339,7 +341,9 @@ class RCSBDownloader:
             save_dir: Base directory to save files
 
         Returns:
-            Dictionary with protein_path, ligand_paths, metadata
+            Dictionary with protein_path, ligand_paths, metadata, and
+            failed_ligands: one {"ligand_id", "error"} per ligand that could
+            not be downloaded (left out of ligand_paths; empty when none).
         """
         ligand_ids = ligand_ids or []
         formats = formats or {}
@@ -377,6 +381,7 @@ class RCSBDownloader:
 
         # Download ligands
         ligand_results = []
+        failed_ligands: List[Dict[str, str]] = []
         for ligand_id in resolved_ligands:
             try:
                 ligand_result = self.download_ligand(
@@ -385,6 +390,7 @@ class RCSBDownloader:
                 ligand_results.append(ligand_result)
             except (requests.RequestException, RuntimeError, ValueError) as e:
                 logger.error(f"Failed to download ligand {ligand_id}: {e}")
+                failed_ligands.append({"ligand_id": ligand_id, "error": str(e)})
                 # Continue with other ligands
 
         # Prepare response
@@ -399,6 +405,7 @@ class RCSBDownloader:
                 "protein": protein_result["checksum"] if protein_result else None,
                 "ligands": [lr["checksum"] for lr in ligand_results]
             },
+            "failed_ligands": failed_ligands,
             "status": "ok"
         }
 

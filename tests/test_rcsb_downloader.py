@@ -138,6 +138,9 @@ def test_download_structures_skips_invalid_ligand_id_without_crashing_batch(
     assert result["status"] == "ok"
     assert len(result["ligand_paths"]) == 1
     assert result["ligand_paths"][0].endswith("ATP.sdf")
+    assert result["failed_ligands"] == [
+        {"ligand_id": "not-a-valid-chem-comp-id", "error": "Invalid ligand ID: 'not-a-valid-chem-comp-id'"}
+    ]
 
 
 def test_download_structures_complete(downloader, tmp_path, sample_pdb_content, sample_sdf_content):
@@ -253,8 +256,11 @@ def test_download_structures_partial_ligand_failure(downloader, tmp_path, sample
         assert result["status"] == "ok"
         assert os.path.exists(result["protein_path"])
         
-        # Only one ligand should be downloaded
+        # Only one ligand should be downloaded; the other is reported
         assert len(result["ligand_paths"]) == 1
+        assert result["failed_ligands"] == [
+            {"ligand_id": "BADLIG", "error": "Invalid ligand ID: 'BADLIG'"}
+        ]
 
 
 def test_search_ligands_success(downloader):
@@ -420,7 +426,7 @@ def _http_error_response(status):
 def test_download_ligand_failure_raises_and_writes_nothing(downloader, tmp_path, outcome):
     save_dir = tmp_path / "ligands"
     with patch("services.rcsb_downloader.requests.get", **outcome) as mock_get:
-        with pytest.raises(RuntimeError, match="Failed to download ligand ATP"):
+        with pytest.raises(RuntimeError, match="Failed to download ligand ATP|Ligand ATP not found on RCSB"):
             downloader.download_ligand("ATP", str(save_dir), "sdf")
 
     assert mock_get.call_args.args[0].endswith("/ATP_ideal.sdf")
@@ -458,4 +464,36 @@ def test_download_structures_with_every_ligand_failing_returns_no_ligands(downlo
     assert result["status"] == "ok"
     assert result["ligand_paths"] == []
     assert result["protein_path"] is None
+    assert result["failed_ligands"] == [
+        {"ligand_id": "ATP", "error": "Ligand ATP not found on RCSB"},
+        {"ligand_id": "HEM", "error": "Ligand HEM not found on RCSB"},
+    ]
     assert sorted(p.name for p in save_dir.iterdir()) == ["ligands_download_meta.json"]
+
+
+def test_a_ligand_rcsb_does_not_have_is_named_as_not_found(downloader, tmp_path):
+    with patch("services.rcsb_downloader.requests.get", return_value=_http_error_response(404)):
+        with pytest.raises(RuntimeError) as excinfo:
+            downloader.download_ligand("atpp", str(tmp_path), "sdf")
+
+    assert str(excinfo.value) == "Ligand ATPP not found on RCSB"
+
+
+def test_other_http_errors_keep_the_download_failure_message(downloader, tmp_path):
+    with patch("services.rcsb_downloader.requests.get", return_value=_http_error_response(503)):
+        with pytest.raises(RuntimeError) as excinfo:
+            downloader.download_ligand("ATP", str(tmp_path), "sdf")
+
+    assert str(excinfo.value).startswith("Failed to download ligand ATP: 503")
+
+
+def test_download_structures_reports_no_failed_ligands_when_all_succeed(
+    downloader, tmp_path, sample_sdf_content
+):
+    response = Mock(content=sample_sdf_content, raise_for_status=Mock())
+    with patch("services.rcsb_downloader.requests.get", return_value=response):
+        result = downloader.download_structures(ligand_ids=["ATP"], save_dir=str(tmp_path / "ok"))
+
+    assert result["failed_ligands"] == []
+    saved = json.loads((tmp_path / "ok" / "ligands_download_meta.json").read_text())
+    assert saved["failed_ligands"] == []

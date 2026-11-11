@@ -27,6 +27,7 @@ from typing import Any, Optional
 from nicegui import background_tasks, run, ui
 
 from services.llm_orchestrator.interactive_session import SAVED_RESULTS_DIRNAME
+from services.llm_orchestrator.orchestrator import skipped_ligand_notes
 from ui.core import results_view, run_control, save_results
 from ui.core.sessions import load_workflow_results
 from ui.results import build_comparison_html, make_affinity_chart_figure
@@ -221,6 +222,10 @@ class ResultsView:
             self.status_line = markdown(self._status_text()).mark("results-status")
             if shown.live:
                 self.status_line.classes("text-positive")
+            for note in skipped_ligand_notes(shown.result):
+                ui.label(f"Not docked (could not be downloaded): {note}").classes(
+                    "text-warning"
+                ).mark("results-skipped-ligand")
             caption = results_view.docked_with_caption(shown.result)
             if caption:
                 ui.label(caption).classes("text-caption").mark("docked-with")

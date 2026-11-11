@@ -117,6 +117,35 @@ async def test_results_name_the_algorithm_that_docked(user: User, page, output_b
     await user.should_see(f"Docked with {label}")
 
 
+async def test_a_ligand_that_could_not_be_downloaded_is_named_on_the_results(user: User, page, output_base):
+    data = completed_job_data(Path("/nonexistent.pdb"))
+    data["results"].setdefault("get_input_files", {})["failed_ligands"] = [
+        {"ligand_id": "ATPP", "error": "Ligand ATPP not found on RCSB"}
+    ]
+    (output_base / JOB_ID).mkdir()
+    (output_base / JOB_ID / "workflow_results.json").write_text(json.dumps(data))
+    _view(page)
+
+    await user.open("/")
+    await results_loaded(page)
+
+    await user.should_see("Not docked (could not be downloaded): ATPP: Ligand ATPP not found on RCSB")
+    assert len(_all(user, "results-skipped-ligand")) == 1
+
+
+async def test_a_session_with_every_ligand_downloaded_shows_no_skip_note(user: User, page, output_base):
+    data = completed_job_data(Path("/nonexistent.pdb"))
+    (output_base / JOB_ID).mkdir()
+    (output_base / JOB_ID / "workflow_results.json").write_text(json.dumps(data))
+    _view(page)
+
+    await user.open("/")
+    await results_loaded(page)
+
+    await user.should_see("Viewing session")
+    assert _all(user, "results-skipped-ligand") == []
+
+
 async def test_save_results_sits_between_viewer_and_session_log(user: User, page, output_base):
     # Re-specified for the tab: the viewer (with the pose grids) comes
     # first, then Save results as…, then the Session Log, then downloads.

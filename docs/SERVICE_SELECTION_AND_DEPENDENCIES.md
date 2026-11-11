@@ -83,6 +83,7 @@ User: "Show results of docking"
   ],
   "sources": {...},
   "checksums": {...},
+  "failed_ligands": [],           // {"ligand_id", "error"} per ligand not downloaded
   "status": "ok"
 }
 ```
@@ -549,7 +550,7 @@ original workflow, so a step the user never requested will not be included.
 **Problem:** One service in the chain fails
 
 **Solution:** Check the error in the previous step's output. Each service depends on the prior ones:
-- If `get_input_files` fails → nothing else can run. A ligand ID that RCSB can't serve (a 404, a timeout) is skipped, not an error: the rest are downloaded, and the skip shows only in the `rcsb-downloader` log (`docker compose logs rcsb-downloader`). If every ligand is skipped, the job fails at `prepare_ligands` with "No ligand files available for preparation"
+- If `get_input_files` fails → nothing else can run. A ligand ID that RCSB can't serve (a 404, a timeout) is skipped, not an error: the rest are downloaded and docked, and the skipped ones are named with their reason in the step output, `job.log`, the CLI summary ("Not docked (could not be downloaded)"), the GUI's completion message and its Results tab. If every ligand is skipped, the job fails at `get_input_files` with "No ligand could be downloaded from RCSB: …"
 - If `prepare_ligands` fails → docking can't proceed
 - If `prepare_protein` returns no receptor → the job fails at that step with "Protein preparation returned no prepared receptor", followed by the service's reason when it gives one
 - If the docking box is missing → the job fails at `dock` with "No docking box (center and box_size) set for docking"

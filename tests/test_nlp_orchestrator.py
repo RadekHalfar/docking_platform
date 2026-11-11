@@ -1999,6 +1999,55 @@ def test_process_workflow_exits_1_when_the_job_reports_errors(monkeypatch, tmp_p
     assert not session.has_active_job()
 
 
+_SKIPPED_ATPP = {
+    "get_input_files": {
+        "ligand_paths": ["/app/ATP.sdf"],
+        "failed_ligands": [{"ligand_id": "ATPP", "error": "Ligand ATPP not found on RCSB"}],
+    }
+}
+
+
+def test_process_workflow_lists_ligands_it_could_not_download_and_exits_0(
+    monkeypatch, tmp_path, capsys, llm_client
+):
+    parsed = {"services": ["get_input_files", "dock"], "parameters": {"protein_id": "6lu7", "ligand_ids": ["ATP", "ATPP"], **_BOX}}
+    monkeypatch.setattr(cli, "parse_workflow_with_llm", lambda *a, **k: parsed)
+    _script(monkeypatch, "")
+    orchestrator = _orchestrator(tmp_path, results=_SKIPPED_ATPP)
+
+    assert cli.process_workflow("dock", llm_client, orchestrator, WorkflowParser()) == 0
+
+    out = capsys.readouterr().out
+    assert "⚠️ Not docked (could not be downloaded):\n  - ATPP: Ligand ATPP not found on RCSB" in out
+    assert "✅ Workflow completed successfully!" in out
+
+
+def test_partial_rerun_lists_ligands_the_job_could_not_download(monkeypatch, tmp_path, capsys):
+    session = InteractiveSession()
+    state_manager = WorkflowStateManager(Path(tmp_path) / "job_skip")
+    state_manager.save_parameters_checkpoint(
+        {"protein_id": "6lu7", "ligand_ids": ["ATP", "ATPP"], "center": [1, 2, 3], "box_size": [20, 20, 20]},
+        source="test",
+    )
+    session.activate(
+        "job_skip",
+        state_manager,
+        last_results={"status": "completed", "services_executed": list(cli.WORKFLOW_STEPS), "results": {}},
+    )
+    orchestrator = Mock()
+    orchestrator.execute_workflow.return_value = {
+        "job_id": "job_skip", "status": "completed", "services_executed": ["dock", "visualize"],
+        "results": _SKIPPED_ATPP, "errors": [],
+    }
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    cli._execute_partial_rerun(session, orchestrator, changed_params={"center"})
+
+    out = capsys.readouterr().out
+    assert "  - ATPP: Ligand ATPP not found on RCSB" in out
+    assert "✅ Partial rerun completed successfully!" in out
+
+
 def test_process_workflow_exits_1_on_an_unexpected_error(monkeypatch, tmp_path, capsys, llm_client):
     parser_obj = WorkflowParser()
     monkeypatch.setattr(

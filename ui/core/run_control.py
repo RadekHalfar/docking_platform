@@ -14,12 +14,13 @@ from typing import Any, Callable, Optional
 
 from common.utils import generate_job_id
 from services.llm_orchestrator.interactive_session import compute_changed_params
+from services.llm_orchestrator.orchestrator import skipped_ligand_notes
 from services.llm_orchestrator.rerun_planner import compute_rerun_steps, missing_required_params
 from services.llm_orchestrator.workflow_definition import WORKFLOW_STEPS, with_default_parameters
 from services.llm_orchestrator.workflow_state_manager import WorkflowStateManager
 from ui.core.form import clear_box_picker_state, sync_form_into_params
 from ui.core.state import Outcome, reply
-from ui.job_history import JOB_NAME_MAX_CHARS
+from ui.job_history import JOB_NAME_MAX_CHARS, escape_markdown
 
 BridgeFactory = Callable[[], Any]
 
@@ -289,6 +290,13 @@ def process_docking_bridge(state) -> bool:
         if session.job_id == state.job_id:
             session.pending_changed_params = set()
         outcome_message = "Workflow completed successfully!"
+        skipped = skipped_ligand_notes(result)
+        if skipped:
+            # The blank line before the list: the chat's markdown renders a
+            # list only after one.
+            outcome_message += "\n\n⚠️ Not docked (could not be downloaded):\n\n" + "\n".join(
+                f"- {escape_markdown(note)}" for note in skipped
+            )
     elif error:
         outcome_message = f"Workflow failed: {error}"
     elif status == "cancelled":

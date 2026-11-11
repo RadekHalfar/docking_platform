@@ -462,6 +462,12 @@ a mistyped PDB or ligand ID (check it on <https://www.rcsb.org/>), a ligand
 name instead of its three-letter component ID, or a docking box that is
 missing or lies outside the protein.
 
+**A ligand is missing from the results.**
+A ligand that couldn't be downloaded is listed as **Not docked (could not be
+downloaded)**, with the reason, in the chat when the run finishes and at the
+top of the Results tab. "Not found on RCSB" usually means a typo: check the
+three-letter code on <https://www.rcsb.org/> and run again.
+
 **The chat answers "Chat needs an LLM…".**
 No language model is set up. That's fine for docking, or see
 [Step 8](#step-8-optional-the-chat-assistant-llm).

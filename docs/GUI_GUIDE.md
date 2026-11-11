@@ -516,6 +516,12 @@ completed", "Viewing session ...") shows it alongside the job ID, so it
 stays clear which run you're looking at even after switching between
 several loaded sessions.
 
+A ligand that couldn't be downloaded from RCSB (a mistyped ID, a timeout) is
+listed under the status caption as "Not docked (could not be downloaded):
+<ID>: <reason>". The chat says the same when the run finishes. The other
+ligands are docked as usual. If no ligand could be downloaded, the run fails
+with that list instead.
+
 Once a session's results are showing, you get:
 
 - An affinity bar chart (best binder first), in a fixed-height scrollable

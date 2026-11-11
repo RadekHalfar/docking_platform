@@ -41,7 +41,7 @@ from services.llm_orchestrator.workflow_llm_parser import _deterministic_intent
 from services.llm_orchestrator.workflow_definition import CORE_PARAMS, WORKFLOW_STEPS
 from services.llm_orchestrator.workflow_state_manager import describe_revision
 from services.llm_orchestrator.interactive_session import compute_changed_params, resolve_prepared_protein_pdb_path
-from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO
+from services.llm_orchestrator.orchestrator import VERBOSITY_LOW, VERBOSITY_NORMAL, VERBOSITY_MCP_DEMO, skipped_ligand_notes
 from common.docking_algorithm import DEFAULT_DOCKING_ALGORITHM, docking_algorithm_label, normalize_docking_algorithm
 from common.pdb_geometry import compute_protein_center_and_box
 from common.path_utils import from_container_path
@@ -565,6 +565,7 @@ def _execute_partial_rerun(
     session.last_results = merged_results
 
     print(f"\nPartial rerun status: {results.get('status', 'unknown')}")
+    _print_skipped_ligands(results)
     if results.get("errors"):
         for err in results["errors"]:
             print(f"  ❌ {err}")
@@ -572,6 +573,15 @@ def _execute_partial_rerun(
         print("✅ Partial rerun completed successfully!")
 
     return results
+
+
+def _print_skipped_ligands(results: Dict[str, Any]) -> None:
+    """List the ligands this job could not download, if any."""
+    notes = skipped_ligand_notes(results)
+    if notes:
+        print("\n⚠️ Not docked (could not be downloaded):")
+        for note in notes:
+            print(f"  - {note}")
 
 
 def _handle_show_history(session: "InteractiveSession") -> None:
@@ -1653,6 +1663,7 @@ def process_workflow(
         print(f"\nJob ID: {results['job_id']}")
         print(f"Status: {results['status']}")
         print(f"Services Executed: {', '.join(results['services_executed'])}")
+        _print_skipped_ligands(results)
         
         if results.get("errors"):
             print("\nErrors:")

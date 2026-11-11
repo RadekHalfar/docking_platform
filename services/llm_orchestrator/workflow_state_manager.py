@@ -232,7 +232,8 @@ class WorkflowStateManager:
         a full rerun). Fix: record the parameters revision each *completed*
         run used; pending keys are then the diff of that revision against
         the latest -- exact, persistent, replacing both. Touches the
-        orchestrator, this class and both front ends. Trigger: a third caller needing "did these params run", the two
+        orchestrator, this class and both front ends. Trigger: a caller needing "did these params run" beyond the three
+        today (the CLI and GUI save gates, and the GUI's Load), the two
         disagreeing in a real session, or users objecting to the full
         rerun after a Load.
         """

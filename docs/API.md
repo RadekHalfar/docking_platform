@@ -115,6 +115,7 @@ Downloads protein structures and ligand molecules from RCSB PDB.
       "protein": "a1b2c3d4e5f6...",
       "ligands": ["g7h8i9j0k1l2...", "m3n4o5p6q7r8..."]
     },
+    "failed_ligands": [],
     "status": "ok"
   }
 }
@@ -133,7 +134,10 @@ Downloads protein structures and ligand molecules from RCSB PDB.
 ```
 
 An invalid protein ID fails the whole call. A ligand that can't be
-downloaded doesn't: it is logged and left out of `ligand_paths`.
+downloaded doesn't: it is left out of `ligand_paths` and listed in
+`failed_ligands` with the reason, e.g.
+`{"ligand_id": "ATPP", "error": "Ligand ATPP not found on RCSB"}`.
+`failed_ligands` is always present (empty when every ligand was downloaded).
 
 ### Tool: search_ligands
 

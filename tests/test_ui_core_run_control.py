@@ -352,6 +352,22 @@ def test_finished_bridge_replies_exactly_once(state, result, error, expected):
     assert [m["content"] for m in state.messages].count(expected) == 1
 
 
+def test_a_completed_run_names_the_ligands_it_could_not_download(state):
+    skipped = {"ligand_id": "AT_P", "error": "Ligand AT_P not found on RCSB"}
+    state.bridge = FakeBridge(result={
+        "status": "completed",
+        "results": {"get_input_files": {"failed_ligands": [skipped]}},
+    })
+
+    run_control.process_docking_bridge(state)
+
+    assert state.messages[-1]["content"] == (
+        "Workflow completed successfully!\n\n"
+        "⚠️ Not docked (could not be downloaded):\n\n"
+        "- AT\\_P: Ligand AT\\_P not found on RCSB"
+    )
+
+
 def test_finished_bridge_with_unknown_status_waits(state):
     state.bridge = FakeBridge(result={"status": "running"})
     run_control.process_docking_bridge(state)

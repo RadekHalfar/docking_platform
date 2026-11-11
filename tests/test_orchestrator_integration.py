@@ -330,3 +330,81 @@ def test_visualize_with_no_docked_poses_is_skipped_and_the_job_completes(tmp_pat
     assert "visualize" in results["services_executed"]
     log = (tmp_path / "pre" / "job.log").read_text(encoding="utf-8")
     assert "visualize completed" in log and "0 ligand(s)" in log
+
+
+# ---------------------------------------------------------------------------
+# Ligands RCSB could not serve are reported, not silently dropped.
+# ---------------------------------------------------------------------------
+
+_ATPP_NOT_FOUND = {"ligand_id": "ATPP", "error": "Ligand ATPP not found on RCSB"}
+
+
+def _download_with_failures(ligand_paths, failed):
+    return lambda: {
+        "protein_path": "/app/6lu7.pdb",
+        "ligand_paths": ligand_paths,
+        "failed_ligands": failed,
+        "status": "ok",
+    }
+
+
+def test_a_ligand_that_could_not_be_downloaded_is_reported_and_the_rest_dock(tmp_path, caplog):
+    caplog.set_level("INFO", logger="services.llm_orchestrator.orchestrator")
+    from services.llm_orchestrator.orchestrator import skipped_ligand_notes
+
+    params = {**_FULL_CHAIN_WORKFLOW["parameters"], "ligand_ids": ["ATP", "ATPP"]}
+    results, called = _run(
+        tmp_path,
+        _FULL_CHAIN_WORKFLOW["services"],
+        parameters=params,
+        overrides={"download_structures": _download_with_failures(["/app/ATP.sdf"], [_ATPP_NOT_FOUND])},
+    )
+
+    assert results["status"] == "completed"
+    assert results["errors"] == []
+    assert "run_docking" in called
+    assert results["results"]["get_input_files"]["failed_ligands"] == [_ATPP_NOT_FOUND]
+    assert skipped_ligand_notes(results) == ["ATPP: Ligand ATPP not found on RCSB"]
+    assert "1 ligand(s) could not be downloaded" in caplog.text
+    log = (tmp_path / "pre" / "job.log").read_text(encoding="utf-8")
+    assert "WARNING" in log and "ATPP: Ligand ATPP not found on RCSB" in log
+
+
+def test_a_job_whose_every_ligand_failed_to_download_stops_at_the_download(tmp_path):
+    failed = [_ATPP_NOT_FOUND, {"ligand_id": "XYZ", "error": "Failed to download ligand XYZ: read timed out"}]
+    params = {**_FULL_CHAIN_WORKFLOW["parameters"], "ligand_ids": ["ATPP", "XYZ"]}
+    results, called = _run(
+        tmp_path,
+        _FULL_CHAIN_WORKFLOW["services"],
+        parameters=params,
+        overrides={"download_structures": _download_with_failures([], failed)},
+    )
+
+    assert results["status"] == "failed"
+    assert results["errors"] == [
+        "No ligand could be downloaded from RCSB: ATPP: Ligand ATPP not found on RCSB; "
+        "XYZ: Failed to download ligand XYZ: read timed out"
+    ]
+    assert called == ["download_structures"]
+
+
+def test_a_skipped_ligand_is_still_reported_after_a_redock_that_does_not_download(tmp_path):
+    from services.llm_orchestrator.orchestrator import skipped_ligand_notes
+
+    params = {**_FULL_CHAIN_WORKFLOW["parameters"], "ligand_ids": ["ATP", "ATPP"]}
+    overrides = {"download_structures": _download_with_failures(["/app/ATP.sdf"], [_ATPP_NOT_FOUND])}
+    first, _ = _run(tmp_path, _FULL_CHAIN_WORKFLOW["services"], parameters=params, overrides=overrides)
+    assert first["status"] == "completed"
+
+    redock, called = _run(tmp_path, ["dock", "visualize"], parameters=params, overrides=overrides)
+
+    assert "download_structures" not in called
+    assert skipped_ligand_notes(redock) == ["ATPP: Ligand ATPP not found on RCSB"]
+
+
+def test_skipped_ligand_notes_is_empty_without_a_download_step():
+    from services.llm_orchestrator.orchestrator import skipped_ligand_notes
+
+    assert skipped_ligand_notes(None) == []
+    assert skipped_ligand_notes({"results": {"dock": {}}}) == []
+    assert skipped_ligand_notes({"results": {"get_input_files": {"ligand_paths": []}}}) == []

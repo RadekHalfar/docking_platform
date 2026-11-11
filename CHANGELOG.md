@@ -604,3 +604,19 @@ moved from Streamlit to NiceGUI.
     precondition, and skipping pose conversion when nothing docked; RCSB
     ligand download failures; the hosted LLM providers' health checks and
     model listing.
+- **2026-11-11: a ligand RCSB can't serve is reported, not dropped silently.**
+  - **Fixed:** a ligand ID that RCSB couldn't serve (a typo such as `ATPP`,
+    a timeout) was left out of the run with no message outside the
+    `rcsb-downloader` log. `download_structures` now returns
+    `failed_ligands` (`{"ligand_id", "error"}` per ligand; a 404 reads
+    "Ligand ATPP not found on RCSB"). The run docks the rest and names the
+    skipped ligands in the step output, `job.log` (WARNING), the CLI summary,
+    the GUI's completion message and the Results tab, also after a Load or a
+    redock. A CLI run with a skipped ligand still exits 0.
+  - **Fixed:** when no ligand could be downloaded, the job now fails at the
+    download step with "No ligand could be downloaded from RCSB: …" naming
+    each ID and reason, instead of one step later with "No ligand files
+    available for preparation".
+  - **Comments:** `FileLock`'s stale-lock race and the Settings dialog's
+    Enter-to-download issue now state their fix and trigger in the code; the
+    `parameters_ran()` trigger names its three existing callers.

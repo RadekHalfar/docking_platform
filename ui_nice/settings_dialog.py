@@ -276,7 +276,14 @@ class SettingsView:
 
     async def _on_download(self) -> None:
         # Known issue: a typed name becomes the
-        # select's value only on Enter, so without it Download does nothing.
+        # select's value only on Enter, so without it Download does nothing
+        # (clicking Download blurs the select, and Quasar drops the text).
+        # Keeping the text from input-value events passed headless checks
+        # but not the owner's browser. Likely fix: a plain ui.input for the
+        # name (it syncs on every keystroke), with the recommended models as
+        # buttons or autocomplete beside it, reproduced in the owner's
+        # browser first. Fix at the next Settings-dialog change, or sooner
+        # if users report it.
         name = (self.download_model.value or "").strip()
         if not name or self.downloading is not None:
             return
